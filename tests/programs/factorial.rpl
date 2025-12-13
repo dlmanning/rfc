@@ -1,0 +1,14 @@
+@ Factorial using recursion
+@ Usage: 5 fact -> 120
+
+<< -> n <<
+    IF n 0 ==
+    THEN
+        1
+    ELSE
+        n 1 - fact n *
+    END
+>> >>
+"fact" STO
+
+5 fact

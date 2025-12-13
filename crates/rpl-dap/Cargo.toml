@@ -1,0 +1,19 @@
+[package]
+name = "rpl-dap"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rpl-dap"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rpl-session = { path = "../rpl-session" }
+rpl-lang = { path = "../rpl-lang" }
+rpl-stdlib = { path = "../rpl-stdlib" }
+dap = "0.4.1-alpha1"
+serde_json = "1.0"
+log = "0.4"

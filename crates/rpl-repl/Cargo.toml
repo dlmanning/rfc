@@ -1,0 +1,22 @@
+[package]
+name = "rpl-repl"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rpl"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rpl-core = { path = "../rpl-core" }
+rpl-session = { path = "../rpl-session" }
+rpl-lang = { path = "../rpl-lang" }
+rpl-stdlib = { path = "../rpl-stdlib" }
+ratatui = "0.30.0-beta.0"
+crossterm = "0.28"
+dirs = "5"
+unicode-width = "0.2"
+unicode-segmentation = "1"

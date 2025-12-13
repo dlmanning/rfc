@@ -1,0 +1,17 @@
+@ Greatest Common Divisor using Euclidean algorithm
+@ Usage: 48 18 gcd -> 6
+
+<< -> a b <<
+    IF b 0 ==
+    THEN
+        a
+    ELSE
+        b
+        a b MOD
+        gcd
+    END
+>> >>
+"gcd" STO
+
+@ Test: gcd(48, 18) = 6
+48 18 gcd

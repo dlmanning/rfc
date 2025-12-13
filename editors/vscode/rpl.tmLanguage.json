@@ -1,0 +1,166 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "RPL",
+  "scopeName": "source.rpl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#operators" },
+    { "include": "#commands" },
+    { "include": "#program" },
+    { "include": "#symbolic" },
+    { "include": "#list" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.at-sign.rpl",
+          "match": "@.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.rpl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.rpl",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.binary.rpl",
+          "match": "#[01]+b\\b"
+        },
+        {
+          "name": "constant.numeric.octal.rpl",
+          "match": "#[0-7]+o\\b"
+        },
+        {
+          "name": "constant.numeric.hex.rpl",
+          "match": "#[0-9A-Fa-f]+h\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.rpl",
+          "match": "#[0-9]+d?\\b"
+        },
+        {
+          "name": "constant.numeric.float.rpl",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.rpl",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.rpl",
+          "match": "\\b(IF|THEN|ELSE|END|FOR|NEXT|STEP|WHILE|REPEAT|DO|UNTIL|CASE|DEFAULT|START|IFERR)\\b"
+        },
+        {
+          "name": "keyword.operator.assignment.rpl",
+          "match": "\\b(STO|RCL|PURGE)\\b"
+        },
+        {
+          "name": "keyword.other.local.rpl",
+          "match": "\\b(LOCAL)\\b|→"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arithmetic.rpl",
+          "match": "[+\\-*/^]|\\b(NEG|ABS|INV|SQ|SQRT|MOD)\\b"
+        },
+        {
+          "name": "keyword.operator.comparison.rpl",
+          "match": "==|!=|<=|>=|<|>|\\b(SAME)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.rpl",
+          "match": "\\b(AND|OR|XOR|NOT)\\b"
+        },
+        {
+          "name": "keyword.operator.bitwise.rpl",
+          "match": "\\b(BAND|BOR|BXOR|BNOT|SL|SR|ASR|RL|RR)\\b"
+        }
+      ]
+    },
+    "commands": {
+      "patterns": [
+        {
+          "name": "support.function.stack.rpl",
+          "match": "\\b(DUP|DROP|SWAP|OVER|ROT|PICK|ROLL|DEPTH|CLEAR|DUP2|DROP2|DROPN|DUPN|NIP|TUCK)\\b"
+        },
+        {
+          "name": "support.function.math.rpl",
+          "match": "\\b(SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|SINH|COSH|TANH|ASINH|ACOSH|ATANH|LN|LOG|EXP|ALOG|LNP1|EXPM|PI)\\b"
+        },
+        {
+          "name": "support.function.list.rpl",
+          "match": "\\b(SIZE|HEAD|TAIL|GET|PUT|CONS|APPEND|REVERSE|SORT|MAP|REDUCE|FILTER)\\b"
+        },
+        {
+          "name": "support.function.type.rpl",
+          "match": "\\b(TYPE|NUM|STR|EVAL)\\b"
+        }
+      ]
+    },
+    "program": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.program.begin.rpl",
+          "match": "::"
+        },
+        {
+          "name": "punctuation.definition.program.end.rpl",
+          "match": ";"
+        }
+      ]
+    },
+    "symbolic": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.symbolic.rpl",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "include": "#numbers" },
+            { "include": "#operators" },
+            {
+              "name": "variable.other.rpl",
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+            }
+          ]
+        }
+      ]
+    },
+    "list": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.list.begin.rpl",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.definition.list.end.rpl",
+          "match": "\\}"
+        }
+      ]
+    }
+  }
+}

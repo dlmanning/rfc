@@ -1,0 +1,11 @@
+[package]
+name = "rpl-lang"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rpl-core = { path = "../rpl-core" }
+rpl-source = { path = "../rpl-source" }
+rpl-vm = { path = "../rpl-vm" }
+serde = { version = "1.0", features = ["derive"] }
+smallvec = "1"

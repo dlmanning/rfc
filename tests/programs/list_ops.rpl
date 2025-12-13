@@ -1,0 +1,15 @@
+@ List operations: sum
+@ Demonstrates list processing patterns
+
+@ Sum all elements in a list
+<< -> lst <<
+    0
+    lst LIST->
+    1 SWAP START
+        +
+    NEXT
+>> >>
+"sum" STO
+
+@ Test sum: 1+2+3+4+5 = 15
+{ 1 2 3 4 5 } sum

@@ -1,0 +1,98 @@
+//! Well-known library IDs and commands used by the compiler.
+//!
+//! This module defines constants for built-in library IDs and command codes
+//! that the compiler needs to emit bytecode. The actual implementations of
+//! these libraries are in rpl-stdlib.
+
+use rpl_core::{Symbol, Span, Word, make_call};
+use crate::compile::OutputBuffer;
+use crate::library::LibraryId;
+
+// =============================================================================
+// Well-known Library IDs
+// =============================================================================
+// These MUST match the IDs defined in rpl-stdlib library implementations!
+
+/// Real numbers library ID (matches RealNumbersLib::ID)
+pub const REAL_NUMBERS_LIB_ID: LibraryId = LibraryId::new(10);
+
+/// Arithmetic library ID (+, -, *, /) (matches ArithmeticLib::ID)
+pub const ARITHMETIC_LIB_ID: LibraryId = LibraryId::new(64);
+
+/// Symbolic library ID (matches SymbolicLib::ID)
+pub const SYMBOLIC_LIB_ID: LibraryId = LibraryId::new(56);
+
+/// Flow control library ID (IF/THEN/ELSE/END, loops, etc.) (matches FlowControlLib::ID)
+pub const FLOW_CONTROL_LIB_ID: LibraryId = LibraryId::new(9);
+
+/// Locals library ID (local variable binding) (matches LocalsLib::ID)
+pub const LOCALS_LIB_ID: LibraryId = LibraryId::new(32);
+
+/// Stack manipulation library ID (DUP, DROP, SWAP, etc.) (matches StackLib::ID)
+pub const STACK_LIB_ID: LibraryId = LibraryId::new(72);
+
+// =============================================================================
+// Flow Control Commands
+// =============================================================================
+
+/// CMD_JUMP - unconditional jump
+pub const CMD_JUMP: u16 = 1;
+/// CMD_LOOP_SETUP - set up DO...LOOP
+pub const CMD_LOOP_SETUP: u16 = 4;
+/// CMD_FOR_SETUP - set up FOR loop
+pub const CMD_FOR_SETUP: u16 = 11;
+/// CMD_FORUP_SETUP - set up FOR loop with STEP
+pub const CMD_FORUP_SETUP: u16 = 16;
+/// CMD_FORDN_SETUP - set up FOR loop with negative STEP
+pub const CMD_FORDN_SETUP: u16 = 17;
+/// CMD_IFERR_SETUP - set up IFERR...THEN...END
+pub const CMD_IFERR_SETUP: u16 = 21;
+
+// =============================================================================
+// Locals Commands
+// =============================================================================
+
+/// CMD_LOCAL_FRAME_SETUP - set up local frame
+pub const CMD_LOCAL_FRAME_SETUP: u16 = 0;
+/// CMD_LOCAL_FRAME_POP - pop local frame
+pub const CMD_LOCAL_FRAME_POP: u16 = 1;
+/// CMD_LOCAL_LOOKUP - look up local variable
+pub const CMD_LOCAL_LOOKUP: u16 = 2;
+
+// =============================================================================
+// Stack Commands
+// =============================================================================
+
+/// CMD_DROP - drop top of stack
+pub const CMD_DROP: u16 = 1;
+
+// =============================================================================
+// Helper Functions for Bytecode Emission
+// =============================================================================
+
+/// Emit bytecode for local frame setup.
+///
+/// Called by the compiler when `::` is encountered after parameter collection.
+pub fn emit_frame_setup(output: &mut OutputBuffer, params: &[Symbol], span: Span) {
+    output.emit(make_call(LOCALS_LIB_ID.as_u16(), CMD_LOCAL_FRAME_SETUP), span);
+    output.emit(params.len() as Word, span);
+    for param in params {
+        output.emit(param.as_u32(), span);
+    }
+}
+
+/// Emit bytecode for local frame pop.
+///
+/// Called by the compiler when `;` is encountered in a LocalBinding construct.
+pub fn emit_frame_pop(output: &mut OutputBuffer, param_count: usize, span: Span) {
+    output.emit(make_call(LOCALS_LIB_ID.as_u16(), CMD_LOCAL_FRAME_POP), span);
+    output.emit(param_count as Word, span);
+}
+
+/// Emit bytecode for local variable lookup.
+///
+/// Called by the compiler when a local variable reference is compiled.
+pub fn emit_local_lookup(output: &mut OutputBuffer, symbol: Symbol, span: Span) {
+    output.emit(make_call(LOCALS_LIB_ID.as_u16(), CMD_LOCAL_LOOKUP), span);
+    output.emit(symbol.as_u32(), span);
+}

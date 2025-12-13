@@ -1,0 +1,97 @@
+@ LSP Showcase - exercises many language features for testing
+@ This file is specifically designed to test LSP functionality:
+@ - Multiple function definitions (STO)
+@ - Local variables (->)
+@ - Loop variables (FOR)
+@ - Nested scopes
+@ - Various control flow constructs
+@ - Multiple data types
+
+@ === Helper functions ===
+
+@ Square a number
+<< -> x << x x * >> >>
+"square" STO
+
+@ Absolute value (manual implementation)
+<< -> n <<
+    IF n 0 <
+    THEN
+        n NEG
+    ELSE
+        n
+    END
+>> >>
+"myabs" STO
+
+@ === Newton's method for sqrt ===
+@ Like newton_sqrt.rpl but with more nesting for LSP testing
+
+<< -> x <<
+    x 2 / -> initial_guess <<
+        initial_guess
+        1 5 FOR iter
+            @ Each iteration: consume guess, produce new guess
+            -> guess <<
+                guess x guess / + 2 /
+            >>
+        NEXT
+    >>
+>> >>
+"sqrt" STO
+
+@ === Main algorithm: compute distance between two points ===
+@ Usage: x1 y1 x2 y2 distance -> sqrt((x2-x1)^2 + (y2-y1)^2)
+
+<< -> x1 y1 x2 y2 <<
+    @ Compute dx and dy using nested locals
+    x2 x1 - -> dx <<
+        y2 y1 - -> dy <<
+            @ Sum of squares, then sqrt
+            dx square dy square + sqrt
+        >>
+    >>
+>> >>
+"distance" STO
+
+@ === Test: distance from (0,0) to (3,4) should be 5 ===
+0 0 3 4 distance
+
+@ === Bonus: sum of distances in a triangle ===
+<< -> ax ay bx by cx cy <<
+    ax ay bx by distance
+    bx by cx cy distance +
+    cx cy ax ay distance +
+>> >>
+"triangle_perimeter" STO
+
+@ Test: right triangle (0,0), (3,0), (0,4)
+@ Perimeter = 3 + 4 + 5 = 12
+0 0 3 0 0 4 triangle_perimeter
+
+@ === Quadratic formula solver ===
+@ Solves ax^2 + bx + c = 0
+<< -> a b c <<
+    @ Compute discriminant: b^2 - 4ac
+    b SQ a c * 4 * - -> disc <<
+        @ Check if discriminant is negative
+        IF disc 0 < THEN
+            @ No real roots
+            0
+        ELSE
+            @ Compute two roots
+            disc SQRT -> sqrt_disc <<
+                @ root1 = (-b + sqrt_disc) / (2 * a)
+                b NEG sqrt_disc + a 2 * /
+                @ root2 = (-b - sqrt_disc) / (2 * a)
+                b NEG sqrt_disc - a 2 * /
+            >>
+        END
+    >>
+>> >>
+"quadratic_solver" STO
+
+@ Test: Solve x^2 - 5x + 6 = 0 (roots should be 2 and 3)
+1 -5 6 quadratic_solver
+@ Test: Solve x^2 + 2x + 5 = 0 (no real roots)
+1 2 5 quadratic_solver

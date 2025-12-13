@@ -1,0 +1,9 @@
+@ Symbolic expression manipulation
+@ Demonstrates symbolic math capabilities
+
+@ Create simple symbolic expressions
+'x'
+'y'
+
+@ Simple symbolic with numbers
+'2'

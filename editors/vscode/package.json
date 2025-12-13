@@ -1,0 +1,91 @@
+{
+  "name": "rpl-language",
+  "displayName": "RPL Language",
+  "description": "RPL language support with debugging",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages", "Debuggers"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:rpl", "onDebug"],
+  "contributes": {
+    "languages": [{
+      "id": "rpl",
+      "extensions": [".rpl"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "rpl",
+      "scopeName": "source.rpl",
+      "path": "./rpl.tmLanguage.json"
+    }],
+    "breakpoints": [
+      { "language": "rpl" }
+    ],
+    "debuggers": [{
+      "type": "rpl",
+      "label": "RPL Debug",
+      "languages": ["rpl"],
+      "configurationAttributes": {
+        "launch": {
+          "required": ["program"],
+          "properties": {
+            "program": {
+              "type": "string",
+              "description": "Path to the RPL program to debug",
+              "default": "${file}"
+            },
+            "stopOnEntry": {
+              "type": "boolean",
+              "description": "Stop at the first line of the program",
+              "default": true
+            }
+          }
+        }
+      },
+      "initialConfigurations": [
+        {
+          "type": "rpl",
+          "request": "launch",
+          "name": "Debug RPL Program",
+          "program": "${file}",
+          "stopOnEntry": true
+        }
+      ],
+      "configurationSnippets": [
+        {
+          "label": "RPL: Launch",
+          "description": "Launch and debug an RPL program",
+          "body": {
+            "type": "rpl",
+            "request": "launch",
+            "name": "Debug RPL Program",
+            "program": "^\"\\${file}\"",
+            "stopOnEntry": true
+          }
+        }
+      ]
+    }],
+    "configuration": {
+      "properties": {
+        "rpl.server.path": {
+          "type": "string",
+          "default": "rpl-lsp",
+          "description": "Path to rpl-lsp executable"
+        },
+        "rpl.debugger.path": {
+          "type": "string",
+          "default": "rpl-dap",
+          "description": "Path to rpl-dap debug adapter executable"
+        },
+        "rpl.hover.verbose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show debug info in hover (library, span, semantic kind)"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

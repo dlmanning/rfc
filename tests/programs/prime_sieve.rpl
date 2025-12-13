@@ -1,0 +1,37 @@
+@ Check if a number is prime using trial division
+@ Usage: 17 is_prime -> 1
+
+<< -> n <<
+    IF n 2 <
+    THEN
+        0
+    ELSE
+        IF n 2 ==
+        THEN
+            1
+        ELSE
+            @ Stack: (empty)
+            @ We'll keep: is_prime divisor
+            1 2
+            WHILE DUP DUP * n <= REPEAT
+                @ Stack: is_prime divisor
+                n OVER MOD 0 ==
+                IF THEN
+                    @ Found a divisor - set is_prime to 0
+                    @ Stack: is_prime divisor
+                    SWAP DROP 0 SWAP
+                    @ Stack: 0 divisor
+                END
+                1 +
+            END
+            DROP  @ drop the divisor, leave is_prime
+        END
+    END
+>> >>
+"is_prime" STO
+
+@ Test: 17 is prime
+17 is_prime
+
+@ Test: 18 is not prime
+18 is_prime

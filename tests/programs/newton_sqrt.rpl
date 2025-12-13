@@ -1,0 +1,15 @@
+@ Newton's method for square root
+@ Usage: 2 newton_sqrt -> 1.414...
+
+<< -> x <<
+    x 2 /
+    1 10 START
+        -> guess <<
+            guess x guess / + 2 /
+        >>
+    NEXT
+>> >>
+"newton_sqrt" STO
+
+@ Test: sqrt(2) = 1.41421...
+2 newton_sqrt

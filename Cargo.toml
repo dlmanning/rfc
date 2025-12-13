@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rpl-core",
+    "crates/rpl-source",
+    "crates/rpl-vm",
+    "crates/rpl-lang",
+    "crates/rpl-stdlib",
+    "crates/rpl-session",
+    "crates/rpl-lsp",
+    "crates/rpl-dap",
+    "crates/rpl-repl",
+]
+default-members = [
+    "crates/rpl-repl",
+    "crates/rpl-lsp",
+    "crates/rpl-dap",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+# Internal crates
+rpl-core = { path = "crates/rpl-core" }
+rpl-source = { path = "crates/rpl-source" }
+rpl-vm = { path = "crates/rpl-vm" }
+rpl-lang = { path = "crates/rpl-lang" }
+rpl-stdlib = { path = "crates/rpl-stdlib" }
+rpl-session = { path = "crates/rpl-session" }
+rpl-lsp = { path = "crates/rpl-lsp" }
+rpl-dap = { path = "crates/rpl-dap" }
+rpl-repl = { path = "crates/rpl-repl" }
+
+# External dependencies
+smallvec = "1"
+thiserror = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+lsp-types = "0.97"
+log = "0.4"
+dap = "0.4.1-alpha1"
+ratatui = "0.30.0-beta.0"
+crossterm = "0.28"
+dirs = "5"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+
+# Root package for integration tests
+[package]
+name = "rfc"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+rpl-core = { workspace = true }
+rpl-source = { workspace = true }
+rpl-vm = { workspace = true }
+rpl-lang = { workspace = true }
+rpl-stdlib = { workspace = true }
+rpl-session = { workspace = true }
+rpl-dap = { workspace = true }
