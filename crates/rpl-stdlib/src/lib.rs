@@ -1,13 +1,13 @@
 //! Standard libraries for the RPL language.
 //!
-//! This crate provides the 17 built-in libraries that implement RPL's
+//! This crate provides the built-in libraries that implement RPL's
 //! core functionality:
 //!
 //! - Literals: comments, binary integers, real numbers, strings
 //! - Data structures: lists, programs, symbolic expressions
 //! - Operations: arithmetic, binary ops, transcendentals
 //! - Control flow: if/then/else, loops, local variables
-//! - Storage: directory operations, user libraries
+//! - Storage: directory operations (including PACKDIR), user libraries
 //! - Stack manipulation
 
 mod arithmetic;

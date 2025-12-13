@@ -2813,3 +2813,154 @@ fn complex_hp_style_literal() {
         _ => panic!("Expected complex Object, got {:?}", values[0]),
     }
 }
+
+// ============================================================================
+// PACKDIR (Directory Serialization)
+// ============================================================================
+
+#[test]
+fn packdir_creates_object() {
+    // PACKDIR should create a PackDir object
+    let mut session = Session::new();
+    session.eval("42 \"x\" STO").unwrap();
+    let values = session.eval("PACKDIR").unwrap();
+    assert_eq!(values.len(), 1);
+    match &values[0] {
+        Value::Object { type_id, .. } => {
+            assert_eq!(*type_id, rpl_core::TypeId::PACKDIR);
+        }
+        _ => panic!("Expected PackDir object, got {:?}", values[0]),
+    }
+}
+
+#[test]
+fn packdir_roundtrip_single_var() {
+    // Pack directory, clear, unpack, verify value restored
+    // All in one eval to preserve stack between operations
+    let mut session = Session::new();
+    session.eval("42 \"x\" STO PACKDIR CLVAR UNPACKDIR").unwrap();
+    let values = session.eval("\"x\" RCL").unwrap();
+    assert_eq!(values.len(), 1);
+    match &values[0] {
+        Value::Real(r) => assert_eq!(*r, 42.0),
+        Value::Int(i) => assert_eq!(*i, 42),
+        _ => panic!("Expected number"),
+    }
+}
+
+#[test]
+fn packdir_roundtrip_multiple_vars() {
+    // Pack multiple variables of different types
+    let mut session = Session::new();
+    session.eval("42 \"num\" STO \"hello\" \"msg\" STO { 1 2 3 } \"lst\" STO").unwrap();
+    session.eval("PACKDIR CLVAR UNPACKDIR").unwrap();
+
+    // Verify all values restored
+    let values = session.eval("\"num\" RCL").unwrap();
+    match &values[0] {
+        Value::Real(r) => assert_eq!(*r, 42.0),
+        Value::Int(i) => assert_eq!(*i, 42),
+        _ => panic!("Expected number"),
+    }
+
+    let values = session.eval("\"msg\" RCL").unwrap();
+    assert_eq!(to_string(&values[0]), "hello");
+
+    let values = session.eval("\"lst\" RCL").unwrap();
+    match &values[0] {
+        Value::List(elements) => assert_eq!(elements.len(), 3),
+        _ => panic!("Expected list"),
+    }
+}
+
+#[test]
+fn packdir_unpack_into_named_subdir() {
+    // Unpack into a new named subdirectory
+    let mut session = Session::new();
+    // Store, pack, clear in one eval to preserve stack
+    session.eval("42 \"x\" STO PACKDIR CLVAR \"backup\" UNPACKDIR").unwrap();
+
+    // Variable should NOT be in current directory (it's in "backup" subdir)
+    assert!(session.eval("\"x\" RCL").is_err());
+
+    // Verify the subdirectory was created and has content
+    // PGDIR should FAIL because directory is not empty (contains x)
+    assert!(
+        session.eval("\"backup\" PGDIR").is_err(),
+        "PGDIR should fail because backup contains the unpacked variable"
+    );
+}
+
+#[test]
+fn packdir_packinfo_returns_names() {
+    // PACKINFO should return list of entry names
+    let mut session = Session::new();
+    session.eval("CLVAR").unwrap();
+    session.eval("1 \"alpha\" STO").unwrap();
+    session.eval("2 \"beta\" STO").unwrap();
+    let values = session.eval("PACKDIR PACKINFO").unwrap();
+    assert_eq!(values.len(), 1);
+    match &values[0] {
+        Value::List(elements) => {
+            assert_eq!(elements.len(), 2);
+            // Names should be alpha and beta (order may vary)
+            let names: Vec<String> = elements.iter().map(|e| to_string(e).to_owned()).collect();
+            assert!(names.contains(&"alpha".to_string()));
+            assert!(names.contains(&"beta".to_string()));
+        }
+        _ => panic!("Expected list of names"),
+    }
+}
+
+#[test]
+fn packdir_unpack_conflict_error() {
+    // UNPACKDIR should error if a name already exists
+    let mut session = Session::new();
+    session.eval("42 \"x\" STO").unwrap();
+    session.eval("PACKDIR").unwrap();
+    // Don't clear - x still exists
+    let result = session.eval("UNPACKDIR");
+    assert!(result.is_err(), "UNPACKDIR should fail on conflict");
+}
+
+#[test]
+fn packdir_pack_named_subdir() {
+    // Pack a specific subdirectory by name
+    // Note: We can only test packing an empty subdirectory since there's
+    // no RPL command to enter a directory programmatically
+    let mut session = Session::new();
+    session.eval("\"mydir\" CRDIR").unwrap();
+
+    // Pack "mydir" from parent and get PACKINFO in one eval
+    let values = session.eval("\"mydir\" PACKDIR PACKINFO").unwrap();
+    assert_eq!(values.len(), 1);
+    match &values[0] {
+        Value::List(elements) => {
+            assert_eq!(elements.len(), 0, "Empty directory should have no entries");
+        }
+        _ => panic!("Expected list from PACKINFO"),
+    }
+}
+
+#[test]
+fn packdir_with_subdirectories() {
+    // Pack directory that contains subdirectories
+    // Note: We can only test with empty subdirectories since there's no
+    // RPL command to enter a directory programmatically
+    let mut session = Session::new();
+    session.eval("CLVAR 1 \"rootvar\" STO \"sub\" CRDIR").unwrap();
+
+    // Pack root (includes empty subdirectory), clear, then unpack
+    session.eval("PACKDIR \"sub\" PGDIR CLVAR UNPACKDIR").unwrap();
+
+    // Verify root variable was restored
+    let values = session.eval("\"rootvar\" RCL").unwrap();
+    match &values[0] {
+        Value::Int(i) => assert_eq!(*i, 1),
+        Value::Real(r) => assert_eq!(*r, 1.0),
+        _ => panic!("Expected number"),
+    }
+
+    // Verify subdirectory was recreated (PGDIR should work on it - it's empty)
+    session.eval("\"sub\" PGDIR").unwrap();
+}

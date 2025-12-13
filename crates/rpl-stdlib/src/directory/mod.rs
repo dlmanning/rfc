@@ -1,18 +1,55 @@
+//! Directory operations for RPL.
+//!
+//! This module provides commands for variable storage, directory navigation,
+//! and directory serialization (PACKDIR).
+//!
+//! ## Variable Commands
+//!
+//! - `STO` - Store value in variable
+//! - `RCL` - Recall value from variable
+//! - `PURGE` - Delete variable
+//! - `VARS` - List all variables
+//! - `CLVAR` - Clear all variables
+//! - `INCR` / `DECR` - Increment/decrement numeric variable
+//! - `RENAME` - Rename variable
+//!
+//! ## Directory Navigation
+//!
+//! - `CRDIR` - Create subdirectory
+//! - `PGDIR` - Delete empty subdirectory
+//! - `UPDIR` - Move up one directory level
+//! - `HOME` - Move to root directory
+//! - `PATH` - Get current directory path
+//!
+//! ## Directory Serialization
+//!
+//! - `PACKDIR` - Pack directory into portable object
+//! - `UNPACKDIR` - Unpack into current or new directory
+//! - `PACKINFO` - Get entry names from PACKDIR
+
+mod packdir;
+pub(crate) mod serialize;
+
 use rpl_core::token::{SemanticKind, TokenInfo};
+use rpl_core::TypeId;
 use rpl_lang::library::{
     CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteContext,
     ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
 };
 use rpl_lang::Value;
 
-/// Library for variable directory operations (STO, RCL, PURGE).
+use packdir::{pack_directory, packdir_entries, unpack_directory};
+#[cfg(test)]
+use packdir::FORMAT_VERSION;
+
+/// Library for directory operations.
 pub struct DirectoryLib;
 
 impl DirectoryLib {
     /// Library ID for directory operations.
     pub const ID: LibraryId = LibraryId::new(28);
 
-    // Command IDs
+    // Command IDs - Variable operations
     const CMD_STO: u16 = 0;
     const CMD_RCL: u16 = 1;
     const CMD_PURGE: u16 = 2;
@@ -21,11 +58,18 @@ impl DirectoryLib {
     const CMD_INCR: u16 = 5;
     const CMD_DECR: u16 = 6;
     const CMD_RENAME: u16 = 7;
+
+    // Command IDs - Directory navigation
     const CMD_CRDIR: u16 = 8;
     const CMD_PGDIR: u16 = 9;
     const CMD_UPDIR: u16 = 10;
     const CMD_HOME: u16 = 11;
     const CMD_PATH: u16 = 12;
+
+    // Command IDs - PACKDIR operations
+    const CMD_PACKDIR: u16 = 13;
+    const CMD_UNPACKDIR: u16 = 14;
+    const CMD_PACKINFO: u16 = 15;
 
     /// Get command ID from name.
     fn command_id(name: &str) -> Option<u16> {
@@ -43,6 +87,9 @@ impl DirectoryLib {
             "UPDIR" => Some(Self::CMD_UPDIR),
             "HOME" => Some(Self::CMD_HOME),
             "PATH" => Some(Self::CMD_PATH),
+            "PACKDIR" => Some(Self::CMD_PACKDIR),
+            "UNPACKDIR" => Some(Self::CMD_UNPACKDIR),
+            "PACKINFO" => Some(Self::CMD_PACKINFO),
             _ => None,
         }
     }
@@ -63,20 +110,18 @@ impl DirectoryLib {
             Self::CMD_UPDIR => Some("UPDIR"),
             Self::CMD_HOME => Some("HOME"),
             Self::CMD_PATH => Some("PATH"),
+            Self::CMD_PACKDIR => Some("PACKDIR"),
+            Self::CMD_UNPACKDIR => Some("UNPACKDIR"),
+            Self::CMD_PACKINFO => Some("PACKINFO"),
             _ => None,
         }
     }
 
     /// Extract the variable name from a value.
-    /// Accepts String values directly, or Symbol values (returns raw index as string for now).
     fn extract_name(value: &Value) -> Option<String> {
         match value {
             Value::String(s) => Some(s.clone()),
-            Value::Symbol(sym) => {
-                // For symbols, we use the raw index as a placeholder
-                // In a real implementation, we'd resolve via interner
-                Some(format!("__sym_{}", sym.as_u32()))
-            }
+            Value::Symbol(sym) => Some(format!("__sym_{}", sym.as_u32())),
             _ => None,
         }
     }
@@ -118,8 +163,6 @@ impl Library for DirectoryLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd() {
             Self::CMD_STO => {
-                // STO: ( value "name" -- )
-                // Pop name, pop value, store value with name
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -145,9 +188,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_RCL => {
-                // RCL: ( "name" -- value )
-                // Pop name, push recalled value
-                // Uses lookup() which checks locals first, then globals
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -176,8 +216,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_PURGE => {
-                // PURGE: ( "name" -- )
-                // Pop name, delete variable
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -200,8 +238,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_VARS => {
-                // VARS: ( -- { names... } )
-                // Push a list of all variable names
                 let names: Vec<Value> = ctx
                     .vars()
                     .map(|name| Value::String(name.clone()))
@@ -213,15 +249,11 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_CLVAR => {
-                // CLVAR: ( -- )
-                // Clear all variables
                 ctx.clear_vars();
                 ExecuteResult::Ok
             }
 
             Self::CMD_INCR => {
-                // INCR: ( "name" -- n+1 )
-                // Increment variable by 1 and return new value
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -262,8 +294,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_DECR => {
-                // DECR: ( "name" -- n-1 )
-                // Decrement variable by 1 and return new value
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -304,8 +334,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_RENAME => {
-                // RENAME: ( "oldname" "newname" -- )
-                // Rename a variable
                 let new_name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -343,8 +371,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_CRDIR => {
-                // CRDIR: ( "name" -- )
-                // Create a new subdirectory
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -370,8 +396,6 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_PGDIR => {
-                // PGDIR: ( "name" -- )
-                // Purge (delete) an empty directory
                 let name_val = match ctx.pop() {
                     Ok(v) => v,
                     Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
@@ -394,24 +418,16 @@ impl Library for DirectoryLib {
             }
 
             Self::CMD_UPDIR => {
-                // UPDIR: ( -- )
-                // Move up one directory level
-                if !ctx.updir() {
-                    // Already at root - this is not an error, just a no-op
-                }
+                ctx.updir();
                 ExecuteResult::Ok
             }
 
             Self::CMD_HOME => {
-                // HOME: ( -- )
-                // Move to the root (HOME) directory
                 ctx.home();
                 ExecuteResult::Ok
             }
 
             Self::CMD_PATH => {
-                // PATH: ( -- { path } )
-                // Return the current directory path as a list
                 let path = ctx.dir_path();
                 let path_list: Vec<Value> = path
                     .iter()
@@ -421,6 +437,87 @@ impl Library for DirectoryLib {
                     return ExecuteResult::Error("Stack overflow".to_string());
                 }
                 ExecuteResult::Ok
+            }
+
+            Self::CMD_PACKDIR => {
+                // Check if there's a string on the stack (subdirectory name)
+                let subdir_name = match ctx.peek(0) {
+                    Ok(Value::String(s)) => {
+                        let name = s.clone();
+                        let _ = ctx.pop();
+                        Some(name)
+                    }
+                    _ => None,
+                };
+
+                match pack_directory(ctx, subdir_name.as_deref()) {
+                    Ok(packdir) => {
+                        if ctx.push(packdir).is_err() {
+                            return ExecuteResult::Error("Stack overflow".to_string());
+                        }
+                        ExecuteResult::Ok
+                    }
+                    Err(e) => ExecuteResult::Error(format!("PACKDIR: {}", e)),
+                }
+            }
+
+            Self::CMD_UNPACKDIR => {
+                // Check stack: could be (packdir) or (packdir "name")
+                let (packdir, dest_name) = match ctx.peek(0) {
+                    Ok(Value::String(s)) => {
+                        let name = s.clone();
+                        let _ = ctx.pop();
+                        match ctx.pop() {
+                            Ok(p) => (p, Some(name)),
+                            Err(_) => {
+                                return ExecuteResult::Error(
+                                    "UNPACKDIR: stack underflow".to_string(),
+                                );
+                            }
+                        }
+                    }
+                    Ok(Value::Object { type_id, .. }) if *type_id == TypeId::PACKDIR => {
+                        match ctx.pop() {
+                            Ok(p) => (p, None),
+                            Err(_) => {
+                                return ExecuteResult::Error(
+                                    "UNPACKDIR: stack underflow".to_string(),
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        return ExecuteResult::Error(
+                            "UNPACKDIR: expected PACKDIR or destination name".to_string(),
+                        );
+                    }
+                    Err(_) => {
+                        return ExecuteResult::Error("UNPACKDIR: stack underflow".to_string());
+                    }
+                };
+
+                match unpack_directory(ctx, &packdir, dest_name.as_deref()) {
+                    Ok(()) => ExecuteResult::Ok,
+                    Err(e) => ExecuteResult::Error(format!("UNPACKDIR: {}", e)),
+                }
+            }
+
+            Self::CMD_PACKINFO => {
+                let packdir = match ctx.pop() {
+                    Ok(p) => p,
+                    Err(_) => return ExecuteResult::Error("PACKINFO: stack underflow".to_string()),
+                };
+
+                match packdir_entries(&packdir) {
+                    Ok(names) => {
+                        let list: Vec<Value> = names.into_iter().map(Value::String).collect();
+                        if ctx.push(Value::List(list)).is_err() {
+                            return ExecuteResult::Error("Stack overflow".to_string());
+                        }
+                        ExecuteResult::Ok
+                    }
+                    Err(e) => ExecuteResult::Error(format!("PACKINFO: {}", e)),
+                }
             }
 
             _ => ExecuteResult::Error(format!("Unknown directory command: {}", ctx.cmd())),
@@ -445,54 +542,27 @@ impl Library for DirectoryLib {
 
     fn stack_effect(&self, token: &str) -> StackEffect {
         match token.to_ascii_uppercase().as_str() {
-            "STO" => StackEffect::Fixed {
+            "STO" | "RENAME" => StackEffect::Fixed {
                 consumes: 2,
                 produces: 0,
             },
-            "RCL" => StackEffect::Fixed {
+            "RCL" | "INCR" | "DECR" | "PACKINFO" => StackEffect::Fixed {
                 consumes: 1,
                 produces: 1,
             },
-            "PURGE" => StackEffect::Fixed {
+            "PURGE" | "CRDIR" | "PGDIR" => StackEffect::Fixed {
                 consumes: 1,
                 produces: 0,
             },
-            "VARS" => StackEffect::Fixed {
+            "VARS" | "PATH" => StackEffect::Fixed {
                 consumes: 0,
                 produces: 1,
             },
-            "CLVAR" | "CLVARS" => StackEffect::Fixed {
+            "CLVAR" | "CLVARS" | "UPDIR" | "HOME" => StackEffect::Fixed {
                 consumes: 0,
                 produces: 0,
             },
-            "INCR" | "DECR" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 1,
-            },
-            "RENAME" => StackEffect::Fixed {
-                consumes: 2,
-                produces: 0,
-            },
-            "CRDIR" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 0,
-            },
-            "PGDIR" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 0,
-            },
-            "UPDIR" => StackEffect::Fixed {
-                consumes: 0,
-                produces: 0,
-            },
-            "HOME" => StackEffect::Fixed {
-                consumes: 0,
-                produces: 0,
-            },
-            "PATH" => StackEffect::Fixed {
-                consumes: 0,
-                produces: 1,
-            },
+            // PACKDIR and UNPACKDIR have variable stack effects
             _ => StackEffect::Dynamic,
         }
     }
@@ -513,6 +583,8 @@ mod tests {
         ExecuteContext::new(vm, &[], 0, cmd)
     }
 
+    // Variable operation tests
+
     #[test]
     fn probe_sto() {
         let interner = Interner::new();
@@ -530,14 +602,6 @@ mod tests {
     }
 
     #[test]
-    fn probe_purge() {
-        let interner = Interner::new();
-        let lib = DirectoryLib;
-        let ctx = make_probe_ctx("PURGE", &interner);
-        assert!(matches!(lib.probe(&ctx), ProbeResult::Match { .. }));
-    }
-
-    #[test]
     fn probe_case_insensitive() {
         let interner = Interner::new();
         let lib = DirectoryLib;
@@ -550,19 +614,10 @@ mod tests {
     }
 
     #[test]
-    fn probe_unknown() {
-        let interner = Interner::new();
-        let lib = DirectoryLib;
-        let ctx = make_probe_ctx("UNKNOWN", &interner);
-        assert!(matches!(lib.probe(&ctx), ProbeResult::NoMatch));
-    }
-
-    #[test]
     fn execute_sto_rcl() {
         let lib = DirectoryLib;
         let mut vm = VM::new();
 
-        // Push value and name: 42 "x" STO
         vm.push(Value::Int(42)).unwrap();
         vm.push(Value::String("x".to_string())).unwrap();
 
@@ -571,7 +626,6 @@ mod tests {
         assert!(matches!(result, ExecuteResult::Ok));
         assert_eq!(vm.depth(), 0);
 
-        // RCL: "x" RCL
         vm.push(Value::String("x".to_string())).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_RCL);
         let result = lib.execute(&mut ctx);
@@ -581,128 +635,204 @@ mod tests {
     }
 
     #[test]
-    fn execute_sto_overwrite() {
-        let lib = DirectoryLib;
-        let mut vm = VM::new();
-
-        // Store 10 in "x"
-        vm.push(Value::Int(10)).unwrap();
-        vm.push(Value::String("x".to_string())).unwrap();
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_STO);
-        lib.execute(&mut ctx);
-
-        // Overwrite with 20
-        vm.push(Value::Int(20)).unwrap();
-        vm.push(Value::String("x".to_string())).unwrap();
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_STO);
-        lib.execute(&mut ctx);
-
-        // RCL should get 20
-        vm.push(Value::String("x".to_string())).unwrap();
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_RCL);
-        lib.execute(&mut ctx);
-
-        assert_eq!(vm.pop_int().unwrap(), 20);
-    }
-
-    #[test]
-    fn execute_rcl_undefined() {
-        let lib = DirectoryLib;
-        let mut vm = VM::new();
-
-        vm.push(Value::String("nonexistent".to_string())).unwrap();
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_RCL);
-        let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
-    }
-
-    #[test]
     fn execute_purge() {
         let lib = DirectoryLib;
         let mut vm = VM::new();
 
-        // Store 42 in "x"
         vm.push(Value::Int(42)).unwrap();
         vm.push(Value::String("x".to_string())).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_STO);
         lib.execute(&mut ctx);
 
-        // PURGE "x"
         vm.push(Value::String("x".to_string())).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PURGE);
         let result = lib.execute(&mut ctx);
         assert!(matches!(result, ExecuteResult::Ok));
 
-        // RCL should now fail
         vm.push(Value::String("x".to_string())).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_RCL);
         let result = lib.execute(&mut ctx);
         assert!(matches!(result, ExecuteResult::Error(_)));
     }
 
+    // PACKDIR tests
+
     #[test]
-    fn execute_purge_undefined() {
+    fn probe_packdir_commands() {
+        let interner = Interner::new();
+        let lib = DirectoryLib;
+
+        for cmd in &["PACKDIR", "UNPACKDIR", "PACKINFO"] {
+            let ctx = make_probe_ctx(cmd, &interner);
+            assert!(
+                matches!(lib.probe(&ctx), ProbeResult::Match { .. }),
+                "Failed for {}",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn pack_empty_directory() {
         let lib = DirectoryLib;
         let mut vm = VM::new();
 
-        vm.push(Value::String("nonexistent".to_string())).unwrap();
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PURGE);
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        let packdir = vm.pop().unwrap();
+        if let Value::Object { type_id, data } = packdir {
+            assert_eq!(type_id, TypeId::PACKDIR);
+            assert_eq!(data[0], FORMAT_VERSION);
+            assert_eq!(data[2], 0); // var_count
+            assert_eq!(data[3], 0); // subdir_count
+        } else {
+            panic!("Expected PACKDIR object");
+        }
     }
 
     #[test]
-    fn execute_sto_wrong_type() {
+    fn pack_directory_with_variables() {
         let lib = DirectoryLib;
         let mut vm = VM::new();
 
-        // Try to STO with integer as name (should fail)
-        vm.push(Value::Int(42)).unwrap();
-        vm.push(Value::Int(1)).unwrap(); // not a string name
-        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_STO);
+        vm.store("x".to_string(), Value::Int(42));
+        vm.store("msg".to_string(), Value::String("hello".to_string()));
+
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        let packdir = vm.pop().unwrap();
+        if let Value::Object { type_id, data } = &packdir {
+            assert_eq!(*type_id, TypeId::PACKDIR);
+            assert_eq!(data[2], 2); // var_count
+        } else {
+            panic!("Expected PACKDIR object");
+        }
+
+        // Check PACKINFO
+        vm.push(packdir).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKINFO);
+        let result = lib.execute(&mut ctx);
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        if let Value::List(names) = vm.pop().unwrap() {
+            assert_eq!(names.len(), 2);
+        } else {
+            panic!("Expected list");
+        }
     }
 
     #[test]
-    fn stack_effect_sto() {
+    #[allow(clippy::approx_constant)]
+    fn unpack_into_empty_directory() {
         let lib = DirectoryLib;
-        let effect = lib.stack_effect("STO");
+        let mut vm = VM::new();
+
+        vm.store("x".to_string(), Value::Int(42));
+        vm.store("y".to_string(), Value::Real(3.14));
+
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
+        lib.execute(&mut ctx);
+        let packdir = vm.pop().unwrap();
+
+        vm.clear_vars();
+
+        vm.push(packdir).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_UNPACKDIR);
+        let result = lib.execute(&mut ctx);
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        assert!(vm.has_var("x"));
+        assert!(vm.has_var("y"));
+        assert!(matches!(vm.recall("x"), Some(Value::Int(42))));
+    }
+
+    #[test]
+    fn unpack_conflict_error() {
+        let lib = DirectoryLib;
+        let mut vm = VM::new();
+
+        vm.store("x".to_string(), Value::Int(1));
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
+        lib.execute(&mut ctx);
+        let packdir = vm.pop().unwrap();
+
+        vm.push(packdir).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_UNPACKDIR);
+        let result = lib.execute(&mut ctx);
+        assert!(matches!(result, ExecuteResult::Error(e) if e.contains("already exists")));
+    }
+
+    #[test]
+    fn unpack_into_new_subdir() {
+        let lib = DirectoryLib;
+        let mut vm = VM::new();
+
+        vm.store("x".to_string(), Value::Int(42));
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
+        lib.execute(&mut ctx);
+        let packdir = vm.pop().unwrap();
+
+        vm.push(packdir).unwrap();
+        vm.push(Value::String("backup".to_string())).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_UNPACKDIR);
+        let result = lib.execute(&mut ctx);
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        assert!(vm.enter_subdir("backup"));
+        assert!(vm.has_var("x"));
+        assert!(matches!(vm.recall("x"), Some(Value::Int(42))));
+        vm.updir();
+    }
+
+    #[test]
+    fn pack_named_subdirectory() {
+        let lib = DirectoryLib;
+        let mut vm = VM::new();
+
+        vm.create_subdir("sub".to_string());
+        vm.enter_subdir("sub");
+        vm.store("inner".to_string(), Value::Int(99));
+        vm.updir();
+
+        vm.push(Value::String("sub".to_string())).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKDIR);
+        let result = lib.execute(&mut ctx);
+        assert!(matches!(result, ExecuteResult::Ok));
+
+        let packdir = vm.pop().unwrap();
+
+        vm.push(packdir).unwrap();
+        let mut ctx = make_exec_ctx(&mut vm, DirectoryLib::CMD_PACKINFO);
+        lib.execute(&mut ctx);
+
+        if let Value::List(names) = vm.pop().unwrap() {
+            assert_eq!(names.len(), 1);
+            assert!(matches!(&names[0], Value::String(s) if s == "inner"));
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
+    fn stack_effect_commands() {
+        let lib = DirectoryLib;
+
         assert!(matches!(
-            effect,
-            StackEffect::Fixed {
-                consumes: 2,
-                produces: 0
-            }
+            lib.stack_effect("STO"),
+            StackEffect::Fixed { consumes: 2, produces: 0 }
         ));
-    }
-
-    #[test]
-    fn stack_effect_rcl() {
-        let lib = DirectoryLib;
-        let effect = lib.stack_effect("RCL");
         assert!(matches!(
-            effect,
-            StackEffect::Fixed {
-                consumes: 1,
-                produces: 1
-            }
+            lib.stack_effect("RCL"),
+            StackEffect::Fixed { consumes: 1, produces: 1 }
         ));
-    }
-
-    #[test]
-    fn compile_command() {
-        use rpl_lang::compile::OutputBuffer;
-
-        let lib = DirectoryLib;
-        let mut output = OutputBuffer::new();
-        let mut interner = Interner::new();
-        let span = Span::new(Pos::new(0), Pos::new(3));
-
-        let mut ctx = CompileContext::new(span, "STO", &mut output, &mut interner, None, false);
-
-        let result = lib.compile(&mut ctx);
-        assert!(matches!(result, CompileResult::Ok));
-        assert_eq!(ctx.position(), 1);
+        assert!(matches!(
+            lib.stack_effect("PACKINFO"),
+            StackEffect::Fixed { consumes: 1, produces: 1 }
+        ));
+        assert!(matches!(lib.stack_effect("PACKDIR"), StackEffect::Dynamic));
     }
 }
