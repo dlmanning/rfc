@@ -8,7 +8,7 @@ A modern, open-source implementation of the RPL programming language in Rust. RP
 - **Interactive REPL** - Full-featured terminal UI with split-pane display, syntax highlighting, and command history
 - **Language Server Protocol (LSP)** - Editor integration with completions, hover, go-to-definition, and semantic highlighting
 - **Debug Adapter Protocol (DAP)** - Full debugging support with breakpoints, stepping, and variable inspection
-- **17 Standard Libraries** - Arithmetic, transcendentals, strings, lists, flow control, and more
+- **19 Standard Libraries** - Arithmetic, transcendentals, strings, lists, flow control, blobs, and more
 - **HP RPL Compatible** - Designed to be compatible with classic HP calculator RPL
 
 ## Quick Start
@@ -88,7 +88,7 @@ crates/
   rpl-source/    Source file management and diagnostic rendering
   rpl-vm/        Virtual machine and value types
   rpl-lang/      Language pipeline: analysis, compilation, decompilation
-  rpl-stdlib/    17 built-in standard libraries
+  rpl-stdlib/    19 built-in standard libraries
   rpl-session/   High-level API for applications
   rpl-repl/      Interactive terminal REPL (ratatui-based)
   rpl-lsp/       Language Server Protocol implementation
@@ -103,23 +103,27 @@ tests/           Integration tests and example programs
 
 | Library | Description |
 |---------|-------------|
-| StackLib | Stack manipulation (DUP, SWAP, DROP, OVER, etc.) |
-| ArithmeticLib | Basic arithmetic operators (+, -, *, /) |
-| TranscendentalsLib | Transcendental functions (SIN, COS, EXP, LN, etc.) |
-| RealNumbersLib | Floating-point operations |
-| ComplexLib | Complex number support |
-| BinaryIntLib | Binary integer operations |
-| StringsLib | String manipulation |
-| ListsLib | List operations |
-| ProgramsLib | Program objects and evaluation |
-| FlowControlLib | Control flow (IF/THEN/ELSE, loops, error handling) |
-| LocalsLib | Local variable support |
-| DirectoryLib | Global variables and directory management |
-| SymbolicLib | Symbolic expressions |
-| LibPtrLib | Library pointers |
-| PlotLib | Plotting functionality |
-| CommentsLib | Comment parsing |
-| IdentifiersLib | Variable name handling |
+| ArithmeticLib | Basic arithmetic operators (+, -, *, /, ^, MOD) |
+| BinaryIntLib | Binary integer literals (#1010b, #FFh, #777o) |
+| BinaryOpsLib | Bitwise operations (AND, OR, XOR, SL, SR) |
+| BlobLib | Binary data containers (MKBLOB, BLOBTYPE, BLOBSIZE) |
+| CommentsLib | Comment parsing (@ ...) |
+| ComplexLib | Complex number support ((re,im) literals) |
+| DirectoryLib | Variables and directory management (STO, RCL, PURGE) |
+| FlowControlLib | Control flow (IF/THEN/ELSE, FOR/NEXT, WHILE) |
+| IdentifiersLib | Variable and command name resolution |
+| LibPtrLib | User libraries and library pointers |
+| ListsLib | List operations (HEAD, TAIL, GET, MAP, SORT) |
+| LocalsLib | Local variables (→ x y « ... ») |
+| PlotLib | Plot objects and rendering |
+| ProgramsLib | Program objects and evaluation (« ... ») |
+| RealNumbersLib | Real number literals and parsing |
+| StackLib | Stack manipulation (DUP, SWAP, DROP, ROT, PICK) |
+| StringsLib | String literals and manipulation |
+| SymbolicLib | Symbolic expressions ('name') |
+| TranscendentalsLib | Transcendental functions (SIN, COS, EXP, LN) |
+
+See [rpl-stdlib/README.md](crates/rpl-stdlib/README.md) for the complete command reference and implementation guide.
 
 ## Editor Integration
 
@@ -136,8 +140,7 @@ A VS Code extension is available in `editors/vscode/` providing:
 ## Documentation
 
 - [RPL Commands Reference](RPL-COMMANDS.md) - Complete command documentation
-- [Implementing a Library](docs/implementing-a-library.md) - Guide for adding new libraries
-- [Differences from HP RPL](docs/differences-from-hp-rpl.md) - Compatibility notes
+- [Standard Library Guide](crates/rpl-stdlib/README.md) - Library reference and implementation guide
 
 ## Architecture
 
