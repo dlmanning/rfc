@@ -16,6 +16,7 @@ impl TypeId {
     pub const RENDER_STATUS: TypeId = TypeId(89);
     pub const LIBRARY: TypeId = TypeId(102);
     pub const LIBPTR: TypeId = TypeId(103);
+    pub const BLOB: TypeId = TypeId(110);
 
     pub fn new(id: u16) -> Self {
         Self(id)
@@ -45,6 +46,7 @@ impl TypeId {
             Self::RENDER_STATUS => Some("RenderStatus"),
             Self::LIBRARY => Some("Library"),
             Self::LIBPTR => Some("LibPtr"),
+            Self::BLOB => Some("Blob"),
             _ => None,
         }
     }

@@ -13,6 +13,7 @@
 mod arithmetic;
 mod binary_int;
 mod binary_ops;
+pub mod blob;
 mod comments;
 mod complex;
 mod directory;
@@ -32,6 +33,7 @@ mod transcendentals;
 pub use arithmetic::ArithmeticLib;
 pub use binary_int::BinaryIntLib;
 pub use binary_ops::BinaryOpsLib;
+pub use blob::BlobLib;
 pub use comments::CommentsLib;
 pub use complex::ComplexLib;
 pub use directory::DirectoryLib;
@@ -55,6 +57,7 @@ use rpl_lang::operator::OperatorRegistry;
 pub fn register_standard_libs(registry: &mut LibraryRegistry) {
     registry.register(CommentsLib, 115);
     registry.register(BinaryIntLib, 110);
+    registry.register(BlobLib, 105);
     registry.register(RealNumbersLib, 100);
     registry.register(ComplexLib, 95); // High priority for (re,im) literal parsing
     registry.register(StringsLib, 80);
@@ -91,6 +94,7 @@ mod tests {
 
         assert!(registry.get(CommentsLib.id()).is_some());
         assert!(registry.get(BinaryIntLib.id()).is_some());
+        assert!(registry.get(BlobLib.id()).is_some());
         assert!(registry.get(BinaryOpsLib.id()).is_some());
         assert!(registry.get(RealNumbersLib.id()).is_some());
         assert!(registry.get(StringsLib.id()).is_some());
