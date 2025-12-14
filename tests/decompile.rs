@@ -196,10 +196,11 @@ fn round_trip_stack_ops() {
 
 #[test]
 fn decompile_arithmetic_operators() {
-    assert_decompile_eq("1 2 +", "1 2 +");
-    assert_decompile_eq("1 2 -", "1 2 -");
-    assert_decompile_eq("1 2 *", "1 2 *");
-    assert_decompile_eq("1 2 /", "1 2 /");
+    // Operators are decompiled to their command names
+    assert_decompile_eq("1 2 +", "1 2 ADD");
+    assert_decompile_eq("1 2 -", "1 2 SUB");
+    assert_decompile_eq("1 2 *", "1 2 MUL");
+    assert_decompile_eq("1 2 /", "1 2 DIV");
 }
 
 #[test]
@@ -207,15 +208,16 @@ fn decompile_arithmetic_functions() {
     assert_decompile_eq("4 SQRT", "4 SQRT");
     assert_decompile_eq("-5 ABS", "-5 ABS");
     assert_decompile_eq("3 NEG", "3 NEG");
-    assert_decompile_eq("2 3 ^", "2 3 ^");
+    assert_decompile_eq("2 3 ^", "2 3 POW");  // ^ becomes POW
 }
 
 #[test]
 fn round_trip_arithmetic() {
-    assert_round_trip("1 2 +");
-    assert_round_trip("10 3 - 2 * 4 /");
+    // Use command names since operators decompile to command names
+    assert_round_trip("1 2 ADD");
+    assert_round_trip("10 3 SUB 2 MUL 4 DIV");
     assert_round_trip("4 SQRT");
-    assert_round_trip("2 10 ^");
+    assert_round_trip("2 10 POW");
 }
 
 // ============================================================================
@@ -224,19 +226,21 @@ fn round_trip_arithmetic() {
 
 #[test]
 fn decompile_comparison_operators() {
-    assert_decompile_eq("1 2 <", "1 2 <");
-    assert_decompile_eq("1 2 >", "1 2 >");
-    assert_decompile_eq("1 2 ==", "1 2 ==");
-    assert_decompile_eq("1 2 !=", "1 2 !=");
-    assert_decompile_eq("1 2 <=", "1 2 <=");
-    assert_decompile_eq("1 2 >=", "1 2 >=");
+    // Comparison operators are decompiled to their command names
+    assert_decompile_eq("1 2 <", "1 2 LT");
+    assert_decompile_eq("1 2 >", "1 2 GT");
+    assert_decompile_eq("1 2 ==", "1 2 EQ");
+    assert_decompile_eq("1 2 !=", "1 2 NE");
+    assert_decompile_eq("1 2 <=", "1 2 LE");
+    assert_decompile_eq("1 2 >=", "1 2 GE");
 }
 
 #[test]
 fn round_trip_comparison() {
-    assert_round_trip("1 2 <");
-    assert_round_trip("5 5 == 3 4 !=");
-    assert_round_trip("1 2 <= 3 4 >=");
+    // Use command names since operators decompile to command names
+    assert_round_trip("1 2 LT");
+    assert_round_trip("5 5 EQ 3 4 NE");
+    assert_round_trip("1 2 LE 3 4 GE");
 }
 
 // ============================================================================
@@ -320,7 +324,7 @@ fn decompile_empty_program() {
 
 #[test]
 fn decompile_program_with_body() {
-    assert_decompile_eq(":: 1 2 + ;", ":: 1 2 + ;");
+    assert_decompile_eq(":: 1 2 + ;", ":: 1 2 ADD ;");
 }
 
 #[test]
@@ -330,14 +334,15 @@ fn decompile_nested_programs() {
 
 #[test]
 fn decompile_program_with_eval() {
+    // Operators inside programs retain their symbolic form
     assert_decompile_eq(":: DUP * ; EVAL", ":: DUP * ; EVAL");
 }
 
 #[test]
 fn round_trip_programs() {
     assert_round_trip(":: ;");
-    assert_round_trip(":: 1 2 + ;");
-    assert_round_trip(":: DUP * ;");
+    assert_round_trip(":: 1 2 ADD ;");
+    assert_round_trip(":: DUP MUL ;");
     assert_round_trip(":: :: 1 ; :: 2 ; ;");
 }
 
@@ -426,20 +431,22 @@ fn decompile_local_binding_simple() {
 
 #[test]
 fn decompile_local_binding_multiple_params() {
+    // Operators inside program bodies retain their symbolic form
     assert_decompile_eq("1 2 -> a b :: a b + ;", "1 2 → a b :: a b +  ;");
 }
 
 #[test]
 fn decompile_local_binding_with_body() {
+    // Operators inside program bodies retain their symbolic form
     assert_decompile_eq("5 -> x :: x x * ;", "5 → x :: x x *  ;");
 }
 
 #[test]
 fn round_trip_local_bindings() {
     assert_round_trip("5 -> x :: x ;");
-    assert_round_trip("1 2 -> a b :: a b + ;");
-    assert_round_trip("5 -> x :: x x * ;");
-    assert_round_trip("3 -> n :: n 1 > IF n 1 - THEN END ;");
+    assert_round_trip("1 2 -> a b :: a b ADD ;");
+    assert_round_trip("5 -> x :: x x MUL ;");
+    assert_round_trip("3 -> n :: n 1 GT IF n 1 SUB THEN END ;");
 }
 
 // ============================================================================
@@ -475,6 +482,7 @@ fn round_trip_symbolic() {
 #[test]
 fn decompile_string_ops() {
     assert_decompile_eq("\"hello\" SIZE", "\"hello\" SIZE");
+    // String concatenation uses the + operator symbol
     assert_decompile_eq("\"hello\" \"world\" +", "\"hello\" \"world\" +");
     assert_decompile_eq("65 CHR", "65 CHR");
     assert_decompile_eq("\"A\" ASC", "\"A\" ASC");
@@ -493,12 +501,12 @@ fn round_trip_string_ops() {
 
 #[test]
 fn round_trip_complex_program() {
-    assert_round_trip(":: { 1 2 3 } :: DUP + ; ;");
+    assert_round_trip(":: { 1 2 3 } :: DUP ADD ; ;");
 }
 
 #[test]
 fn round_trip_program_with_control_flow() {
-    assert_round_trip(":: 1 2 < IF 3 THEN 4 ELSE 5 END ;");
+    assert_round_trip(":: 1 2 LT IF 3 THEN 4 ELSE 5 END ;");
 }
 
 #[test]
@@ -509,7 +517,7 @@ fn round_trip_nested_everything() {
 #[test]
 fn round_trip_realistic_program() {
     // A more realistic program: factorial-like structure
-    assert_round_trip(":: DUP 1 > IF DUP 1 - :: DUP 1 > IF DUP 1 - THEN END ; * THEN END ;");
+    assert_round_trip(":: DUP 1 GT IF DUP 1 SUB :: DUP 1 GT IF DUP 1 SUB THEN END ; MUL THEN END ;");
 }
 
 #[test]
@@ -517,32 +525,32 @@ fn round_trip_complex_realistic_program() {
     // A complex program combining many features:
     // - Local variable bindings
     // - Nested control flow (IF/THEN/ELSE, WHILE/REPEAT)
-    // - Arithmetic and comparison operators
+    // - Arithmetic and comparison operators (using command names)
     // - Stack operations
     // - Lists
     // - Nested programs
     // - Symbolic expressions
 
     // Fibonacci-like computation with local bindings
-    assert_round_trip("10 -> n :: 0 1 n 1 > WHILE OVER OVER + ROT DROP n 1 - -> n :: n ; REPEAT END ;");
+    assert_round_trip("10 -> n :: 0 1 n 1 GT WHILE OVER OVER ADD ROT DROP n 1 SUB -> n :: n ; REPEAT END ;");
 
     // Conditional list processing
-    assert_round_trip("{ 1 2 3 } -> lst :: lst SIZE 0 > IF lst 1 GET lst 2 GET + ELSE 0 END ;");
+    assert_round_trip("{ 1 2 3 } -> lst :: lst SIZE 0 GT IF lst 1 GET lst 2 GET ADD ELSE 0 END ;");
 
     // Nested programs with control flow
-    assert_round_trip(":: -> x :: x 0 > IF x 1 - -> y :: y ; ELSE 0 END ; ;");
+    assert_round_trip(":: -> x :: x 0 GT IF x 1 SUB -> y :: y ; ELSE 0 END ; ;");
 
     // Program that builds and processes a list
-    assert_round_trip(":: { } 1 5 START DUP ROT SWAP + SWAP NEXT DROP ;");
+    assert_round_trip(":: { } 1 5 START DUP ROT SWAP ADD SWAP NEXT DROP ;");
 
     // Mix of symbolic and regular computation
-    assert_round_trip("'3 + 4' EVAL 2 * -> result :: result result + ;");
+    assert_round_trip("'3 + 4' EVAL 2 MUL -> result :: result result ADD ;");
 
     // Deeply nested conditionals
     assert_round_trip(":: 1 IF 2 IF 3 THEN ELSE 4 IF 5 ELSE 6 END END END ;");
 
     // Complex arithmetic chain with comparisons
-    assert_round_trip(":: 10 20 + 5 * DUP 100 > IF 2 / ELSE 2 * END ;");
+    assert_round_trip(":: 10 20 ADD 5 MUL DUP 100 GT IF 2 DIV ELSE 2 MUL END ;");
 }
 
 // ============================================================================
@@ -552,6 +560,7 @@ fn round_trip_complex_realistic_program() {
 #[test]
 fn decompile_preserves_structure() {
     // Multiple operations should maintain order
+    // Operators become their command names: + -> ADD, * -> MUL, - -> SUB
     let source = "1 2 3 + * 4 -";
     let decompiled = decompile(source);
 
@@ -559,35 +568,36 @@ fn decompile_preserves_structure() {
     let pos_1 = decompiled.find('1').unwrap_or(0);
     let pos_2 = decompiled.find('2').unwrap_or(0);
     let pos_3 = decompiled.find('3').unwrap_or(0);
-    let pos_plus = decompiled.find('+').unwrap_or(0);
-    let pos_star = decompiled.find('*').unwrap_or(0);
+    let pos_add = decompiled.find("ADD").unwrap_or(0);
+    let pos_mul = decompiled.find("MUL").unwrap_or(0);
     let pos_4 = decompiled.find('4').unwrap_or(0);
 
     assert!(pos_1 < pos_2, "1 should come before 2");
     assert!(pos_2 < pos_3, "2 should come before 3");
-    assert!(pos_3 < pos_plus, "3 should come before +");
-    assert!(pos_plus < pos_star, "+ should come before *");
-    assert!(pos_star < pos_4, "* should come before 4");
+    assert!(pos_3 < pos_add, "3 should come before ADD");
+    assert!(pos_add < pos_mul, "ADD should come before MUL");
+    assert!(pos_mul < pos_4, "MUL should come before 4");
 }
 
 #[test]
 fn round_trip_whitespace_insensitive() {
     // Different whitespace should produce same bytecode
+    // Note: + becomes ADD in decompilation
     let (dec1, _) = round_trip("1 2 +");
     let (dec2, _) = round_trip("1  2   +");
     let (dec3, _) = round_trip("1\n2\n+");
 
-    // All should decompile to equivalent forms
+    // All should decompile to equivalent forms (with ADD instead of +)
     assert!(
-        dec1.contains("1") && dec1.contains("2") && dec1.contains("+"),
+        dec1.contains("1") && dec1.contains("2") && dec1.contains("ADD"),
         "Decompiled should have all elements"
     );
     assert!(
-        dec2.contains("1") && dec2.contains("2") && dec2.contains("+"),
+        dec2.contains("1") && dec2.contains("2") && dec2.contains("ADD"),
         "Decompiled should have all elements"
     );
     assert!(
-        dec3.contains("1") && dec3.contains("2") && dec3.contains("+"),
+        dec3.contains("1") && dec3.contains("2") && dec3.contains("ADD"),
         "Decompiled should have all elements"
     );
 }

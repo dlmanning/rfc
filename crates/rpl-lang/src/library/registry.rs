@@ -64,7 +64,7 @@ impl LibraryRegistry {
 #[cfg(test)]
 mod tests {
     use super::super::context::{CompileContext, DecompileContext};
-    use super::super::traits::{CompileResult, DecompileResult, ExecuteResult};
+    use super::super::traits::{CompileResult, DecompileResult, ExecuteOk, ExecuteResult};
     use super::*;
     use rpl_core::{Interner, Pos, Span};
     use rpl_core::token::{SemanticKind, TokenInfo};
@@ -100,7 +100,7 @@ mod tests {
         }
 
         fn execute(&self, _ctx: &mut super::super::context::ExecuteContext) -> ExecuteResult {
-            ExecuteResult::Ok
+            Ok(ExecuteOk::Ok)
         }
 
         fn decompile(&self, _ctx: &mut DecompileContext) -> DecompileResult {

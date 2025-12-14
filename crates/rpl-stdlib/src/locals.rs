@@ -19,145 +19,115 @@
 //!   - Followed by: symbol ID (1 word)
 //!   - Pushes the local's value onto the stack (RCL semantics)
 
-use rpl_core::{Symbol, Word, make_call};
-use rpl_lang::library::{
-    CompileContext, CompileResult, ConstructKind, DecompileContext, DecompileResult,
-    ExecuteContext, ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
-use rpl_core::token::TokenInfo;
+use rpl_core::token::{SemanticKind, TokenInfo};
+use rpl_core::{make_call, Symbol, Word};
+use rpl_lang::library::{ConstructKind, ExecuteOk};
 
-/// Library for local variable bindings.
-pub struct LocalsLib;
+rpl_macros::define_library! {
+    pub library LocalsLib(32, "Locals");
 
-/// Command: Set up a local frame.
-pub const CMD_LOCAL_FRAME_SETUP: u16 = 0;
-/// Command: Pop the local frame.
-pub const CMD_LOCAL_FRAME_POP: u16 = 1;
-/// Command: Look up a local variable.
-pub const CMD_LOCAL_LOOKUP: u16 = 2;
+    // Internal commands - emitted by compiler helper functions, not probed directly
+    // Stack effects are (0 -> 0) placeholder since these are internal commands
+    commands {
+        @LOCAL_FRAME_SETUP (0 -> 0) "Set up local frame with N params" {
+            // Read param count
+            let count = match ctx.read_operand() {
+                Ok(w) => w as usize,
+                Err(e) => return Err(e.into()),
+            };
 
-impl LocalsLib {
-    /// Library ID for locals.
-    pub const ID: LibraryId = LibraryId::new(32);
-}
+            // Read symbol IDs and resolve to names using the interner from VM
+            let mut names = Vec::with_capacity(count);
+            for _ in 0..count {
+                let sym_id = match ctx.read_operand() {
+                    Ok(w) => w,
+                    Err(e) => return Err(e.into()),
+                };
+                let symbol = Symbol::from_raw(sym_id);
+                let name = ctx.interner().resolve(symbol).to_string();
+                names.push(name);
+            }
 
-impl Library for LocalsLib {
-    fn id(&self) -> LibraryId {
-        Self::ID
+            // Pop values from stack (in reverse order - last param gets top of stack)
+            let mut values = Vec::with_capacity(count);
+            for _ in 0..count {
+                match ctx.pop() {
+                    Ok(v) => values.push(v),
+                    Err(_) => return Err("Stack underflow in local binding".into()),
+                }
+            }
+            values.reverse();
+
+            // Create and push local frame
+            let mut frame = rpl_lang::LocalFrame::new();
+            for (name, value) in names.into_iter().zip(values.into_iter()) {
+                frame.bind(name, value);
+            }
+            ctx.push_local_frame(frame);
+            Ok(ExecuteOk::Ok)
+        }
+
+        @LOCAL_FRAME_POP (0 -> 0) "Pop the local frame" {
+            // Read param count (for consistency, though we might not need it)
+            let _count = ctx.read_operand();
+            ctx.pop_local_frame();
+            Ok(ExecuteOk::Ok)
+        }
+
+        @LOCAL_LOOKUP (0 -> 1) "Look up a local variable" {
+            // Read symbol ID
+            let sym_id = match ctx.read_operand() {
+                Ok(w) => w,
+                Err(e) => return Err(e.into()),
+            };
+
+            let symbol = Symbol::from_raw(sym_id);
+            let name = ctx.interner().resolve(symbol);
+
+            // Look up the local using the string-based lookup
+            match ctx.lookup(name) {
+                Some(value) => {
+                    if let Err(e) = ctx.push(value.clone()) {
+                        return Err(format!("{:?}", e));
+                    }
+                    Ok(ExecuteOk::Ok)
+                }
+                None => Err(format!("Undefined local variable: {}", name)),
+            }
+        }
     }
 
-    fn name(&self) -> &'static str {
-        "Locals"
-    }
-
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        use rpl_core::token::SemanticKind;
-
+    custom probe {
         match ctx.text() {
             // Arrow starts a local binding
-            "→" | "->" => ProbeResult::Match {
+            "→" | "->" => rpl_lang::library::ProbeResult::Match {
                 info: TokenInfo::atom(ctx.text().len() as u8),
                 semantic: SemanticKind::Keyword,
             },
-            // Note: `::` is NOT probed here - it's handled by ProgramsLib
-            // The compiler handles `::` specially during parameter collection
-            _ => ProbeResult::NoMatch,
+            _ => rpl_lang::library::ProbeResult::NoMatch,
         }
     }
 
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
+    custom compile {
         match ctx.text() {
             // Arrow starts a LocalBinding construct
-            "→" | "->" => CompileResult::StartConstruct {
+            "→" | "->" => rpl_lang::library::CompileResult::StartConstruct {
                 kind: ConstructKind::LocalBinding,
             },
-            // Note: `::` is NOT handled here - it's handled by ProgramsLib
-            // The compiler handles `::` specially during parameter collection
-            _ => CompileResult::NoMatch,
+            _ => rpl_lang::library::CompileResult::NoMatch,
         }
     }
 
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd() {
-            CMD_LOCAL_FRAME_SETUP => {
-                // Read param count
-                let count = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return ExecuteResult::Error(e.into()),
-                };
-
-                // Read symbol IDs and resolve to names using the interner from VM
-                let mut names = Vec::with_capacity(count);
-                for _ in 0..count {
-                    let sym_id = match ctx.read_operand() {
-                        Ok(w) => w,
-                        Err(e) => return ExecuteResult::Error(e.into()),
-                    };
-                    let symbol = Symbol::from_raw(sym_id);
-                    let name = ctx.interner().resolve(symbol).to_string();
-                    names.push(name);
-                }
-
-                // Pop values from stack (in reverse order - last param gets top of stack)
-                let mut values = Vec::with_capacity(count);
-                for _ in 0..count {
-                    match ctx.pop() {
-                        Ok(v) => values.push(v),
-                        Err(_) => return ExecuteResult::Error("Stack underflow in local binding".into()),
-                    }
-                }
-                values.reverse();
-
-                // Create and push local frame
-                let mut frame = rpl_lang::LocalFrame::new();
-                for (name, value) in names.into_iter().zip(values.into_iter()) {
-                    frame.bind(name, value);
-                }
-                ctx.push_local_frame(frame);
-                ExecuteResult::Ok
-            }
-            CMD_LOCAL_FRAME_POP => {
-                // Read param count (for consistency, though we might not need it)
-                let _count = ctx.read_operand();
-                ctx.pop_local_frame();
-                ExecuteResult::Ok
-            }
-            CMD_LOCAL_LOOKUP => {
-                // Read symbol ID
-                let sym_id = match ctx.read_operand() {
-                    Ok(w) => w,
-                    Err(e) => return ExecuteResult::Error(e.into()),
-                };
-
-                let symbol = Symbol::from_raw(sym_id);
-                let name = ctx.interner().resolve(symbol);
-
-                // Look up the local using the string-based lookup
-                // Note: lookup() checks local frames first, then globals
-                match ctx.lookup(name) {
-                    Some(value) => {
-                        if let Err(e) = ctx.push(value.clone()) {
-                            return ExecuteResult::Error(format!("{:?}", e));
-                        }
-                        ExecuteResult::Ok
-                    }
-                    None => ExecuteResult::Error(format!("Undefined local variable: {}", name)),
-                }
-            }
-            cmd => ExecuteResult::Error(format!("Unknown LocalsLib command: {}", cmd)),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
+    custom decompile {
         use rpl_lang::library::DecompileMode;
 
         let cmd = match ctx.mode() {
-            DecompileMode::Prolog => return DecompileResult::Unknown,
+            DecompileMode::Prolog => return rpl_lang::library::DecompileResult::Unknown,
             DecompileMode::Call(cmd) => cmd,
         };
 
         match cmd {
-            CMD_LOCAL_FRAME_SETUP => {
+            Self::CMD_LOCAL_FRAME_SETUP => {
                 // Read param count
                 let count = ctx.read().unwrap_or(0) as usize;
 
@@ -175,7 +145,6 @@ impl Library for LocalsLib {
                 }
 
                 // Format: → param1 param2 ::
-                // The body is compiled inline (no PROGRAM prolog), so we emit "::" here
                 ctx.write("→ ");
                 for (i, name) in param_names.iter().enumerate() {
                     if i > 0 {
@@ -184,16 +153,14 @@ impl Library for LocalsLib {
                     ctx.write(name);
                 }
                 ctx.write(" :: ");
-                DecompileResult::Ok
+                rpl_lang::library::DecompileResult::Ok
             }
-            CMD_LOCAL_FRAME_POP => {
-                // Pop the local frame - emit the closing semicolon
+            Self::CMD_LOCAL_FRAME_POP => {
                 let _count = ctx.read();
                 ctx.write(" ;");
-                DecompileResult::Ok
+                rpl_lang::library::DecompileResult::Ok
             }
-            CMD_LOCAL_LOOKUP => {
-                // Read symbol ID and resolve name
+            Self::CMD_LOCAL_LOOKUP => {
                 let sym_id = ctx.read().unwrap_or(0);
                 let symbol = Symbol::from_raw(sym_id);
                 let name = if let Some(interner) = ctx.interner {
@@ -202,30 +169,24 @@ impl Library for LocalsLib {
                     format!("${}", sym_id)
                 };
                 ctx.write(&name);
-                DecompileResult::Ok
+                rpl_lang::library::DecompileResult::Ok
             }
-            _ => DecompileResult::Unknown,
-        }
-    }
-
-    fn stack_effect(&self, token: &str) -> StackEffect {
-        match token {
-            "→" | "->" => StackEffect::StartConstruct,
-            // Note: "::" is handled by ProgramsLib, not LocalsLib
-            _ => StackEffect::Dynamic,
+            _ => rpl_lang::library::DecompileResult::Unknown,
         }
     }
 }
+
+// Re-export command constants for compiler helper functions
+pub const CMD_LOCAL_FRAME_SETUP: u16 = LocalsLib::CMD_LOCAL_FRAME_SETUP;
+pub const CMD_LOCAL_FRAME_POP: u16 = LocalsLib::CMD_LOCAL_FRAME_POP;
+pub const CMD_LOCAL_LOOKUP: u16 = LocalsLib::CMD_LOCAL_LOOKUP;
 
 /// Emit bytecode for local frame setup.
 ///
 /// Called by the compiler when `::` is encountered after parameter collection.
 pub fn emit_frame_setup(output: &mut rpl_lang::compile::OutputBuffer, params: &[Symbol], span: rpl_core::Span) {
-    // Emit CMD_LOCAL_FRAME_SETUP
     output.emit(make_call(LocalsLib::ID.as_u16(), CMD_LOCAL_FRAME_SETUP), span);
-    // Emit param count
     output.emit(params.len() as Word, span);
-    // Emit symbol IDs
     for sym in params {
         output.emit(sym.as_u32(), span);
     }
@@ -235,9 +196,7 @@ pub fn emit_frame_setup(output: &mut rpl_lang::compile::OutputBuffer, params: &[
 ///
 /// Called by the compiler when `;` is encountered in a LocalBinding construct.
 pub fn emit_frame_pop(output: &mut rpl_lang::compile::OutputBuffer, param_count: usize, span: rpl_core::Span) {
-    // Emit CMD_LOCAL_FRAME_POP
     output.emit(make_call(LocalsLib::ID.as_u16(), CMD_LOCAL_FRAME_POP), span);
-    // Emit param count
     output.emit(param_count as Word, span);
 }
 
@@ -245,9 +204,7 @@ pub fn emit_frame_pop(output: &mut rpl_lang::compile::OutputBuffer, param_count:
 ///
 /// Called by the compiler when a local variable reference is compiled.
 pub fn emit_local_lookup(output: &mut rpl_lang::compile::OutputBuffer, symbol: Symbol, span: rpl_core::Span) {
-    // Emit CMD_LOCAL_LOOKUP
     output.emit(make_call(LocalsLib::ID.as_u16(), CMD_LOCAL_LOOKUP), span);
-    // Emit symbol ID
     output.emit(symbol.as_u32(), span);
 }
 
@@ -255,6 +212,7 @@ pub fn emit_local_lookup(output: &mut rpl_lang::compile::OutputBuffer, symbol: S
 mod tests {
     use super::*;
     use rpl_lang::compile::OutputBuffer;
+    use rpl_lang::library::{CompileContext, CompileResult, Library, ProbeContext, ProbeResult};
     use rpl_core::{Interner, Pos, Span};
 
     fn make_probe_ctx<'a>(text: &'a str, interner: &'a Interner) -> ProbeContext<'a> {
@@ -276,8 +234,6 @@ mod tests {
 
     #[test]
     fn probe_double_colon_not_recognized_by_locals() {
-        // Note: :: is handled by ProgramsLib, not LocalsLib
-        // The compiler specially handles :: during parameter collection
         let interner = Interner::new();
         let lib = LocalsLib;
 
@@ -317,8 +273,6 @@ mod tests {
 
     #[test]
     fn compile_double_colon_not_handled_by_locals() {
-        // Note: :: is handled by ProgramsLib, not LocalsLib
-        // The compiler specially handles :: during parameter collection
         let mut interner = Interner::new();
         let mut output = OutputBuffer::new();
         let span = Span::new(Pos::new(0), Pos::new(2));

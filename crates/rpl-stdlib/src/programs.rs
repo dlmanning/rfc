@@ -5,158 +5,75 @@
 //! - `;` - End a program construct
 //! - `EVAL` - Execute a program from the stack
 
-use rpl_core::token::{SemanticKind, TokenInfo};
 use rpl_core::TypeId;
-use rpl_lang::library::{
-    CompileContext, CompileResult, ConstructKind, DecompileContext, DecompileResult,
-    ExecuteContext, ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
+use rpl_lang::Value;
 
-/// Library for program constructs.
-pub struct ProgramsLib;
+rpl_macros::define_library! {
+    pub library ProgramsLib(8, "Programs");
 
-impl ProgramsLib {
-    /// Library ID for programs.
-    pub const ID: LibraryId = LibraryId::new(8);
-
-    /// Command ID for EVAL.
-    const CMD_EVAL: u16 = 0;
-}
-
-impl Library for ProgramsLib {
-    fn id(&self) -> LibraryId {
-        Self::ID
+    constructs {
+        "::": open(Program);
+        "<<": open(Program);
+        ";": close;
+        ">>": close;
     }
 
-    fn name(&self) -> &'static str {
-        "Programs"
-    }
+    commands {
+        EVAL (*) "Execute a program from the stack" {
+            // Pop a program object from the stack
+            let program = match ctx.pop() {
+                Ok(v) => v,
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
 
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        let text = ctx.text();
-
-        match text {
-            "::" | "<<" => ProbeResult::Match {
-                info: TokenInfo::open_bracket(text.len() as u8),
-                semantic: SemanticKind::Bracket,
-            },
-            ";" | ">>" => ProbeResult::Match {
-                info: TokenInfo::close_bracket(text.len() as u8),
-                semantic: SemanticKind::Bracket,
-            },
-            _ if text.eq_ignore_ascii_case("EVAL") => ProbeResult::Match {
-                info: TokenInfo::atom(text.len() as u8),
-                semantic: SemanticKind::Command,
-            },
-            _ => ProbeResult::NoMatch,
-        }
-    }
-
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
-        let text = ctx.text();
-
-        match text {
-            "::" | "<<" => {
-                // Don't emit prolog here - the compiler will emit it when handling StartConstruct
-                // This ensures the compiler knows the correct start position for patching
-                CompileResult::StartConstruct {
-                    kind: ConstructKind::Program,
-                }
-            }
-            ";" | ">>" => {
-                // EndConstruct tells compiler to patch the prolog size
-                CompileResult::EndConstruct
-            }
-            _ if text.eq_ignore_ascii_case("EVAL") => {
-                ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_EVAL);
-                CompileResult::Ok
-            }
-            _ => CompileResult::NoMatch,
-        }
-    }
-
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd() {
-            Self::CMD_EVAL => {
-                // Pop a program object from the stack
-                let program = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                // Check it's a program or symbolic expression
-                match program {
-                    rpl_lang::Value::Program { code, debug_info } => {
-                        // New Value::Program variant - check for debug info
-                        if let Some(dbg) = debug_info {
-                            ExecuteResult::EvalProgramWithDebug {
-                                code,
-                                name: "<eval>".to_string(),
-                                debug_info: dbg,
-                            }
-                        } else {
-                            // No debug info but still provide a name for stack traces
-                            ExecuteResult::EvalProgramNamed(code, "<eval>".to_string())
-                        }
+            // Check it's a program or symbolic expression
+            match program {
+                Value::Program { code, debug_info } => {
+                    // New Value::Program variant - check for debug info
+                    if let Some(dbg) = debug_info {
+                        Ok(rpl_lang::library::ExecuteOk::EvalProgramWithDebug {
+                            code,
+                            name: "<eval>".to_string(),
+                            debug_info: dbg,
+                        })
+                    } else {
+                        // No debug info but still provide a name for stack traces
+                        Ok(rpl_lang::library::ExecuteOk::EvalProgramNamed(code, "<eval>".to_string()))
                     }
-                    rpl_lang::Value::Object { type_id, data }
-                        if type_id == TypeId::PROGRAM || type_id == TypeId::SYMBOLIC =>
-                    {
-                        // Object variant (no debug info available)
-                        ExecuteResult::EvalProgramNamed(data, "<eval>".to_string())
-                    }
-                    _ => ExecuteResult::Error(
-                        "Expected program or symbolic object for EVAL".to_string(),
-                    ),
                 }
-            }
-            _ => ExecuteResult::Error(format!("Unknown programs command: {}", ctx.cmd())),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => {
-                // Check for PROGRAM prolog
-                if let Some(word) = ctx.peek()
-                    && rpl_core::is_prolog(word)
-                    && rpl_core::extract_type(word) == TypeId::PROGRAM.as_u16()
+                Value::Object { type_id, data }
+                    if type_id == TypeId::PROGRAM || type_id == TypeId::SYMBOLIC =>
                 {
-                    let size = rpl_core::extract_size(word) as usize;
-                    ctx.read(); // consume prolog
-                    ctx.write("::");
-
-                    // Recursively decompile the program body
-                    if size > 0 {
-                        ctx.write(" ");
-                        ctx.decompile_inner(size);
-                    }
-
-                    ctx.write(" ;");
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
+                    // Object variant (no debug info available)
+                    Ok(rpl_lang::library::ExecuteOk::EvalProgramNamed(data, "<eval>".to_string()))
                 }
-            }
-            DecompileMode::Call(cmd) => {
-                if cmd == Self::CMD_EVAL {
-                    ctx.write("EVAL");
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
+                _ => Err(
+                    "Expected program or symbolic object for EVAL".to_string(),
+                ),
             }
         }
     }
 
-    fn stack_effect(&self, token: &str) -> StackEffect {
-        match token {
-            "::" | "<<" => StackEffect::StartConstruct,
-            ";" | ">>" => StackEffect::EndConstruct,
-            _ if token.eq_ignore_ascii_case("EVAL") => StackEffect::Dynamic,
-            _ => StackEffect::Dynamic,
+    custom decompile_prolog {
+        // Check for PROGRAM prolog
+        if let Some(word) = ctx.peek()
+            && rpl_core::is_prolog(word)
+            && rpl_core::extract_type(word) == TypeId::PROGRAM.as_u16()
+        {
+            let size = rpl_core::extract_size(word) as usize;
+            ctx.read(); // consume prolog
+            ctx.write("::");
+
+            // Recursively decompile the program body
+            if size > 0 {
+                ctx.write(" ");
+                ctx.decompile_inner(size);
+            }
+
+            ctx.write(" ;");
+            rpl_lang::library::DecompileResult::Ok
+        } else {
+            rpl_lang::library::DecompileResult::Unknown
         }
     }
 }
@@ -164,8 +81,12 @@ impl Library for ProgramsLib {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rpl_core::{Interner, Pos, Span};
     use rpl_core::token::TokenType;
+    use rpl_core::{Interner, Pos, Span};
+    use rpl_lang::library::{
+        CompileContext, CompileResult, ConstructKind, Library, ProbeContext, ProbeResult,
+        StackEffect,
+    };
 
     fn make_probe_ctx<'a>(text: &'a str, interner: &'a Interner) -> ProbeContext<'a> {
         let span = Span::new(Pos::new(0), Pos::new(text.len() as u32));
@@ -174,6 +95,7 @@ mod tests {
 
     #[test]
     fn probe_program_start() {
+        use rpl_core::token::SemanticKind;
         let interner = Interner::new();
         let lib = ProgramsLib;
         let ctx = make_probe_ctx("::", &interner);
@@ -190,6 +112,7 @@ mod tests {
 
     #[test]
     fn probe_program_end() {
+        use rpl_core::token::SemanticKind;
         let interner = Interner::new();
         let lib = ProgramsLib;
         let ctx = make_probe_ctx(";", &interner);
@@ -206,6 +129,7 @@ mod tests {
 
     #[test]
     fn probe_eval() {
+        use rpl_core::token::SemanticKind;
         let interner = Interner::new();
         let lib = ProgramsLib;
         let ctx = make_probe_ctx("EVAL", &interner);
@@ -254,6 +178,7 @@ mod tests {
 
     #[test]
     fn probe_chevron_aliases() {
+        use rpl_core::token::SemanticKind;
         let interner = Interner::new();
         let lib = ProgramsLib;
 
@@ -281,7 +206,10 @@ mod tests {
     #[test]
     fn stack_effect_chevron_aliases() {
         let lib = ProgramsLib;
-        assert!(matches!(lib.stack_effect("<<"), StackEffect::StartConstruct));
+        assert!(matches!(
+            lib.stack_effect("<<"),
+            StackEffect::StartConstruct
+        ));
         assert!(matches!(lib.stack_effect(">>"), StackEffect::EndConstruct));
     }
 

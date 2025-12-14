@@ -5,120 +5,40 @@
 
 pub mod commands;
 pub mod encoding;
+pub mod render;
 
 use std::cell::RefCell;
 
-use rpl_core::token::{SemanticKind, TokenInfo};
 use rpl_core::{TypeId, Word};
-use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteContext,
-    ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
+use rpl_lang::library::{ExecuteOk, StackEffect};
 use rpl_lang::Value;
 
 use commands::*;
 use encoding::*;
 
-/// Library ID for Plot.
-pub const PLOT_LIB_ID: LibraryId = LibraryId::new(88);
-
-/// Plot library implementation.
-pub struct PlotLib;
-
-impl PlotLib {
-    // Command IDs for RPL commands
-    const CMD_BEGINPLOT: u16 = 0;
-    const CMD_EDITPLOT: u16 = 1;
-    const CMD_ENDPLOT: u16 = 2;
-    const CMD_MOVETO: u16 = 3;
-    const CMD_LINETO: u16 = 4;
-    const CMD_CIRCLE: u16 = 5;
-    const CMD_RECT: u16 = 6;
-    const CMD_ELLIPSE: u16 = 7;
-    const CMD_ARC: u16 = 8;
-    const CMD_BEZIER: u16 = 9;
-    const CMD_PIXEL: u16 = 10;
-    const CMD_TEXT: u16 = 11;
-    const CMD_FILL: u16 = 12;
-    const CMD_STROKE: u16 = 13;
-    const CMD_LINEWIDTH: u16 = 14;
-    const CMD_COLOR: u16 = 15;
-    const CMD_FILLCOLOR: u16 = 16;
-    const CMD_FONT: u16 = 17;
-    const CMD_IDENTITY: u16 = 18;
-    const CMD_TRANSFORM: u16 = 19;
-    const CMD_SCALE: u16 = 20;
-    const CMD_ROTATE: u16 = 21;
-    const CMD_TRANSLATE: u16 = 22;
-    const CMD_PUSHSTATE: u16 = 23;
-    const CMD_POPSTATE: u16 = 24;
-    const CMD_CLIP: u16 = 25;
-
-    /// Get command ID from name (case-insensitive).
-    fn command_id(name: &str) -> Option<u16> {
-        match name.to_ascii_uppercase().as_str() {
-            "BEGINPLOT" => Some(Self::CMD_BEGINPLOT),
-            "EDITPLOT" => Some(Self::CMD_EDITPLOT),
-            "ENDPLOT" => Some(Self::CMD_ENDPLOT),
-            "MOVETO" => Some(Self::CMD_MOVETO),
-            "LINETO" => Some(Self::CMD_LINETO),
-            "CIRCLE" => Some(Self::CMD_CIRCLE),
-            "RECT" => Some(Self::CMD_RECT),
-            "ELLIPSE" => Some(Self::CMD_ELLIPSE),
-            "ARC" => Some(Self::CMD_ARC),
-            "BEZIER" => Some(Self::CMD_BEZIER),
-            "PIXEL" => Some(Self::CMD_PIXEL),
-            "TEXT" => Some(Self::CMD_TEXT),
-            "FILL" => Some(Self::CMD_FILL),
-            "STROKE" => Some(Self::CMD_STROKE),
-            "LINEWIDTH" => Some(Self::CMD_LINEWIDTH),
-            "COLOR" => Some(Self::CMD_COLOR),
-            "FILLCOLOR" => Some(Self::CMD_FILLCOLOR),
-            "FONT" => Some(Self::CMD_FONT),
-            "IDENTITY" => Some(Self::CMD_IDENTITY),
-            "TRANSFORM" => Some(Self::CMD_TRANSFORM),
-            "SCALE" => Some(Self::CMD_SCALE),
-            "ROTATE" => Some(Self::CMD_ROTATE),
-            "TRANSLATE" => Some(Self::CMD_TRANSLATE),
-            "PUSHSTATE" => Some(Self::CMD_PUSHSTATE),
-            "POPSTATE" => Some(Self::CMD_POPSTATE),
-            "CLIP" => Some(Self::CMD_CLIP),
-            _ => None,
-        }
+/// Convert a Real color value to 0-255 range.
+/// Values > 1.0 are treated as direct 0-255 values.
+/// Values 0.0-1.0 are treated as normalized (multiplied by 255).
+fn real_to_color(r: f64) -> i64 {
+    if r > 1.0 {
+        r.clamp(0.0, 255.0) as i64
+    } else {
+        (r * 255.0).clamp(0.0, 255.0) as i64
     }
+}
 
-    /// Get command name from ID.
-    fn command_name(id: u16) -> Option<&'static str> {
-        match id {
-            Self::CMD_BEGINPLOT => Some("BEGINPLOT"),
-            Self::CMD_EDITPLOT => Some("EDITPLOT"),
-            Self::CMD_ENDPLOT => Some("ENDPLOT"),
-            Self::CMD_MOVETO => Some("MOVETO"),
-            Self::CMD_LINETO => Some("LINETO"),
-            Self::CMD_CIRCLE => Some("CIRCLE"),
-            Self::CMD_RECT => Some("RECT"),
-            Self::CMD_ELLIPSE => Some("ELLIPSE"),
-            Self::CMD_ARC => Some("ARC"),
-            Self::CMD_BEZIER => Some("BEZIER"),
-            Self::CMD_PIXEL => Some("PIXEL"),
-            Self::CMD_TEXT => Some("TEXT"),
-            Self::CMD_FILL => Some("FILL"),
-            Self::CMD_STROKE => Some("STROKE"),
-            Self::CMD_LINEWIDTH => Some("LINEWIDTH"),
-            Self::CMD_COLOR => Some("COLOR"),
-            Self::CMD_FILLCOLOR => Some("FILLCOLOR"),
-            Self::CMD_FONT => Some("FONT"),
-            Self::CMD_IDENTITY => Some("IDENTITY"),
-            Self::CMD_TRANSFORM => Some("TRANSFORM"),
-            Self::CMD_SCALE => Some("SCALE"),
-            Self::CMD_ROTATE => Some("ROTATE"),
-            Self::CMD_TRANSLATE => Some("TRANSLATE"),
-            Self::CMD_PUSHSTATE => Some("PUSHSTATE"),
-            Self::CMD_POPSTATE => Some("POPSTATE"),
-            Self::CMD_CLIP => Some("CLIP"),
-            _ => None,
-        }
-    }
+/// Pack RGBA components into a 32-bit integer (0xRRGGBBAA format).
+pub fn pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32)
+}
+
+/// Unpack a 32-bit RGBA color into components.
+pub fn unpack_rgba(rgba: u32) -> (u8, u8, u8, u8) {
+    let r = ((rgba >> 24) & 0xFF) as u8;
+    let g = ((rgba >> 16) & 0xFF) as u8;
+    let b = ((rgba >> 8) & 0xFF) as u8;
+    let a = (rgba & 0xFF) as u8;
+    (r, g, b, a)
 }
 
 /// State for a plot being constructed.
@@ -196,724 +116,707 @@ fn set_plot_state(state: PlotState) -> Result<(), String> {
     })
 }
 
-impl Library for PlotLib {
-    fn id(&self) -> LibraryId {
-        PLOT_LIB_ID
-    }
+rpl_macros::define_library! {
+    pub library PlotLib(88, "Plot");
 
-    fn name(&self) -> &'static str {
-        "Plot"
-    }
-
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        let text = ctx.text();
-
-        if Self::command_id(text).is_some() {
-            ProbeResult::Match {
-                info: TokenInfo::atom(text.len() as u8),
-                semantic: SemanticKind::Command,
+    commands {
+        BEGINPLOT | "beginplot" (0 -> 0) "Begin a new plot" {
+            if let Err(e) = set_plot_state(PlotState::new()) {
+                return Err(e);
             }
-        } else {
-            ProbeResult::NoMatch
+            Ok(ExecuteOk::Ok)
+        }
+
+        EDITPLOT | "editplot" (1 -> 0) "Edit an existing plot" {
+            let plot = match ctx.pop() {
+                Ok(Value::Object { type_id, data }) if type_id == TypeId::PLOT => {
+                    words_to_bytes(&data)
+                }
+                Ok(_) => return Err("EDITPLOT: expected Plot object".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            let bytes = if plot.last() == Some(&CMD_END) {
+                plot[..plot.len() - 1].to_vec()
+            } else {
+                plot
+            };
+
+            if let Err(e) = set_plot_state(PlotState::from_bytes(bytes)) {
+                return Err(e);
+            }
+            Ok(ExecuteOk::Ok)
+        }
+
+        ENDPLOT | "endplot" (0 -> 1) "End plot and push to stack" {
+            let state = match take_plot_state() {
+                Ok(s) => s,
+                Err(e) => return Err(e),
+            };
+
+            let bytes = state.finalize();
+            let data = bytes_to_words(&bytes);
+
+            if ctx
+                .push(Value::Object {
+                    type_id: TypeId::PLOT,
+                    data,
+                })
+                .is_err()
+            {
+                return Err("Stack overflow".to_string());
+            }
+            Ok(ExecuteOk::Ok)
+        }
+
+        MOVETO | "moveto" (2 -> 0) "Move to position" {
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("MOVETO: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("MOVETO: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_MOVETO);
+                state.push_coord(x);
+                state.push_coord(y);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        LINETO | "lineto" (2 -> 0) "Draw line to position" {
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("LINETO: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("LINETO: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_LINETO);
+                state.push_coord(x);
+                state.push_coord(y);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        CIRCLE | "circle" (3 -> 0) "Draw circle" {
+            let r = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("CIRCLE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("CIRCLE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("CIRCLE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_CIRCLE);
+                state.push_coord(x);
+                state.push_coord(y);
+                state.push_coord(r);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        RECT | "rect" (4 -> 0) "Draw rectangle" {
+            let h = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("RECT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let w = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("RECT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("RECT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("RECT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_RECT);
+                state.push_coord(x);
+                state.push_coord(y);
+                state.push_coord(w);
+                state.push_coord(h);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        ELLIPSE | "ellipse" (4 -> 0) "Draw ellipse" {
+            let ry = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ELLIPSE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let rx = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ELLIPSE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ELLIPSE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ELLIPSE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_ELLIPSE);
+                state.push_coord(x);
+                state.push_coord(y);
+                state.push_coord(rx);
+                state.push_coord(ry);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        ARC | "arc" (5 -> 0) "Draw arc" {
+            let end_angle = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ARC: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let start_angle = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ARC: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let r = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ARC: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ARC: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ARC: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_ARC);
+                state.push_coord(x);
+                state.push_coord(y);
+                state.push_coord(r);
+                state.push_coord(start_angle);
+                state.push_coord(end_angle);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        BEZIER | "bezier" (6 -> 0) "Draw bezier curve" {
+            let y3 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x3 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y2 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x2 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y1 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x1 = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("BEZIER: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_BEZIER);
+                state.push_coord(x1);
+                state.push_coord(y1);
+                state.push_coord(x2);
+                state.push_coord(y2);
+                state.push_coord(x3);
+                state.push_coord(y3);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        PIXEL | "pixel" (2 -> 0) "Draw pixel" {
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("PIXEL: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("PIXEL: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_PIXEL);
+                state.push_coord(x);
+                state.push_coord(y);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        TEXT | "text" (3 -> 0) "Draw text" {
+            let text = match ctx.pop() {
+                Ok(Value::String(s)) => s,
+                Ok(_) => return Err("TEXT: expected string".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let y = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TEXT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let x = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TEXT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_TEXT);
+                state.push_coord(x);
+                state.push_coord(y);
+                state.push_string(&text);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        FILL | "fill" (0 -> 0) "Fill current path" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_FILL);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        STROKE | "stroke" (0 -> 0) "Stroke current path" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_STROKE);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        LINEWIDTH | "linewidth" (1 -> 0) "Set line width" {
+            let w = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("LINEWIDTH: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_LINEWIDTH);
+                state.push_coord(w);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        COLOR | "color" (1 -> 0) "Set stroke color (packed RGBA)" {
+            let (r, g, b, a) = match ctx.pop() {
+                Ok(Value::Int(i)) => unpack_rgba(i as u32),
+                Ok(_) => return Err("COLOR: expected packed RGBA integer".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_COLOR);
+                state.push_number(r as i64);
+                state.push_number(g as i64);
+                state.push_number(b as i64);
+                state.push_number(a as i64);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        FILLCOLOR | "fillcolor" (1 -> 0) "Set fill color (packed RGBA)" {
+            let (r, g, b, a) = match ctx.pop() {
+                Ok(Value::Int(i)) => unpack_rgba(i as u32),
+                Ok(_) => return Err("FILLCOLOR: expected packed RGBA integer".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_FILLCOLOR);
+                state.push_number(r as i64);
+                state.push_number(g as i64);
+                state.push_number(b as i64);
+                state.push_number(a as i64);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        FONT | "font" (2 -> 0) "Set font size and name" {
+            let name = match ctx.pop() {
+                Ok(Value::String(s)) => s,
+                Ok(_) => return Err("FONT: expected string".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let size = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("FONT: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_FONT);
+                state.push_coord(size);
+                state.push_string(&name);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        IDENTITY | "identity" (0 -> 0) "Reset transform to identity" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_IDENTITY);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        TRANSFORM | "transform" (6 -> 0) "Apply transform matrix" {
+            let f = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let e = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let d = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let c = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let b = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let a = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSFORM: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_TRANSFORM);
+                state.push_coord(a);
+                state.push_coord(b);
+                state.push_coord(c);
+                state.push_coord(d);
+                state.push_coord(e);
+                state.push_coord(f);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        SCALE | "scale" (2 -> 0) "Scale transform" {
+            let sy = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("SCALE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let sx = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("SCALE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_SCALE);
+                state.push_coord(sx);
+                state.push_coord(sy);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        ROTATE | "rotate" (1 -> 0) "Rotate transform" {
+            let angle = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("ROTATE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_ROTATE);
+                state.push_coord(angle);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        TRANSLATE | "translate" (2 -> 0) "Translate transform" {
+            let dy = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSLATE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let dx = match ctx.pop() {
+                Ok(Value::Real(r)) => r,
+                Ok(Value::Int(i)) => i as f64,
+                Ok(_) => return Err("TRANSLATE: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            match with_plot_state(|state| {
+                state.push_byte(CMD_TRANSLATE);
+                state.push_coord(dx);
+                state.push_coord(dy);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        PUSHSTATE | "pushstate" (0 -> 0) "Push graphics state" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_PUSH);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        POPSTATE | "popstate" (0 -> 0) "Pop graphics state" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_POP);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        CLIP | "clip" (0 -> 0) "Clip to current path" {
+            match with_plot_state(|state| {
+                state.push_byte(CMD_CLIP);
+            }) {
+                Ok(_) => Ok(ExecuteOk::Ok),
+                Err(e) => Err(e),
+            }
+        }
+
+        RGBA | "rgba" (4 -> 1) "Pack RGBA components into color" {
+            let a = match ctx.pop() {
+                Ok(Value::Real(r)) => real_to_color(r) as u8,
+                Ok(Value::Int(i)) => i.clamp(0, 255) as u8,
+                Ok(_) => return Err("RGBA: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let b = match ctx.pop() {
+                Ok(Value::Real(r)) => real_to_color(r) as u8,
+                Ok(Value::Int(i)) => i.clamp(0, 255) as u8,
+                Ok(_) => return Err("RGBA: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let g = match ctx.pop() {
+                Ok(Value::Real(r)) => real_to_color(r) as u8,
+                Ok(Value::Int(i)) => i.clamp(0, 255) as u8,
+                Ok(_) => return Err("RGBA: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+            let r = match ctx.pop() {
+                Ok(Value::Real(rv)) => real_to_color(rv) as u8,
+                Ok(Value::Int(i)) => i.clamp(0, 255) as u8,
+                Ok(_) => return Err("RGBA: expected number".to_string()),
+                Err(_) => return Err("Stack underflow".to_string()),
+            };
+
+            let color = pack_rgba(r, g, b, a);
+            if ctx.push(Value::Int(color as i64)).is_err() {
+                return Err("Stack overflow".to_string());
+            }
+            Ok(ExecuteOk::Ok)
         }
     }
 
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
-        let text = ctx.text();
-
-        if let Some(cmd) = Self::command_id(text) {
-            ctx.emit_opcode(PLOT_LIB_ID.as_u16(), cmd);
-            CompileResult::Ok
-        } else {
-            CompileResult::NoMatch
-        }
-    }
-
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd() {
-            Self::CMD_BEGINPLOT => {
-                if let Err(e) = set_plot_state(PlotState::new()) {
-                    return ExecuteResult::Error(e);
-                }
-                ExecuteResult::Ok
-            }
-
-            Self::CMD_EDITPLOT => {
-                // Pop plot object from stack and start editing
-                let plot = match ctx.pop() {
-                    Ok(Value::Object { type_id, data }) if type_id == TypeId::PLOT => {
-                        words_to_bytes(&data)
-                    }
-                    Ok(_) => return ExecuteResult::Error("EDITPLOT: expected Plot object".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                // Remove trailing END marker if present
-                let bytes = if plot.last() == Some(&CMD_END) {
-                    plot[..plot.len() - 1].to_vec()
-                } else {
-                    plot
-                };
-
-                if let Err(e) = set_plot_state(PlotState::from_bytes(bytes)) {
-                    return ExecuteResult::Error(e);
-                }
-                ExecuteResult::Ok
-            }
-
-            Self::CMD_ENDPLOT => {
-                let state = match take_plot_state() {
-                    Ok(s) => s,
-                    Err(e) => return ExecuteResult::Error(e),
-                };
-
-                let bytes = state.finalize();
-                let data = bytes_to_words(&bytes);
-
-                if ctx
-                    .push(Value::Object {
-                        type_id: TypeId::PLOT,
-                        data,
-                    })
-                    .is_err()
-                {
-                    return ExecuteResult::Error("Stack overflow".to_string());
-                }
-                ExecuteResult::Ok
-            }
-
-            Self::CMD_MOVETO => {
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("MOVETO: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("MOVETO: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_MOVETO);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_LINETO => {
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("LINETO: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("LINETO: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_LINETO);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_CIRCLE => {
-                let r = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("CIRCLE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("CIRCLE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("CIRCLE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_CIRCLE);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(r);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_RECT => {
-                let h = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("RECT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let w = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("RECT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("RECT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("RECT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_RECT);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(w);
-                    state.push_coord(h);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_ELLIPSE => {
-                let ry = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ELLIPSE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let rx = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ELLIPSE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ELLIPSE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ELLIPSE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_ELLIPSE);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(rx);
-                    state.push_coord(ry);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_ARC => {
-                let end_angle = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ARC: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let start_angle = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ARC: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let r = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ARC: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ARC: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ARC: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_ARC);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(r);
-                    state.push_coord(start_angle);
-                    state.push_coord(end_angle);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_BEZIER => {
-                let y3 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x3 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y2 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x2 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y1 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x1 = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("BEZIER: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_BEZIER);
-                    state.push_coord(x1);
-                    state.push_coord(y1);
-                    state.push_coord(x2);
-                    state.push_coord(y2);
-                    state.push_coord(x3);
-                    state.push_coord(y3);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_PIXEL => {
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("PIXEL: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("PIXEL: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_PIXEL);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_TEXT => {
-                let text = match ctx.pop() {
-                    Ok(Value::String(s)) => s,
-                    Ok(_) => return ExecuteResult::Error("TEXT: expected string".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let y = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TEXT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let x = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TEXT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_TEXT);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_string(&text);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_FILL => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_FILL);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_STROKE => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_STROKE);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_LINEWIDTH => {
-                let w = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("LINEWIDTH: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_LINEWIDTH);
-                    state.push_coord(w);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_COLOR => {
-                let a = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("COLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let b = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("COLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let g = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("COLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let r = match ctx.pop() {
-                    Ok(Value::Real(rv)) => (rv * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("COLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_COLOR);
-                    state.push_number(r);
-                    state.push_number(g);
-                    state.push_number(b);
-                    state.push_number(a);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_FILLCOLOR => {
-                let a = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("FILLCOLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let b = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("FILLCOLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let g = match ctx.pop() {
-                    Ok(Value::Real(r)) => (r * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("FILLCOLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let r = match ctx.pop() {
-                    Ok(Value::Real(rv)) => (rv * 255.0).clamp(0.0, 255.0) as i64,
-                    Ok(Value::Int(i)) => i.clamp(0, 255),
-                    Ok(_) => return ExecuteResult::Error("FILLCOLOR: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_FILLCOLOR);
-                    state.push_number(r);
-                    state.push_number(g);
-                    state.push_number(b);
-                    state.push_number(a);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_FONT => {
-                let name = match ctx.pop() {
-                    Ok(Value::String(s)) => s,
-                    Ok(_) => return ExecuteResult::Error("FONT: expected string".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let size = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("FONT: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_FONT);
-                    state.push_coord(size);
-                    state.push_string(&name);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_IDENTITY => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_IDENTITY);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_TRANSFORM => {
-                let f = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let e = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let d = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let c = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let b = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let a = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSFORM: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_TRANSFORM);
-                    state.push_coord(a);
-                    state.push_coord(b);
-                    state.push_coord(c);
-                    state.push_coord(d);
-                    state.push_coord(e);
-                    state.push_coord(f);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_SCALE => {
-                let sy = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("SCALE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let sx = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("SCALE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_SCALE);
-                    state.push_coord(sx);
-                    state.push_coord(sy);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_ROTATE => {
-                let angle = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("ROTATE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_ROTATE);
-                    state.push_coord(angle);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_TRANSLATE => {
-                let dy = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSLATE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-                let dx = match ctx.pop() {
-                    Ok(Value::Real(r)) => r,
-                    Ok(Value::Int(i)) => i as f64,
-                    Ok(_) => return ExecuteResult::Error("TRANSLATE: expected number".to_string()),
-                    Err(_) => return ExecuteResult::Error("Stack underflow".to_string()),
-                };
-
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_TRANSLATE);
-                    state.push_coord(dx);
-                    state.push_coord(dy);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_PUSHSTATE => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_PUSH);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_POPSTATE => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_POP);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            Self::CMD_CLIP => {
-                match with_plot_state(|state| {
-                    state.push_byte(CMD_CLIP);
-                }) {
-                    Ok(_) => ExecuteResult::Ok,
-                    Err(e) => ExecuteResult::Error(e),
-                }
-            }
-
-            _ => ExecuteResult::Error(format!("Unknown plot command: {}", ctx.cmd())),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
+    custom decompile {
         use rpl_lang::library::DecompileMode;
 
         match ctx.mode() {
             DecompileMode::Prolog => {
-                // Check for PLOT prolog
                 if let Some(word) = ctx.peek()
                     && rpl_core::is_prolog(word)
                     && rpl_core::extract_type(word) == TypeId::PLOT.as_u16()
                 {
                     let size = rpl_core::extract_size(word) as usize;
-                    ctx.read(); // consume prolog
+                    ctx.read();
 
-                    // Read the data words and convert to bytes
                     let data: Vec<Word> = (0..size).filter_map(|_| ctx.read()).collect();
                     let bytes = words_to_bytes(&data);
                     let cmd_count = count_commands(&bytes);
 
                     ctx.write(&format!("«Plot: {} cmds»", cmd_count));
-                    return DecompileResult::Ok;
+                    return rpl_lang::library::DecompileResult::Ok;
                 }
-                DecompileResult::Unknown
+                rpl_lang::library::DecompileResult::Unknown
             }
             DecompileMode::Call(cmd) => {
-                if let Some(name) = Self::command_name(cmd) {
-                    ctx.write(name);
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
+                let name = match cmd {
+                    Self::CMD_BEGINPLOT => "BEGINPLOT",
+                    Self::CMD_EDITPLOT => "EDITPLOT",
+                    Self::CMD_ENDPLOT => "ENDPLOT",
+                    Self::CMD_MOVETO => "MOVETO",
+                    Self::CMD_LINETO => "LINETO",
+                    Self::CMD_CIRCLE => "CIRCLE",
+                    Self::CMD_RECT => "RECT",
+                    Self::CMD_ELLIPSE => "ELLIPSE",
+                    Self::CMD_ARC => "ARC",
+                    Self::CMD_BEZIER => "BEZIER",
+                    Self::CMD_PIXEL => "PIXEL",
+                    Self::CMD_TEXT => "TEXT",
+                    Self::CMD_FILL => "FILL",
+                    Self::CMD_STROKE => "STROKE",
+                    Self::CMD_LINEWIDTH => "LINEWIDTH",
+                    Self::CMD_COLOR => "COLOR",
+                    Self::CMD_FILLCOLOR => "FILLCOLOR",
+                    Self::CMD_FONT => "FONT",
+                    Self::CMD_IDENTITY => "IDENTITY",
+                    Self::CMD_TRANSFORM => "TRANSFORM",
+                    Self::CMD_SCALE => "SCALE",
+                    Self::CMD_ROTATE => "ROTATE",
+                    Self::CMD_TRANSLATE => "TRANSLATE",
+                    Self::CMD_PUSHSTATE => "PUSHSTATE",
+                    Self::CMD_POPSTATE => "POPSTATE",
+                    Self::CMD_CLIP => "CLIP",
+                    Self::CMD_RGBA => "RGBA",
+                    _ => return rpl_lang::library::DecompileResult::Unknown,
+                };
+                ctx.write(name);
+                rpl_lang::library::DecompileResult::Ok
             }
         }
     }
 
-    fn stack_effect(&self, token: &str) -> StackEffect {
+    custom stack_effect {
         match token.to_ascii_uppercase().as_str() {
             "BEGINPLOT" => StackEffect::Fixed {
                 consumes: 0,
@@ -962,7 +865,7 @@ impl Library for PlotLib {
                 produces: 0,
             },
             "COLOR" | "FILLCOLOR" => StackEffect::Fixed {
-                consumes: 4,
+                consumes: 1,
                 produces: 0,
             },
             "FONT" | "SCALE" | "TRANSLATE" => StackEffect::Fixed {
@@ -973,16 +876,24 @@ impl Library for PlotLib {
                 consumes: 6,
                 produces: 0,
             },
+            "RGBA" => StackEffect::Fixed {
+                consumes: 4,
+                produces: 1,
+            },
             _ => StackEffect::Dynamic,
         }
     }
 }
+
+/// Library ID for Plot.
+pub const PLOT_LIB_ID: rpl_lang::library::LibraryId = PlotLib::ID;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rpl_core::{Interner, Pos, Span};
     use rpl_lang::compile::OutputBuffer;
+    use rpl_lang::library::{CompileContext, CompileResult, ExecuteContext, Library, ProbeContext, ProbeResult};
     use rpl_lang::VM;
 
     fn make_probe_ctx<'a>(text: &'a str, interner: &'a Interner) -> ProbeContext<'a> {
@@ -1058,12 +969,12 @@ mod tests {
         // BEGINPLOT
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_BEGINPLOT);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         // ENDPLOT
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_ENDPLOT);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         // Should have a plot on the stack
         assert_eq!(vm.depth(), 1);
@@ -1090,30 +1001,30 @@ mod tests {
 
         // BEGINPLOT
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_BEGINPLOT);
-        lib.execute(&mut ctx);
+        let _ = lib.execute(&mut ctx);
 
         // 10 20 MOVETO
         vm.push(Value::Real(10.0)).unwrap();
         vm.push(Value::Real(20.0)).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_MOVETO);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         // 30 40 LINETO
         vm.push(Value::Real(30.0)).unwrap();
         vm.push(Value::Real(40.0)).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_LINETO);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         // STROKE
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_STROKE);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         // ENDPLOT
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_ENDPLOT);
-        lib.execute(&mut ctx);
+        let _ = lib.execute(&mut ctx);
 
         // Check the result
         let val = vm.pop().unwrap();
@@ -1143,6 +1054,6 @@ mod tests {
         vm.push(Value::Real(20.0)).unwrap();
         let mut ctx = make_exec_ctx(&mut vm, PlotLib::CMD_MOVETO);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(matches!(result, Err(_)));
     }
 }

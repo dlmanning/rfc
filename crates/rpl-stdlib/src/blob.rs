@@ -11,53 +11,11 @@
 //! - Words 2+: packed bytes (4 per word, little-endian)
 
 use rpl_core::TypeId;
-use rpl_core::token::{SemanticKind, TokenInfo};
-use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteContext,
-    ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
-use rpl_lang::Value;
-
-/// Library for blob operations.
-pub struct BlobLib;
-
-impl BlobLib {
-    /// Library ID for blob operations.
-    pub const ID: LibraryId = LibraryId::new(85);
-
-    // Command IDs
-    const CMD_MKBLOB: u16 = 0;      // subtype n_bytes byte... → blob
-    const CMD_BLOBTYPE: u16 = 1;    // blob → subtype
-    const CMD_BLOBSIZE: u16 = 2;    // blob → size
-    const CMD_BLOB_TO_LIST: u16 = 3; // blob → list
-    const CMD_LIST_TO_BLOB: u16 = 4; // subtype list → blob
-
-    fn command_id(name: &str) -> Option<u16> {
-        match name.to_ascii_uppercase().as_str() {
-            "MKBLOB" => Some(Self::CMD_MKBLOB),
-            "BLOBTYPE" => Some(Self::CMD_BLOBTYPE),
-            "BLOBSIZE" => Some(Self::CMD_BLOBSIZE),
-            "BLOB→LIST" | "BLOB->LIST" => Some(Self::CMD_BLOB_TO_LIST),
-            "LIST→BLOB" | "LIST->BLOB" => Some(Self::CMD_LIST_TO_BLOB),
-            _ => None,
-        }
-    }
-
-    fn command_name(id: u16) -> Option<&'static str> {
-        match id {
-            Self::CMD_MKBLOB => Some("MKBLOB"),
-            Self::CMD_BLOBTYPE => Some("BLOBTYPE"),
-            Self::CMD_BLOBSIZE => Some("BLOBSIZE"),
-            Self::CMD_BLOB_TO_LIST => Some("BLOB→LIST"),
-            Self::CMD_LIST_TO_BLOB => Some("LIST→BLOB"),
-            _ => None,
-        }
-    }
-}
+use rpl_lang::{Value, library::EXEC_OK};
 
 /// Create a blob value from subtype and bytes.
 pub fn make_blob(subtype: u32, bytes: &[u8]) -> Value {
-    let mut data = Vec::with_capacity(2 + (bytes.len() + 3) / 4);
+    let mut data = Vec::with_capacity(2 + bytes.len().div_ceil(4));
     data.push(subtype);
     data.push(bytes.len() as u32);
 
@@ -106,213 +64,144 @@ pub fn parse_blob(value: &Value) -> Option<(u32, Vec<u8>)> {
     }
 }
 
-impl Library for BlobLib {
-    fn id(&self) -> LibraryId {
-        Self::ID
-    }
+rpl_macros::define_library! {
+    pub library BlobLib(85, "Blob");
 
-    fn name(&self) -> &'static str {
-        "Blob"
-    }
+    commands {
+        // MKBLOB: subtype n_bytes byte... → blob
+        MKBLOB (*) "Create blob from stack values" {
+            let n_bytes = match ctx.pop() {
+                Ok(Value::Int(n)) if n >= 0 => n as usize,
+                Ok(Value::Real(r)) if r >= 0.0 => r as usize,
+                Ok(_) => return Err("MKBLOB: expected non-negative count".into()),
+                Err(_) => return Err("MKBLOB: stack underflow".into()),
+            };
 
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        let text = ctx.text();
-
-        if Self::command_id(text).is_some() {
-            ProbeResult::Match {
-                info: TokenInfo::atom(text.len() as u8),
-                semantic: SemanticKind::Command,
+            let mut bytes = Vec::with_capacity(n_bytes);
+            for _ in 0..n_bytes {
+                let b = match ctx.pop() {
+                    Ok(Value::Int(i)) => (i & 0xFF) as u8,
+                    Ok(Value::Real(r)) => (r as i64 & 0xFF) as u8,
+                    Ok(_) => return Err("MKBLOB: expected byte values".into()),
+                    Err(_) => return Err("MKBLOB: stack underflow".into()),
+                };
+                bytes.push(b);
             }
-        } else {
-            ProbeResult::NoMatch
+            bytes.reverse();
+
+            let subtype = match ctx.pop() {
+                Ok(Value::Int(i)) => i as u32,
+                Ok(Value::Real(r)) => r as u32,
+                Ok(_) => return Err("MKBLOB: expected subtype number".into()),
+                Err(_) => return Err("MKBLOB: stack underflow".into()),
+            };
+
+            let blob = make_blob(subtype, &bytes);
+            if ctx.push(blob).is_err() {
+                return Err("Stack overflow".into());
+            }
+            EXEC_OK
         }
-    }
 
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
-        let text = ctx.text();
+        // BLOBTYPE: blob → subtype
+        BLOBTYPE (1 -> 1) "Get blob subtype" {
+            let blob = match ctx.pop() {
+                Ok(v) => v,
+                Err(_) => return Err("BLOBTYPE: stack underflow".into()),
+            };
 
-        if let Some(cmd) = Self::command_id(text) {
-            ctx.emit_opcode(Self::ID.as_u16(), cmd);
-            CompileResult::Ok
-        } else {
-            CompileResult::NoMatch
-        }
-    }
-
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd() {
-            Self::CMD_MKBLOB => {
-                // Stack: subtype n_bytes byte_n ... byte_1 → blob
-                // Pop n_bytes first, then pop that many bytes, then subtype
-                let n_bytes = match ctx.pop() {
-                    Ok(Value::Int(n)) if n >= 0 => n as usize,
-                    Ok(Value::Real(r)) if r >= 0.0 => r as usize,
-                    Ok(_) => return ExecuteResult::Error("MKBLOB: expected non-negative count".to_string()),
-                    Err(_) => return ExecuteResult::Error("MKBLOB: stack underflow".to_string()),
-                };
-
-                // Pop bytes in reverse order (they're on stack with first byte on top after count)
-                let mut bytes = Vec::with_capacity(n_bytes);
-                for _ in 0..n_bytes {
-                    let b = match ctx.pop() {
-                        Ok(Value::Int(i)) => (i & 0xFF) as u8,
-                        Ok(Value::Real(r)) => (r as i64 & 0xFF) as u8,
-                        Ok(_) => return ExecuteResult::Error("MKBLOB: expected byte values".to_string()),
-                        Err(_) => return ExecuteResult::Error("MKBLOB: stack underflow".to_string()),
-                    };
-                    bytes.push(b);
-                }
-                // Bytes were pushed first-on-bottom, so reverse to get correct order
-                bytes.reverse();
-
-                // Pop subtype
-                let subtype = match ctx.pop() {
-                    Ok(Value::Int(i)) => i as u32,
-                    Ok(Value::Real(r)) => r as u32,
-                    Ok(_) => return ExecuteResult::Error("MKBLOB: expected subtype number".to_string()),
-                    Err(_) => return ExecuteResult::Error("MKBLOB: stack underflow".to_string()),
-                };
-
-                let blob = make_blob(subtype, &bytes);
-                if ctx.push(blob).is_err() {
-                    return ExecuteResult::Error("Stack overflow".to_string());
-                }
-                ExecuteResult::Ok
-            }
-
-            Self::CMD_BLOBTYPE => {
-                // blob → subtype
-                let blob = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return ExecuteResult::Error("BLOBTYPE: stack underflow".to_string()),
-                };
-
-                match parse_blob(&blob) {
-                    Some((subtype, _)) => {
-                        if ctx.push(Value::Int(subtype as i64)).is_err() {
-                            return ExecuteResult::Error("Stack overflow".to_string());
-                        }
-                        ExecuteResult::Ok
+            match parse_blob(&blob) {
+                Some((subtype, _)) => {
+                    if ctx.push(Value::Int(subtype as i64)).is_err() {
+                        return Err("Stack overflow".into());
                     }
-                    None => ExecuteResult::Error("BLOBTYPE: expected blob".to_string()),
+                    EXEC_OK
                 }
-            }
-
-            Self::CMD_BLOBSIZE => {
-                // blob → size
-                let blob = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return ExecuteResult::Error("BLOBSIZE: stack underflow".to_string()),
-                };
-
-                match parse_blob(&blob) {
-                    Some((_, bytes)) => {
-                        if ctx.push(Value::Int(bytes.len() as i64)).is_err() {
-                            return ExecuteResult::Error("Stack overflow".to_string());
-                        }
-                        ExecuteResult::Ok
-                    }
-                    None => ExecuteResult::Error("BLOBSIZE: expected blob".to_string()),
-                }
-            }
-
-            Self::CMD_BLOB_TO_LIST => {
-                // blob → list of byte values
-                let blob = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return ExecuteResult::Error("BLOB→LIST: stack underflow".to_string()),
-                };
-
-                match parse_blob(&blob) {
-                    Some((_, bytes)) => {
-                        let list: Vec<Value> = bytes.into_iter()
-                            .map(|b| Value::Int(b as i64))
-                            .collect();
-                        if ctx.push(Value::List(list)).is_err() {
-                            return ExecuteResult::Error("Stack overflow".to_string());
-                        }
-                        ExecuteResult::Ok
-                    }
-                    None => ExecuteResult::Error("BLOB→LIST: expected blob".to_string()),
-                }
-            }
-
-            Self::CMD_LIST_TO_BLOB => {
-                // subtype list → blob
-                let list = match ctx.pop() {
-                    Ok(Value::List(l)) => l,
-                    Ok(_) => return ExecuteResult::Error("LIST→BLOB: expected list".to_string()),
-                    Err(_) => return ExecuteResult::Error("LIST→BLOB: stack underflow".to_string()),
-                };
-
-                let subtype = match ctx.pop() {
-                    Ok(Value::Int(i)) => i as u32,
-                    Ok(Value::Real(r)) => r as u32,
-                    Ok(_) => return ExecuteResult::Error("LIST→BLOB: expected subtype number".to_string()),
-                    Err(_) => return ExecuteResult::Error("LIST→BLOB: stack underflow".to_string()),
-                };
-
-                let mut bytes = Vec::with_capacity(list.len());
-                for val in list {
-                    match val {
-                        Value::Int(i) => bytes.push((i & 0xFF) as u8),
-                        Value::Real(r) => bytes.push((r as i64 & 0xFF) as u8),
-                        _ => return ExecuteResult::Error("LIST→BLOB: list must contain only numbers".to_string()),
-                    }
-                }
-
-                let blob = make_blob(subtype, &bytes);
-                if ctx.push(blob).is_err() {
-                    return ExecuteResult::Error("Stack overflow".to_string());
-                }
-                ExecuteResult::Ok
-            }
-
-            _ => ExecuteResult::Error(format!("Unknown blob command: {}", ctx.cmd())),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => DecompileResult::Unknown,
-            DecompileMode::Call(cmd) => {
-                if let Some(name) = Self::command_name(cmd) {
-                    ctx.write(name);
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
+                None => Err("BLOBTYPE: expected blob".into()),
             }
         }
-    }
 
-    fn stack_effect(&self, token: &str) -> StackEffect {
-        match token.to_ascii_uppercase().as_str() {
-            "BLOBTYPE" | "BLOBSIZE" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 1,
-            },
-            "BLOB→LIST" | "BLOB->LIST" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 1,
-            },
-            "LIST→BLOB" | "LIST->BLOB" => StackEffect::Fixed {
-                consumes: 2,
-                produces: 1,
-            },
-            // MKBLOB is dynamic (depends on n_bytes)
-            _ => StackEffect::Dynamic,
+        // BLOBSIZE: blob → size
+        BLOBSIZE (1 -> 1) "Get blob size in bytes" {
+            let blob = match ctx.pop() {
+                Ok(v) => v,
+                Err(_) => return Err("BLOBSIZE: stack underflow".into()),
+            };
+
+            match parse_blob(&blob) {
+                Some((_, bytes)) => {
+                    if ctx.push(Value::Int(bytes.len() as i64)).is_err() {
+                        return Err("Stack overflow".into());
+                    }
+                    EXEC_OK
+                }
+                None => Err("BLOBSIZE: expected blob".into()),
+            }
+        }
+
+        // BLOB→LIST: blob → list (with ASCII alias BLOB->LIST)
+        BLOBTOLIST | "BLOB→LIST" | "BLOB->LIST" (1 -> 1) "Convert blob to list of bytes" {
+            let blob = match ctx.pop() {
+                Ok(v) => v,
+                Err(_) => return Err("BLOB→LIST: stack underflow".into()),
+            };
+
+            match parse_blob(&blob) {
+                Some((_, bytes)) => {
+                    let list: Vec<Value> = bytes.into_iter()
+                        .map(|b| Value::Int(b as i64))
+                        .collect();
+                    if ctx.push(Value::List(list)).is_err() {
+                        return Err("Stack overflow".into());
+                    }
+                    EXEC_OK
+                }
+                None => Err("BLOB→LIST: expected blob".into()),
+            }
+        }
+
+        // LIST→BLOB: subtype list → blob (with ASCII alias LIST->BLOB)
+        LISTTOBLOB | "LIST→BLOB" | "LIST->BLOB" (2 -> 1) "Convert list of bytes to blob" {
+            let list = match ctx.pop() {
+                Ok(Value::List(l)) => l,
+                Ok(_) => return Err("LIST→BLOB: expected list".into()),
+                Err(_) => return Err("LIST→BLOB: stack underflow".into()),
+            };
+
+            let subtype = match ctx.pop() {
+                Ok(Value::Int(i)) => i as u32,
+                Ok(Value::Real(r)) => r as u32,
+                Ok(_) => return Err("LIST→BLOB: expected subtype number".into()),
+                Err(_) => return Err("LIST→BLOB: stack underflow".into()),
+            };
+
+            let mut bytes = Vec::with_capacity(list.len());
+            for val in list {
+                match val {
+                    Value::Int(i) => bytes.push((i & 0xFF) as u8),
+                    Value::Real(r) => bytes.push((r as i64 & 0xFF) as u8),
+                    _ => return Err("LIST→BLOB: list must contain only numbers".into()),
+                }
+            }
+
+            let blob = make_blob(subtype, &bytes);
+            if ctx.push(blob).is_err() {
+                return Err("Stack overflow".into());
+            }
+            EXEC_OK
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rpl_core::{Interner, Pos, Span};
-    use rpl_lang::VM;
+    use rpl_lang::{
+        VM,
+        library::{ExecuteContext, ExecuteOk, Library, ProbeContext, ProbeResult, StackEffect},
+    };
+
+    use super::*;
 
     fn make_probe_ctx<'a>(text: &'a str, interner: &'a Interner) -> ProbeContext<'a> {
         let span = Span::new(Pos::new(0), Pos::new(text.len() as u32));
@@ -390,7 +279,7 @@ mod tests {
 
         let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_BLOBTYPE);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
         assert_eq!(vm.pop_int().unwrap(), 123);
     }
 
@@ -404,7 +293,7 @@ mod tests {
 
         let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_BLOBSIZE);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
         assert_eq!(vm.pop_int().unwrap(), 5);
     }
 
@@ -416,9 +305,9 @@ mod tests {
         let blob = make_blob(0, &[10, 20, 30]);
         vm.push(blob).unwrap();
 
-        let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_BLOB_TO_LIST);
+        let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_BLOBTOLIST);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         match vm.pop().unwrap() {
             Value::List(list) => {
@@ -441,11 +330,12 @@ mod tests {
             Value::Int(0xAA),
             Value::Int(0xBB),
             Value::Int(0xCC),
-        ])).unwrap();
+        ]))
+        .unwrap();
 
-        let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_LIST_TO_BLOB);
+        let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_LISTTOBLOB);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         let blob = vm.pop().unwrap();
         let (subtype, bytes) = parse_blob(&blob).unwrap();
@@ -459,15 +349,15 @@ mod tests {
         let mut vm = VM::new();
 
         // Stack: subtype byte1 byte2 byte3 n_bytes
-        vm.push(Value::Int(99)).unwrap();  // subtype
+        vm.push(Value::Int(99)).unwrap(); // subtype
         vm.push(Value::Int(0x11)).unwrap(); // byte 1
         vm.push(Value::Int(0x22)).unwrap(); // byte 2
         vm.push(Value::Int(0x33)).unwrap(); // byte 3
-        vm.push(Value::Int(3)).unwrap();    // n_bytes
+        vm.push(Value::Int(3)).unwrap(); // n_bytes
 
         let mut ctx = make_exec_ctx(&mut vm, BlobLib::CMD_MKBLOB);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(matches!(result, Ok(ExecuteOk::Ok)));
 
         let blob = vm.pop().unwrap();
         let (subtype, bytes) = parse_blob(&blob).unwrap();
@@ -481,19 +371,46 @@ mod tests {
 
         assert!(matches!(
             lib.stack_effect("BLOBTYPE"),
-            StackEffect::Fixed { consumes: 1, produces: 1 }
+            StackEffect::Fixed {
+                consumes: 1,
+                produces: 1
+            }
         ));
         assert!(matches!(
             lib.stack_effect("BLOBSIZE"),
-            StackEffect::Fixed { consumes: 1, produces: 1 }
+            StackEffect::Fixed {
+                consumes: 1,
+                produces: 1
+            }
         ));
+        // Arrow aliases now work correctly with the alias feature
         assert!(matches!(
             lib.stack_effect("BLOB→LIST"),
-            StackEffect::Fixed { consumes: 1, produces: 1 }
+            StackEffect::Fixed {
+                consumes: 1,
+                produces: 1
+            }
+        ));
+        assert!(matches!(
+            lib.stack_effect("BLOB->LIST"),
+            StackEffect::Fixed {
+                consumes: 1,
+                produces: 1
+            }
         ));
         assert!(matches!(
             lib.stack_effect("LIST→BLOB"),
-            StackEffect::Fixed { consumes: 2, produces: 1 }
+            StackEffect::Fixed {
+                consumes: 2,
+                produces: 1
+            }
+        ));
+        assert!(matches!(
+            lib.stack_effect("LIST->BLOB"),
+            StackEffect::Fixed {
+                consumes: 2,
+                produces: 1
+            }
         ));
         assert!(matches!(lib.stack_effect("MKBLOB"), StackEffect::Dynamic));
     }

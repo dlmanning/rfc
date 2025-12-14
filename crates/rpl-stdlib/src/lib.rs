@@ -14,9 +14,11 @@ mod arithmetic;
 mod binary_int;
 mod binary_ops;
 pub mod blob;
+pub mod codecs;
 mod comments;
 mod complex;
 mod directory;
+pub mod extern_lib;
 mod flow;
 pub mod identifiers;
 pub mod libptr;
@@ -29,6 +31,9 @@ mod stack;
 mod strings;
 mod symbolic;
 mod transcendentals;
+
+#[cfg(test)]
+mod control_test;
 
 pub use arithmetic::ArithmeticLib;
 pub use binary_int::BinaryIntLib;

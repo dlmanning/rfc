@@ -588,7 +588,8 @@ fn error_invalid_library_name_empty() {
 
 #[test]
 fn error_crlib_missing_name() {
-    eval_error(r#"{ { << 1 >> } } "TEST" CRLIB"#, "name");
+    // A 1-element list (just program, no name) should fail with "2-element list" error
+    eval_error(r#"{ { << 1 >> } } "TEST" CRLIB"#, "2-element list");
 }
 
 #[test]

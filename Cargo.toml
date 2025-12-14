@@ -5,16 +5,20 @@ members = [
     "crates/rpl-source",
     "crates/rpl-vm",
     "crates/rpl-lang",
+    "crates/rpl-macros",
     "crates/rpl-stdlib",
     "crates/rpl-session",
     "crates/rpl-lsp",
     "crates/rpl-dap",
     "crates/rpl-repl",
+    "crates/rpl-sr5",
 ]
 default-members = [
+    ".",
     "crates/rpl-repl",
     "crates/rpl-lsp",
     "crates/rpl-dap",
+    "crates/rpl-sr5",
 ]
 
 [workspace.package]
@@ -27,11 +31,13 @@ rpl-core = { path = "crates/rpl-core" }
 rpl-source = { path = "crates/rpl-source" }
 rpl-vm = { path = "crates/rpl-vm" }
 rpl-lang = { path = "crates/rpl-lang" }
+rpl-macros = { path = "crates/rpl-macros" }
 rpl-stdlib = { path = "crates/rpl-stdlib" }
 rpl-session = { path = "crates/rpl-session" }
 rpl-lsp = { path = "crates/rpl-lsp" }
 rpl-dap = { path = "crates/rpl-dap" }
 rpl-repl = { path = "crates/rpl-repl" }
+rpl-sr5 = { path = "crates/rpl-sr5" }
 
 # External dependencies
 smallvec = "1"
@@ -46,6 +52,8 @@ crossterm = "0.28"
 dirs = "5"
 unicode-width = "0.2"
 unicode-segmentation = "1"
+pixels = "0.15"
+winit = "0.30"
 
 # Root package for integration tests
 [package]

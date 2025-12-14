@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rpl_core::{TypeId, Word, extract_cmd, extract_lib};
 use rpl_vm::{CommandDispatch, DispatchResult, RuntimeError, VM, Value};
 
-use crate::library::{ExecuteContext, ExecuteResult, LibraryId, LibraryRegistry};
+use crate::library::{ExecuteContext, ExecuteOk, ExecuteResult, LibraryId, LibraryRegistry};
 use crate::operator::{OperatorKind, OperatorRegistry};
 use crate::user_libs::UserLibraryRegistry;
 
@@ -154,32 +154,32 @@ impl<'a> LibraryDispatcher<'a> {
     /// Convert ExecuteResult to DispatchResult.
     fn convert_result(&self, result: ExecuteResult) -> DispatchResult {
         match result {
-            ExecuteResult::Ok => DispatchResult::Ok,
-            ExecuteResult::Jump(addr) => DispatchResult::Jump(addr),
-            ExecuteResult::Call(_) => {
+            Ok(ExecuteOk::Ok) => DispatchResult::Ok,
+            Ok(ExecuteOk::Jump(addr)) => DispatchResult::Jump(addr),
+            Ok(ExecuteOk::Call(_)) => {
                 DispatchResult::Error("Call not implemented".to_string())
             }
-            ExecuteResult::Return => DispatchResult::Return,
-            ExecuteResult::Yield => DispatchResult::Ok,
-            ExecuteResult::Halt => DispatchResult::Halt,
-            ExecuteResult::Error(msg) => DispatchResult::Error(msg),
-            ExecuteResult::EvalProgram(code) => DispatchResult::EvalProgram {
+            Ok(ExecuteOk::Return) => DispatchResult::Return,
+            Ok(ExecuteOk::Yield) => DispatchResult::Ok,
+            Ok(ExecuteOk::Halt) => DispatchResult::Halt,
+            Ok(ExecuteOk::EvalProgram(code)) => DispatchResult::EvalProgram {
                 code,
                 name: None,
                 debug_info: None,
             },
-            ExecuteResult::EvalProgramNamed(code, name) => DispatchResult::EvalProgram {
+            Ok(ExecuteOk::EvalProgramNamed(code, name)) => DispatchResult::EvalProgram {
                 code,
                 name: Some(name),
                 debug_info: None,
             },
-            ExecuteResult::EvalProgramWithDebug { code, name, debug_info } => {
+            Ok(ExecuteOk::EvalProgramWithDebug { code, name, debug_info }) => {
                 DispatchResult::EvalProgram {
                     code,
                     name: Some(name),
                     debug_info: Some(debug_info),
                 }
             }
+            Err(msg) => DispatchResult::Error(msg),
         }
     }
 

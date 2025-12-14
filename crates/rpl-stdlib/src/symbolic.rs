@@ -1,20 +1,6 @@
 use rpl_core::token::{SemanticKind, TokenInfo};
 use rpl_core::{extract_cmd, extract_lib, extract_size, extract_type, is_prolog, TypeId, Word};
-use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteContext,
-    ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
-
-/// Library for symbolic expressions (algebraic/quoted expressions).
-pub struct SymbolicLib;
-
-impl SymbolicLib {
-    /// Library ID for symbolic expressions.
-    pub const ID: LibraryId = LibraryId::new(56);
-
-    /// Type ID for symbolic objects.
-    pub const TYPE_ID: TypeId = TypeId::SYMBOLIC;
-}
+use rpl_lang::library::{LibraryId, StackEffect};
 
 // ============================================================================
 // Expression tree for RPN-to-infix conversion
@@ -310,166 +296,6 @@ fn format_with_parens(
     }
 }
 
-// ============================================================================
-// Library implementation
-// ============================================================================
-
-impl Library for SymbolicLib {
-    fn id(&self) -> LibraryId {
-        Self::ID
-    }
-
-    fn name(&self) -> &'static str {
-        "Symbolic"
-    }
-
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        let text = ctx.text();
-
-        // Single quote at the start: begin symbolic expression
-        if text == "'" && !ctx.in_infix() {
-            return ProbeResult::Match {
-                info: TokenInfo::open_bracket(1),
-                semantic: SemanticKind::Bracket,
-            };
-        }
-
-        // Single quote at the end: end symbolic expression
-        if text == "'" && ctx.in_infix() {
-            return ProbeResult::Match {
-                info: TokenInfo::close_bracket(1),
-                semantic: SemanticKind::Bracket,
-            };
-        }
-
-        // Inside infix mode, handle identifiers as variables
-        if ctx.in_infix() && is_identifier(text) {
-            return ProbeResult::Match {
-                info: TokenInfo::atom(text.len() as u8),
-                semantic: SemanticKind::Variable,
-            };
-        }
-
-        // Inside infix mode, handle operators with appropriate info
-        if ctx.in_infix()
-            && let Some((info, semantic)) = probe_infix_operator(text)
-        {
-            return ProbeResult::Match { info, semantic };
-        }
-
-        // Parentheses in infix mode
-        if ctx.in_infix() {
-            if text == "(" {
-                return ProbeResult::Match {
-                    info: TokenInfo::open_bracket(1),
-                    semantic: SemanticKind::Bracket,
-                };
-            }
-            if text == ")" {
-                return ProbeResult::Match {
-                    info: TokenInfo::close_bracket(1),
-                    semantic: SemanticKind::Bracket,
-                };
-            }
-            if text == "," {
-                return ProbeResult::Match {
-                    info: TokenInfo::comma(1),
-                    semantic: SemanticKind::Bracket,
-                };
-            }
-        }
-
-        ProbeResult::NoMatch
-    }
-
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
-        let text = ctx.text();
-
-        // Opening quote: start infix mode
-        // Note: Don't emit prolog here - the compiler's start_infix handles it
-        if text == "'" && !ctx.in_infix() {
-            return CompileResult::StartInfix;
-        }
-
-        // Closing quote: end infix mode
-        if text == "'" && ctx.in_infix() {
-            return CompileResult::EndInfix;
-        }
-
-        // Variables in infix mode: emit as symbolic reference
-        if ctx.in_infix() && is_identifier(text) {
-            // Clone text to avoid borrow conflict
-            let text_owned = text.to_string();
-            // Intern the variable name
-            let sym = ctx.intern(&text_owned);
-            // Emit as a symbolic variable reference (CMD_SYMBOLIC_VAR + symbol ID)
-            ctx.emit_opcode(
-                crate::IdentifiersLib::ID.as_u16(),
-                crate::identifiers::CMD_SYMBOLIC_VAR,
-            );
-            ctx.emit(sym.as_u32());
-            return CompileResult::Ok;
-        }
-
-        // Operators in infix mode are compiled by ArithmeticLib
-        // Parentheses and commas are handled by the InfixParser
-
-        CompileResult::NoMatch
-    }
-
-    fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
-        // Symbolic objects are handled by the VM's prolog decoder
-        ExecuteResult::Ok
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => {
-                // Check if this is a symbolic object prolog
-                if let Some(word) = ctx.peek()
-                    && is_prolog(word)
-                    && extract_type(word) == Self::TYPE_ID.as_u16()
-                {
-                    let size = extract_size(word) as usize;
-                    ctx.read(); // consume prolog
-
-                    ctx.write("'");
-
-                    if size > 0 {
-                        // Extract the inner bytecode
-                        let inner_code = ctx.slice(size);
-
-                        // Parse RPN to expression tree
-                        let expr = parse_rpn_to_tree(inner_code, None, ctx.interner);
-
-                        // Format as infix
-                        let infix = format_infix(&expr);
-                        ctx.write(&infix);
-
-                        // Skip the inner bytecode
-                        ctx.skip(size);
-                    }
-
-                    ctx.write("'");
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
-            }
-            DecompileMode::Call(_) => DecompileResult::Unknown,
-        }
-    }
-
-    fn stack_effect(&self, token: &str) -> StackEffect {
-        match token {
-            "'" => StackEffect::Dynamic, // Symbolic expressions have dynamic effect
-            _ => StackEffect::Dynamic,
-        }
-    }
-}
-
 /// Check if a string is a valid identifier for symbolic expressions.
 fn is_identifier(text: &str) -> bool {
     if text.is_empty() {
@@ -534,11 +360,153 @@ fn probe_infix_operator(text: &str) -> Option<(TokenInfo, SemanticKind)> {
     }
 }
 
+// ============================================================================
+// Library implementation using DSL
+// ============================================================================
+
+rpl_macros::define_library! {
+    pub library SymbolicLib(56, "Symbolic");
+
+    commands {}
+
+    custom probe {
+        let text = ctx.text();
+
+        // Single quote at the start: begin symbolic expression
+        if text == "'" && !ctx.in_infix() {
+            return rpl_lang::library::ProbeResult::Match {
+                info: TokenInfo::open_bracket(1),
+                semantic: SemanticKind::Bracket,
+            };
+        }
+
+        // Single quote at the end: end symbolic expression
+        if text == "'" && ctx.in_infix() {
+            return rpl_lang::library::ProbeResult::Match {
+                info: TokenInfo::close_bracket(1),
+                semantic: SemanticKind::Bracket,
+            };
+        }
+
+        // Inside infix mode, handle identifiers as variables
+        if ctx.in_infix() && is_identifier(text) {
+            return rpl_lang::library::ProbeResult::Match {
+                info: TokenInfo::atom(text.len() as u8),
+                semantic: SemanticKind::Variable,
+            };
+        }
+
+        // Inside infix mode, handle operators with appropriate info
+        if ctx.in_infix()
+            && let Some((info, semantic)) = probe_infix_operator(text)
+        {
+            return rpl_lang::library::ProbeResult::Match { info, semantic };
+        }
+
+        // Parentheses in infix mode
+        if ctx.in_infix() {
+            if text == "(" {
+                return rpl_lang::library::ProbeResult::Match {
+                    info: TokenInfo::open_bracket(1),
+                    semantic: SemanticKind::Bracket,
+                };
+            }
+            if text == ")" {
+                return rpl_lang::library::ProbeResult::Match {
+                    info: TokenInfo::close_bracket(1),
+                    semantic: SemanticKind::Bracket,
+                };
+            }
+            if text == "," {
+                return rpl_lang::library::ProbeResult::Match {
+                    info: TokenInfo::comma(1),
+                    semantic: SemanticKind::Bracket,
+                };
+            }
+        }
+
+        rpl_lang::library::ProbeResult::NoMatch
+    }
+
+    custom compile {
+        let text = ctx.text();
+
+        // Opening quote: start infix mode
+        if text == "'" && !ctx.in_infix() {
+            return rpl_lang::library::CompileResult::StartInfix;
+        }
+
+        // Closing quote: end infix mode
+        if text == "'" && ctx.in_infix() {
+            return rpl_lang::library::CompileResult::EndInfix;
+        }
+
+        // Variables in infix mode: emit as symbolic reference
+        if ctx.in_infix() && is_identifier(text) {
+            let text_owned = text.to_string();
+            let sym = ctx.intern(&text_owned);
+            ctx.emit_opcode(
+                crate::IdentifiersLib::ID.as_u16(),
+                crate::identifiers::CMD_SYMBOLIC_VAR,
+            );
+            ctx.emit(sym.as_u32());
+            return rpl_lang::library::CompileResult::Ok;
+        }
+
+        rpl_lang::library::CompileResult::NoMatch
+    }
+
+    custom decompile {
+        use rpl_lang::library::DecompileMode;
+
+        match ctx.mode() {
+            DecompileMode::Prolog => {
+                if let Some(word) = ctx.peek()
+                    && is_prolog(word)
+                    && extract_type(word) == TypeId::SYMBOLIC.as_u16()
+                {
+                    let size = extract_size(word) as usize;
+                    ctx.read(); // consume prolog
+
+                    ctx.write("'");
+
+                    if size > 0 {
+                        let inner_code = ctx.slice(size);
+                        let expr = parse_rpn_to_tree(inner_code, None, ctx.interner);
+                        let infix = format_infix(&expr);
+                        ctx.write(&infix);
+                        ctx.skip(size);
+                    }
+
+                    ctx.write("'");
+                    rpl_lang::library::DecompileResult::Ok
+                } else {
+                    rpl_lang::library::DecompileResult::Unknown
+                }
+            }
+            DecompileMode::Call(_) => rpl_lang::library::DecompileResult::Unknown,
+        }
+    }
+
+    custom stack_effect {
+        match token {
+            "'" => StackEffect::Dynamic,
+            _ => StackEffect::Dynamic,
+        }
+    }
+}
+
+impl SymbolicLib {
+    /// Type ID for symbolic objects.
+    pub const TYPE_ID: TypeId = TypeId::SYMBOLIC;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rpl_core::token::TokenType;
     use rpl_core::{Interner, Pos, Span};
+    use rpl_lang::library::{Library, ProbeContext, ProbeResult};
 
     fn make_probe_ctx<'a>(
         text: &'a str,
@@ -710,6 +678,7 @@ mod tests {
     #[test]
     fn compile_returns_start_infix() {
         use rpl_lang::compile::OutputBuffer;
+        use rpl_lang::library::CompileContext;
 
         let lib = SymbolicLib;
         let mut output = OutputBuffer::new();
@@ -719,12 +688,13 @@ mod tests {
         let mut ctx = CompileContext::new(span, "'", &mut output, &mut interner, None, false);
 
         let result = lib.compile(&mut ctx);
-        assert!(matches!(result, CompileResult::StartInfix));
+        assert!(matches!(result, rpl_lang::library::CompileResult::StartInfix));
     }
 
     #[test]
     fn compile_returns_end_infix() {
         use rpl_lang::compile::OutputBuffer;
+        use rpl_lang::library::CompileContext;
 
         let lib = SymbolicLib;
         let mut output = OutputBuffer::new();
@@ -735,7 +705,7 @@ mod tests {
         let mut ctx = CompileContext::new(span, "'", &mut output, &mut interner, None, true);
 
         let result = lib.compile(&mut ctx);
-        assert!(matches!(result, CompileResult::EndInfix));
+        assert!(matches!(result, rpl_lang::library::CompileResult::EndInfix));
     }
 
     // ========================================================================

@@ -261,8 +261,8 @@ mod tests {
 
     use super::*;
     use crate::library::{
-        CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteResult, Library,
-        LibraryId, ProbeContext, ProbeResult,
+        CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteOk, ExecuteResult,
+        Library, LibraryId, ProbeContext, ProbeResult,
     };
 
     // Simple mock library for testing
@@ -299,7 +299,7 @@ mod tests {
         }
 
         fn execute(&self, _ctx: &mut crate::library::ExecuteContext) -> ExecuteResult {
-            ExecuteResult::Ok
+            Ok(ExecuteOk::Ok)
         }
 
         fn decompile(&self, _ctx: &mut DecompileContext) -> DecompileResult {
@@ -461,7 +461,7 @@ mod tests {
         }
 
         fn execute(&self, _ctx: &mut crate::library::ExecuteContext) -> ExecuteResult {
-            ExecuteResult::Ok
+            Ok(ExecuteOk::Ok)
         }
 
         fn decompile(&self, _ctx: &mut DecompileContext) -> DecompileResult {

@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 rpl-core = { path = "../rpl-core" }
 rpl-lang = { path = "../rpl-lang" }
+rpl-macros = { path = "../rpl-macros" }

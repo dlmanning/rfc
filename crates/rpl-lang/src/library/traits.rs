@@ -46,10 +46,10 @@ use std::sync::Arc;
 
 use rpl_vm::ProgramDebugInfo;
 
-/// Result of executing a command.
+/// Successful execution outcomes.
 #[derive(Clone, Debug)]
-pub enum ExecuteResult {
-    /// Execution successful.
+pub enum ExecuteOk {
+    /// Execution successful, continue to next instruction.
     Ok,
     /// Jump to address.
     Jump(usize),
@@ -71,9 +71,13 @@ pub enum ExecuteResult {
         name: String,
         debug_info: Arc<ProgramDebugInfo>,
     },
-    /// Execution error.
-    Error(String),
 }
+
+/// Result of executing a command.
+pub type ExecuteResult = Result<ExecuteOk, String>;
+
+/// Convenience constant for successful execution.
+pub const EXEC_OK: ExecuteResult = Ok(ExecuteOk::Ok);
 
 /// Result of decompiling bytecode.
 #[derive(Clone, Debug)]
@@ -195,9 +199,10 @@ mod tests {
 
     #[test]
     fn execute_result_variants() {
-        assert!(matches!(ExecuteResult::Ok, ExecuteResult::Ok));
-        assert!(matches!(ExecuteResult::Jump(10), ExecuteResult::Jump(10)));
-        assert!(matches!(ExecuteResult::Halt, ExecuteResult::Halt));
+        assert!(matches!(Ok::<_, String>(ExecuteOk::Ok), Ok(ExecuteOk::Ok)));
+        assert!(matches!(Ok::<_, String>(ExecuteOk::Jump(10)), Ok(ExecuteOk::Jump(10))));
+        assert!(matches!(Ok::<_, String>(ExecuteOk::Halt), Ok(ExecuteOk::Halt)));
+        assert!(matches!(Err::<ExecuteOk, _>("error".to_string()), Err(_)));
     }
 
     #[test]

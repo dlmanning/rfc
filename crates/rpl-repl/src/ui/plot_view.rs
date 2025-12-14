@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use rpl_core::Word;
 
-use crate::plot_decoder::{PlotCommand, PlotDecoder};
+use crate::plot_decoder::{decode_plot, plot_bounds, PlotCommand};
 
 /// 2D affine transform matrix (row-major: [[a, b, tx], [c, d, ty]]).
 #[derive(Clone, Copy, Debug)]
@@ -134,7 +134,7 @@ pub struct PlotViewState {
 impl PlotViewState {
     /// Create a new plot view state from plot data.
     pub fn new(plot_data: Vec<Word>) -> Self {
-        let bounds = PlotDecoder::bounds(&plot_data);
+        let bounds = plot_bounds(&plot_data);
         Self {
             plot_data,
             bounds,
@@ -239,7 +239,7 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
         .x_bounds([view_min_x, view_max_x])
         .y_bounds([view_min_y, view_max_y])
         .paint(|ctx| {
-            let decoder = PlotDecoder::new(state.plot_data());
+            let commands = decode_plot(state.plot_data());
 
             // Graphics state
             let mut transform = Transform::identity();
@@ -252,7 +252,7 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
             // Path buffer for fill operations
             let mut path: Vec<(f64, f64)> = Vec::new();
 
-            for cmd in decoder {
+            for cmd in commands {
                 match cmd {
                     PlotCommand::MoveTo { x, y } => {
                         let (tx, ty) = transform.apply(x, y);
@@ -401,7 +401,10 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
                     PlotCommand::Rotate { angle } => {
                         transform = transform.concat(&Transform::rotate(angle));
                     }
-                    PlotCommand::LineWidth { .. } | PlotCommand::Clip => {
+                    PlotCommand::Font { .. }
+                    | PlotCommand::Transform { .. }
+                    | PlotCommand::LineWidth { .. }
+                    | PlotCommand::Clip => {
                         // Not supported in Braille rendering
                     }
                 }

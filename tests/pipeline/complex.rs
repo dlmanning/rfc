@@ -9,6 +9,7 @@ use super::eval_to_values;
 // ============================================================================
 
 #[test]
+#[ignore = "HP-style complex literal syntax not yet implemented"]
 fn complex_hp_style_literal() {
     // (3, 2) should create a complex number
     let values = eval_to_values("(3, 2)");

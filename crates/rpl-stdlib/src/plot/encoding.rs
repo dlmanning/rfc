@@ -4,19 +4,23 @@
 //! - S = sign bit (1 = negative)
 //! - LLL = length in additional bytes (0-4)
 //!
-//! Coordinates use Q8.24 fixed-point format.
+//! Coordinates use Q16.16 fixed-point format (16 bits integer, 16 bits fraction).
+//! This supports coordinates from -32768 to +32767 with sub-pixel precision.
 
 use rpl_core::Word;
 
-/// Convert a floating-point coordinate to Q8.24 fixed-point.
+/// Fixed-point shift amount (Q16.16 format)
+const FP_SHIFT: i32 = 16;
+const FP_SCALE: f64 = (1 << FP_SHIFT) as f64;
+
+/// Convert a floating-point coordinate to Q16.16 fixed-point.
 pub fn to_fixed_point(f: f64) -> i32 {
-    (f * (1 << 24) as f64).round() as i32
+    (f * FP_SCALE).round() as i32
 }
 
-/// Convert Q8.24 fixed-point back to floating-point.
-#[allow(dead_code)]
+/// Convert Q16.16 fixed-point back to floating-point.
 pub fn from_fixed_point(fp: i32) -> f64 {
-    fp as f64 / (1 << 24) as f64
+    fp as f64 / FP_SCALE
 }
 
 /// Encode a signed integer using variable-length format.
@@ -66,7 +70,6 @@ pub fn encode_number(n: i64) -> Vec<u8> {
 /// Decode a variable-length number from bytes.
 ///
 /// Returns (value, bytes_consumed).
-#[allow(dead_code)]
 pub fn decode_number(bytes: &[u8]) -> Option<(i64, usize)> {
     if bytes.is_empty() {
         return None;
@@ -125,7 +128,6 @@ pub fn encode_string(s: &str) -> Vec<u8> {
 /// Decode a string from bytes.
 ///
 /// Returns (string, bytes_consumed).
-#[allow(dead_code)]
 pub fn decode_string(bytes: &[u8]) -> Option<(String, usize)> {
     if bytes.is_empty() {
         return None;
@@ -204,12 +206,12 @@ mod tests {
         assert_eq!(from_fixed_point(to_fixed_point(1.0)), 1.0);
         assert_eq!(from_fixed_point(to_fixed_point(-1.0)), -1.0);
 
-        // Test fractional values (with some tolerance for floating-point)
+        // Test fractional values (Q16.16 has ~1/65536 precision ≈ 1.5e-5)
         let val = from_fixed_point(to_fixed_point(0.5));
-        assert!((val - 0.5).abs() < 1e-6);
+        assert!((val - 0.5).abs() < 1e-4);
 
         let val = from_fixed_point(to_fixed_point(3.14159));
-        assert!((val - 3.14159).abs() < 1e-6);
+        assert!((val - 3.14159).abs() < 1e-4);
     }
 
     #[test]

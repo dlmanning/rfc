@@ -6,338 +6,267 @@
 //! - BADD, BSUB, BMUL, BDIV - arithmetic on binary integers
 //! - STWS, RCWS - word size control
 
-use rpl_core::token::{SemanticKind, TokenInfo};
-use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteContext,
-    ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-};
+use rpl_lang::library::EXEC_OK;
 
-/// Library for binary integer operations.
-pub struct BinaryOpsLib;
+rpl_macros::define_library! {
+    pub library BinaryOpsLib(70, "BinaryOps");
 
-impl BinaryOpsLib {
-    /// Library ID for binary operations.
-    pub const ID: LibraryId = LibraryId::new(70);
-
-    // Command IDs - Bitwise operations
-    const CMD_BAND: u16 = 0;
-    const CMD_BOR: u16 = 1;
-    const CMD_BXOR: u16 = 2;
-    const CMD_BNOT: u16 = 3;
-    const CMD_BLSL: u16 = 4;
-    const CMD_BLSR: u16 = 5;
-    // Arithmetic on binary integers
-    const CMD_BADD: u16 = 10;
-    const CMD_BSUB: u16 = 11;
-    const CMD_BMUL: u16 = 12;
-    const CMD_BDIV: u16 = 13;
-    // Word size control
-    const CMD_STWS: u16 = 20;
-    const CMD_RCWS: u16 = 21;
-
-    /// Get command ID from name (case-insensitive).
-    fn command_id(name: &str) -> Option<u16> {
-        match name.to_ascii_uppercase().as_str() {
-            "BAND" => Some(Self::CMD_BAND),
-            "BOR" => Some(Self::CMD_BOR),
-            "BXOR" => Some(Self::CMD_BXOR),
-            "BNOT" => Some(Self::CMD_BNOT),
-            "BLSL" => Some(Self::CMD_BLSL),
-            "BLSR" => Some(Self::CMD_BLSR),
-            "BADD" => Some(Self::CMD_BADD),
-            "BSUB" => Some(Self::CMD_BSUB),
-            "BMUL" => Some(Self::CMD_BMUL),
-            "BDIV" => Some(Self::CMD_BDIV),
-            "STWS" => Some(Self::CMD_STWS),
-            "RCWS" => Some(Self::CMD_RCWS),
-            _ => None,
+    commands {
+        BAND (2 -> 1) [
+            brief: "Bitwise AND",
+            stack: "( #a #b -- #result )",
+            example: "#FF #0F BAND",
+            see_also: ["BOR", "BXOR"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Err(e) = ctx.push_bint(a & b) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
         }
-    }
 
-    /// Get command name from ID.
-    fn command_name(id: u16) -> Option<&'static str> {
-        match id {
-            Self::CMD_BAND => Some("BAND"),
-            Self::CMD_BOR => Some("BOR"),
-            Self::CMD_BXOR => Some("BXOR"),
-            Self::CMD_BNOT => Some("BNOT"),
-            Self::CMD_BLSL => Some("BLSL"),
-            Self::CMD_BLSR => Some("BLSR"),
-            Self::CMD_BADD => Some("BADD"),
-            Self::CMD_BSUB => Some("BSUB"),
-            Self::CMD_BMUL => Some("BMUL"),
-            Self::CMD_BDIV => Some("BDIV"),
-            Self::CMD_STWS => Some("STWS"),
-            Self::CMD_RCWS => Some("RCWS"),
-            _ => None,
+        BOR (2 -> 1) [
+            brief: "Bitwise OR",
+            stack: "( #a #b -- #result )",
+            example: "#F0 #0F BOR",
+            see_also: ["BAND", "BXOR"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Err(e) = ctx.push_bint(a | b) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
         }
-    }
 
-    /// Get the word size mask for current word size.
-    fn word_mask(ws: u8) -> i64 {
-        if ws >= 64 { !0i64 } else { (1i64 << ws) - 1 }
+        BXOR (2 -> 1) [
+            brief: "Bitwise XOR",
+            stack: "( #a #b -- #result )",
+            example: "#FF #F0 BXOR",
+            see_also: ["BAND", "BOR"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Err(e) = ctx.push_bint(a ^ b) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BNOT (1 -> 1) [
+            brief: "Bitwise NOT (respects word size)",
+            stack: "( #a -- #result )",
+            example: "#FF BNOT",
+            see_also: ["BAND", "STWS"],
+        ] {
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let ws = ctx.word_size();
+            let mask = word_mask(ws);
+            if let Err(e) = ctx.push_bint(!a & mask) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BLSL (2 -> 1) [
+            brief: "Bitwise logical shift left",
+            stack: "( #a #shift -- #result )",
+            example: "#1 #4 BLSL",
+            see_also: ["BLSR"],
+        ] {
+            let shift = match ctx.pop_bint() {
+                Ok(v) => v as u32,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let ws = ctx.word_size();
+            let mask = word_mask(ws);
+            if let Err(e) = ctx.push_bint((a << shift) & mask) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BLSR (2 -> 1) [
+            brief: "Bitwise logical shift right",
+            stack: "( #a #shift -- #result )",
+            example: "#10 #4 BLSR",
+            see_also: ["BLSL"],
+        ] {
+            let shift = match ctx.pop_bint() {
+                Ok(v) => v as u32,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v as u64,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Err(e) = ctx.push_bint((a >> shift) as i64) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BADD (2 -> 1) [
+            brief: "Binary integer addition (wraps at word size)",
+            stack: "( #a #b -- #result )",
+            example: "#10 #5 BADD",
+            see_also: ["BSUB", "BMUL"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let ws = ctx.word_size();
+            let mask = word_mask(ws);
+            if let Err(e) = ctx.push_bint(a.wrapping_add(b) & mask) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BSUB (2 -> 1) [
+            brief: "Binary integer subtraction (wraps at word size)",
+            stack: "( #a #b -- #result )",
+            example: "#10 #5 BSUB",
+            see_also: ["BADD", "BMUL"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let ws = ctx.word_size();
+            let mask = word_mask(ws);
+            if let Err(e) = ctx.push_bint(a.wrapping_sub(b) & mask) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BMUL (2 -> 1) [
+            brief: "Binary integer multiplication (wraps at word size)",
+            stack: "( #a #b -- #result )",
+            example: "#10 #5 BMUL",
+            see_also: ["BADD", "BDIV"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            let ws = ctx.word_size();
+            let mask = word_mask(ws);
+            if let Err(e) = ctx.push_bint(a.wrapping_mul(b) & mask) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        BDIV (2 -> 1) [
+            brief: "Binary integer division",
+            stack: "( #a #b -- #result )",
+            example: "#10 #5 BDIV",
+            see_also: ["BMUL", "BSUB"],
+        ] {
+            let b = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            if b == 0 {
+                return Err("Division by zero".to_string());
+            }
+            let a = match ctx.pop_bint() {
+                Ok(v) => v,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Err(e) = ctx.push_bint(a / b) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
+
+        STWS (1 -> 0) [
+            brief: "Set word size (1-64 bits)",
+            stack: "( n -- )",
+            example: "16 STWS",
+            see_also: ["RCWS"],
+        ] {
+            let ws = match ctx.pop_bint() {
+                Ok(v) => v as u8,
+                Err(e) => return Err(e.to_string()),
+            };
+            if ws == 0 || ws > 64 {
+                return Err("Word size must be 1-64".to_string());
+            }
+            ctx.set_word_size(ws);
+            EXEC_OK
+        }
+
+        RCWS (0 -> 1) [
+            brief: "Recall current word size",
+            stack: "( -- n )",
+            example: "RCWS",
+            see_also: ["STWS"],
+        ] {
+            let ws = ctx.word_size() as i64;
+            if let Err(e) = ctx.push_bint(ws) {
+                return Err(e.to_string());
+            }
+            EXEC_OK
+        }
     }
 }
 
-impl Library for BinaryOpsLib {
-    fn id(&self) -> LibraryId {
-        Self::ID
-    }
-
-    fn name(&self) -> &'static str {
-        "BinaryOps"
-    }
-
-    fn probe(&self, ctx: &ProbeContext) -> ProbeResult {
-        let text = ctx.text();
-
-        if Self::command_id(text).is_some() {
-            ProbeResult::Match {
-                info: TokenInfo::atom(text.len() as u8),
-                semantic: SemanticKind::Command,
-            }
-        } else {
-            ProbeResult::NoMatch
-        }
-    }
-
-    fn compile(&self, ctx: &mut CompileContext) -> CompileResult {
-        let text = ctx.text();
-
-        if let Some(cmd) = Self::command_id(text) {
-            ctx.emit_opcode(Self::ID.as_u16(), cmd);
-            CompileResult::Ok
-        } else {
-            CompileResult::NoMatch
-        }
-    }
-
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd() {
-            Self::CMD_BAND => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if let Err(e) = ctx.push_bint(a & b) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BOR => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if let Err(e) = ctx.push_bint(a | b) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BXOR => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if let Err(e) = ctx.push_bint(a ^ b) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BNOT => {
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let ws = ctx.word_size();
-                let mask = Self::word_mask(ws);
-                if let Err(e) = ctx.push_bint(!a & mask) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BLSL => {
-                let shift = match ctx.pop_bint() {
-                    Ok(v) => v as u32,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let ws = ctx.word_size();
-                let mask = Self::word_mask(ws);
-                if let Err(e) = ctx.push_bint((a << shift) & mask) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BLSR => {
-                let shift = match ctx.pop_bint() {
-                    Ok(v) => v as u32,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v as u64, // Logical shift treats as unsigned
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if let Err(e) = ctx.push_bint((a >> shift) as i64) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BADD => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let ws = ctx.word_size();
-                let mask = Self::word_mask(ws);
-                if let Err(e) = ctx.push_bint(a.wrapping_add(b) & mask) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BSUB => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let ws = ctx.word_size();
-                let mask = Self::word_mask(ws);
-                if let Err(e) = ctx.push_bint(a.wrapping_sub(b) & mask) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BMUL => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                let ws = ctx.word_size();
-                let mask = Self::word_mask(ws);
-                if let Err(e) = ctx.push_bint(a.wrapping_mul(b) & mask) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_BDIV => {
-                let b = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if b == 0 {
-                    return ExecuteResult::Error("Division by zero".to_string());
-                }
-                let a = match ctx.pop_bint() {
-                    Ok(v) => v,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if let Err(e) = ctx.push_bint(a / b) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            Self::CMD_STWS => {
-                let ws = match ctx.pop_bint() {
-                    Ok(v) => v as u8,
-                    Err(e) => return ExecuteResult::Error(e.to_string()),
-                };
-                if ws == 0 || ws > 64 {
-                    return ExecuteResult::Error("Word size must be 1-64".to_string());
-                }
-                ctx.set_word_size(ws);
-                ExecuteResult::Ok
-            }
-            Self::CMD_RCWS => {
-                let ws = ctx.word_size() as i64;
-                if let Err(e) = ctx.push_bint(ws) {
-                    return ExecuteResult::Error(e.to_string());
-                }
-                ExecuteResult::Ok
-            }
-            _ => ExecuteResult::Error(format!("Unknown command: {}", ctx.cmd())),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => DecompileResult::Unknown,
-            DecompileMode::Call(cmd) => {
-                if let Some(token) = Self::command_name(cmd) {
-                    ctx.write(token);
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
-            }
-        }
-    }
-
-    fn stack_effect(&self, token: &str) -> StackEffect {
-        let upper = token.to_ascii_uppercase();
-        match upper.as_str() {
-            // Binary operations: 2 in, 1 out
-            "BAND" | "BOR" | "BXOR" | "BLSL" | "BLSR" => StackEffect::Fixed {
-                consumes: 2,
-                produces: 1,
-            },
-            // Binary arithmetic: 2 in, 1 out
-            "BADD" | "BSUB" | "BMUL" | "BDIV" => StackEffect::Fixed {
-                consumes: 2,
-                produces: 1,
-            },
-            // Unary: 1 in, 1 out
-            "BNOT" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 1,
-            },
-            // Word size
-            "STWS" => StackEffect::Fixed {
-                consumes: 1,
-                produces: 0,
-            },
-            "RCWS" => StackEffect::Fixed {
-                consumes: 0,
-                produces: 1,
-            },
-            _ => StackEffect::Dynamic,
-        }
-    }
+/// Get the word size mask for current word size.
+fn word_mask(ws: u8) -> i64 {
+    if ws >= 64 { !0i64 } else { (1i64 << ws) - 1 }
 }
 
 #[cfg(test)]
 mod tests {
+    use rpl_core::{Interner, Pos, Span, token::SemanticKind};
+    use rpl_lang::{
+        VM,
+        library::{ExecuteContext, Library, ProbeContext, ProbeResult, StackEffect},
+    };
+
     use super::*;
-    use rpl_core::{Interner, Pos, Span};
-    use rpl_lang::VM;
 
     fn make_probe_ctx<'a>(text: &'a str, interner: &'a Interner) -> ProbeContext<'a> {
         let span = Span::new(Pos::new(0), Pos::new(text.len() as u32));
@@ -441,7 +370,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BAND);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0);
     }
 
@@ -454,7 +383,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BOR);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0xFF);
     }
 
@@ -467,7 +396,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BXOR);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0x0F);
     }
 
@@ -479,7 +408,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BNOT);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), -1); // All 1s in 64-bit
     }
 
@@ -492,7 +421,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BNOT);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0);
     }
 
@@ -505,7 +434,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BLSL);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 16);
     }
 
@@ -518,7 +447,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BLSR);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 1);
     }
 
@@ -531,7 +460,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BADD);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0x15);
     }
 
@@ -544,7 +473,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BSUB);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0x0B);
     }
 
@@ -557,7 +486,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BMUL);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 0x50);
     }
 
@@ -570,7 +499,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BDIV);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 3);
     }
 
@@ -583,7 +512,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_BDIV);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -593,7 +522,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_RCWS);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 64);
     }
 
@@ -605,11 +534,11 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_STWS);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_RCWS);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Ok));
+        assert!(result.is_ok());
         assert_eq!(vm.pop_int().unwrap(), 16);
     }
 
@@ -621,7 +550,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_STWS);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(matches!(result, Err(_)));
     }
 
     #[test]
@@ -632,7 +561,7 @@ mod tests {
 
         let mut ctx = ExecuteContext::new(&mut vm, &[], 0, BinaryOpsLib::CMD_STWS);
         let result = lib.execute(&mut ctx);
-        assert!(matches!(result, ExecuteResult::Error(_)));
+        assert!(matches!(result, Err(_)));
     }
 
     #[test]
