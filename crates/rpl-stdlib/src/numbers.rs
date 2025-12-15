@@ -14,10 +14,6 @@ rpl_macros::define_library! {
         real: RealCodec;
     }
 
-    prologs {
-        REAL: format(RealCodec);
-    }
-
     commands {
         // Internal operator implementations (called via operator dispatch)
         @ADD (2 -> 1) "Add two reals" {

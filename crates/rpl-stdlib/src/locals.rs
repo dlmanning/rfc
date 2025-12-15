@@ -117,63 +117,6 @@ rpl_macros::define_library! {
             _ => rpl_lang::library::CompileResult::NoMatch,
         }
     }
-
-    custom decompile {
-        use rpl_lang::library::DecompileMode;
-
-        let cmd = match ctx.mode() {
-            DecompileMode::Prolog => return rpl_lang::library::DecompileResult::Unknown,
-            DecompileMode::Call(cmd) => cmd,
-        };
-
-        match cmd {
-            Self::CMD_LOCAL_FRAME_SETUP => {
-                // Read param count
-                let count = ctx.read().unwrap_or(0) as usize;
-
-                // Read symbol IDs and convert to names
-                let mut param_names = Vec::with_capacity(count);
-                for _ in 0..count {
-                    let sym_id = ctx.read().unwrap_or(0);
-                    let symbol = Symbol::from_raw(sym_id);
-                    let name = if let Some(interner) = ctx.interner {
-                        interner.resolve(symbol).to_string()
-                    } else {
-                        format!("${}", sym_id)
-                    };
-                    param_names.push(name);
-                }
-
-                // Format: → param1 param2 ::
-                ctx.write("→ ");
-                for (i, name) in param_names.iter().enumerate() {
-                    if i > 0 {
-                        ctx.write(" ");
-                    }
-                    ctx.write(name);
-                }
-                ctx.write(" :: ");
-                rpl_lang::library::DecompileResult::Ok
-            }
-            Self::CMD_LOCAL_FRAME_POP => {
-                let _count = ctx.read();
-                ctx.write(" ;");
-                rpl_lang::library::DecompileResult::Ok
-            }
-            Self::CMD_LOCAL_LOOKUP => {
-                let sym_id = ctx.read().unwrap_or(0);
-                let symbol = Symbol::from_raw(sym_id);
-                let name = if let Some(interner) = ctx.interner {
-                    interner.resolve(symbol).to_string()
-                } else {
-                    format!("${}", sym_id)
-                };
-                ctx.write(&name);
-                rpl_lang::library::DecompileResult::Ok
-            }
-            _ => rpl_lang::library::DecompileResult::Unknown,
-        }
-    }
 }
 
 // Re-export command constants for compiler helper functions

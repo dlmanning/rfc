@@ -3,9 +3,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::ast::{
-    Arity, ConstructAction, ControlPattern, LibraryDef, OpSigDef, PrologKind, StackEffectDef,
-};
+use crate::ast::{Arity, ConstructAction, ControlCloser, LibraryDef, OpSigDef, StackEffectDef};
 
 /// Generate all code for a library definition.
 pub fn generate(lib: &LibraryDef) -> TokenStream {
@@ -35,8 +33,8 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
 
     // Get control keywords for generating constants and ID match arms
     let control_keywords = collect_control_keywords(lib);
-    // Get internal commands for control patterns
-    let internal_cmds = collect_control_internal_commands(lib);
+    // Get emit commands from control flow declarations
+    let emit_cmds = collect_control_emit_commands(lib);
     let num_regular_commands = lib.commands.len() as u16;
 
     // Generate command constants for regular commands
@@ -53,12 +51,12 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
         })
         .collect();
 
-    // Generate command constants for internal commands (after regular commands)
-    let internal_cmd_consts: Vec<_> = internal_cmds
+    // Generate command constants for emit commands (after regular commands)
+    let emit_cmd_consts: Vec<_> = emit_cmds
         .iter()
         .enumerate()
         .map(|(i, cmd)| {
-            let const_name = format_ident!("CMD_{}", cmd.name);
+            let const_name = format_ident!("CMD_{}", cmd);
             let idx = num_regular_commands + i as u16;
             quote! {
                 const #const_name: u16 = #idx;
@@ -66,14 +64,21 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
         })
         .collect();
 
-    // Generate command constants for control keywords (after internal commands)
-    let num_internal_commands = internal_cmds.len() as u16;
-    let control_cmd_consts: Vec<_> = control_keywords
+    // Generate command constants for control keywords (after emit commands)
+    // Filter out keywords that are already emit commands to avoid duplicates
+    let emit_cmd_names: std::collections::HashSet<&str> =
+        emit_cmds.iter().map(|cmd| cmd.as_str()).collect();
+    let num_emit_commands = emit_cmds.len() as u16;
+    let filtered_control_keywords: Vec<_> = control_keywords
+        .iter()
+        .filter(|(kw, _)| !emit_cmd_names.contains(kw.as_str()))
+        .collect();
+    let control_cmd_consts: Vec<_> = filtered_control_keywords
         .iter()
         .enumerate()
         .map(|(i, (kw, _))| {
             let const_name = format_ident!("CMD_{}", kw);
-            let idx = num_regular_commands + num_internal_commands + i as u16;
+            let idx = num_regular_commands + num_emit_commands + i as u16;
             quote! {
                 const #const_name: u16 = #idx;
             }
@@ -138,18 +143,15 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
         })
         .collect();
 
-    // Generate command_name match arms for internal commands
-    let internal_name_arms: Vec<_> = internal_cmds
+    // Generate command_name match arms for emit commands
+    // Emit commands display as their name
+    let emit_name_arms: Vec<_> = emit_cmds
         .iter()
-        .filter_map(|cmd| {
-            // Map internal command to the keyword it should decompile to
-            let decompile_name = internal_cmd_decompile_name(cmd);
-            decompile_name.map(|name| {
-                let const_name = format_ident!("CMD_{}", cmd.name);
-                quote! {
-                    Self::#const_name => Some(#name),
-                }
-            })
+        .map(|cmd| {
+            let const_name = format_ident!("CMD_{}", cmd);
+            quote! {
+                Self::#const_name => Some(#cmd),
+            }
         })
         .collect();
 
@@ -207,7 +209,7 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
             pub const ID: rpl_lang::library::LibraryId = rpl_lang::library::LibraryId::new(#id);
 
             #(#cmd_consts)*
-            #(#internal_cmd_consts)*
+            #(#emit_cmd_consts)*
             #(#control_cmd_consts)*
 
             #is_falsy_helper
@@ -225,7 +227,7 @@ fn generate_impl(lib: &LibraryDef) -> TokenStream {
             fn command_name(id: u16) -> Option<&'static str> {
                 match id {
                     #(#name_arms)*
-                    #(#internal_name_arms)*
+                    #(#emit_name_arms)*
                     #(#control_name_arms)*
                     _ => None,
                 }
@@ -249,7 +251,6 @@ fn generate_library_impl(lib: &LibraryDef) -> TokenStream {
     let probe_impl = generate_probe(lib);
     let compile_impl = generate_compile(lib);
     let execute_impl = generate_execute(lib);
-    let decompile_impl = generate_decompile(lib);
     let stack_effect_impl = generate_stack_effect(lib);
     let register_operators_impl = generate_register_operators(lib);
     let register_coercions_impl = generate_register_coercions(lib);
@@ -267,7 +268,6 @@ fn generate_library_impl(lib: &LibraryDef) -> TokenStream {
             #probe_impl
             #compile_impl
             #execute_impl
-            #decompile_impl
             #stack_effect_impl
             #register_operators_impl
             #register_coercions_impl
@@ -298,8 +298,10 @@ fn generate_operator_info(lib: &LibraryDef) -> TokenStream {
         let is_infix = op.infix_precedence.is_some();
 
         // Separate exact tokens (symbols) from word tokens (need uppercase)
-        let (symbols, words): (Vec<_>, Vec<_>) =
-            op.tokens.iter().partition(|t| !t.chars().all(|c| c.is_alphabetic()));
+        let (symbols, words): (Vec<_>, Vec<_>) = op
+            .tokens
+            .iter()
+            .partition(|t| !t.chars().all(|c| c.is_alphabetic()));
 
         if !symbols.is_empty() {
             exact_arms.push(quote! {
@@ -700,8 +702,7 @@ fn generate_execute(lib: &LibraryDef) -> TokenStream {
     let lib_name_str = name.to_string();
 
     // Operator syntax libraries don't execute anything
-    if !lib.operator_syntax.is_empty() && lib.commands.is_empty() && lib.control_patterns.is_empty()
-    {
+    if !lib.operator_syntax.is_empty() && lib.commands.is_empty() && !has_control_flow(lib) {
         return quote! {
             fn execute(&self, _ctx: &mut rpl_lang::library::ExecuteContext) -> rpl_lang::library::ExecuteResult {
                 // Operator syntax libraries don't execute anything.
@@ -726,42 +727,26 @@ fn generate_execute(lib: &LibraryDef) -> TokenStream {
         })
         .collect();
 
-    // Generate arms for internal commands from control patterns
-    let internal_cmds = collect_control_internal_commands(lib);
-    let internal_arms: Vec<_> = internal_cmds
+    // Generate execute arms for inline control flow keywords (IFT, IFTE)
+    let inline_arms: Vec<_> = lib
+        .control_flow
+        .inlines
         .iter()
-        .map(|cmd| {
-            let const_name = format_ident!("CMD_{}", cmd.name);
-            let body = generate_internal_cmd_execute(cmd);
-            quote! {
-                Self::#const_name => {
-                    #body
-                }
-            }
-        })
-        .collect();
+        .map(|inline| {
+            let kw = inline.keyword.to_string().to_uppercase();
+            let const_name = format_ident!("CMD_{}", kw);
 
-    // Generate execute arms for InlineConditional keywords (IFT, IFTE)
-    // These are direct commands handled by keywords, not internal_cmds
-    let inline_cond_arms: Vec<_> = lib
-        .control_patterns
-        .iter()
-        .filter(|p| p.pattern == ControlPattern::InlineConditional)
-        .flat_map(|pattern| {
-            let ift = pattern.keywords[0].to_string().to_uppercase();
-            let ifte = pattern.keywords[1].to_string().to_uppercase();
-            let ift_const = format_ident!("CMD_{}", ift);
-            let ifte_const = format_ident!("CMD_{}", ifte);
-
-            vec![
+            // For IFT and IFTE, generate special handling
+            // TODO: In the future, we could allow custom execute bodies in the DSL
+            if kw == "IFT" {
                 quote! {
-                    Self::#ift_const => {
-                        // IFT: condition obj → obj (if true) or nothing (if false)
-                        let obj = match ctx.pop() {
+                    Self::#const_name => {
+                        // IFT: obj cond → obj (if true) or nothing (if false)
+                        let condition = match ctx.pop() {
                             Ok(v) => v,
                             Err(_) => return Err("Stack underflow".to_string()),
                         };
-                        let condition = match ctx.pop() {
+                        let obj = match ctx.pop() {
                             Ok(v) => v,
                             Err(_) => return Err("Stack underflow".to_string()),
                         };
@@ -770,19 +755,20 @@ fn generate_execute(lib: &LibraryDef) -> TokenStream {
                         }
                         Ok(rpl_lang::library::ExecuteOk::Ok)
                     }
-                },
+                }
+            } else if kw == "IFTE" {
                 quote! {
-                    Self::#ifte_const => {
-                        // IFTE: condition true_obj false_obj → selected_obj
+                    Self::#const_name => {
+                        // IFTE: true_obj false_obj cond → selected_obj
+                        let condition = match ctx.pop() {
+                            Ok(v) => v,
+                            Err(_) => return Err("Stack underflow".to_string()),
+                        };
                         let false_obj = match ctx.pop() {
                             Ok(v) => v,
                             Err(_) => return Err("Stack underflow".to_string()),
                         };
                         let true_obj = match ctx.pop() {
-                            Ok(v) => v,
-                            Err(_) => return Err("Stack underflow".to_string()),
-                        };
-                        let condition = match ctx.pop() {
                             Ok(v) => v,
                             Err(_) => return Err("Stack underflow".to_string()),
                         };
@@ -793,214 +779,21 @@ fn generate_execute(lib: &LibraryDef) -> TokenStream {
                         }
                         Ok(rpl_lang::library::ExecuteOk::Ok)
                     }
-                },
-            ]
+                }
+            } else {
+                // Unknown inline - should be handled in commands block
+                quote! {}
+            }
         })
+        .filter(|ts| !ts.is_empty())
         .collect();
 
     quote! {
         fn execute(&self, ctx: &mut rpl_lang::library::ExecuteContext) -> rpl_lang::library::ExecuteResult {
             match ctx.cmd() {
                 #(#arms)*
-                #(#internal_arms)*
-                #(#inline_cond_arms)*
+                #(#inline_arms)*
                 _ => Err(format!("Unknown {} command: {}", #lib_name_str, ctx.cmd())),
-            }
-        }
-    }
-}
-
-fn generate_decompile(lib: &LibraryDef) -> TokenStream {
-    // If custom_decompile is provided, use it for the entire decompile implementation
-    if let Some(custom) = &lib.custom_decompile {
-        return quote! {
-            fn decompile(&self, ctx: &mut rpl_lang::library::DecompileContext) -> rpl_lang::library::DecompileResult {
-                #custom
-            }
-        };
-    }
-
-    // Operator syntax libraries don't emit bytecode, so nothing to decompile
-    if !lib.operator_syntax.is_empty() && lib.commands.is_empty() && lib.prologs.is_empty() {
-        return quote! {
-            fn decompile(&self, _ctx: &mut rpl_lang::library::DecompileContext) -> rpl_lang::library::DecompileResult {
-                // Operator syntax libraries don't emit bytecode, so nothing to decompile.
-                // Operator bytecode comes from type-owning libraries or dispatch.
-                rpl_lang::library::DecompileResult::Unknown
-            }
-        };
-    }
-
-    // Generate prolog handler
-    // Check prologs section, then literals, then custom if provided, otherwise return Unknown
-
-    // Generate prolog checks (using if-else chain since type_id.as_u16() is not a pattern)
-    // IMPORTANT: Each check must consume the prolog ONLY if it handles the type.
-    // If a check doesn't match, it should NOT consume the prolog so other libraries can try.
-    let prolog_checks: Vec<_> = lib
-        .prologs
-        .iter()
-        .map(|prolog| {
-            let type_id = &prolog.type_id;
-            match &prolog.kind {
-                PrologKind::Delimited { open, close } => {
-                    quote! {
-                        if type_id == rpl_core::TypeId::#type_id.as_u16() {
-                            ctx.read(); // consume prolog now that we're handling it
-                            ctx.write(#open);
-                            if size > 0 {
-                                ctx.write(" ");
-                                ctx.decompile_inner(size);
-                            }
-                            ctx.write(" ");
-                            ctx.write(#close);
-                            return rpl_lang::library::DecompileResult::Ok;
-                        }
-                    }
-                }
-                PrologKind::Format(codec) => {
-                    quote! {
-                        if type_id == rpl_core::TypeId::#type_id.as_u16() {
-                            ctx.read(); // consume prolog now that we're handling it
-                            // Read data words
-                            let mut words = Vec::with_capacity(size);
-                            for _ in 0..size {
-                                if let Some(w) = ctx.read() {
-                                    words.push(w);
-                                }
-                            }
-                            // Decode and format
-                            if let Some(value) = <#codec as rpl_lang::library::LiteralCodec>::decode(&words) {
-                                ctx.write(&<#codec as rpl_lang::library::LiteralCodec>::format(&value));
-                                return rpl_lang::library::DecompileResult::Ok;
-                            }
-                        }
-                    }
-                }
-                PrologKind::Custom(body) => {
-                    quote! {
-                        if type_id == rpl_core::TypeId::#type_id.as_u16() {
-                            ctx.read(); // consume prolog now that we're handling it
-                            #body
-                        }
-                    }
-                }
-            }
-        })
-        .collect();
-
-    // Generate literal decompile blocks (for backwards compatibility with literals section)
-    // IMPORTANT: Only consume the prolog if the type matches.
-    let literal_decompiles: Vec<_> = lib
-        .literals
-        .iter()
-        .map(|lit| {
-            let codec = &lit.codec;
-            quote! {
-                if type_id == <#codec as rpl_lang::library::LiteralCodec>::type_id().as_u16() {
-                    ctx.read(); // consume prolog now that we're handling it
-                    // Read data words
-                    let mut words = Vec::with_capacity(size);
-                    for _ in 0..size {
-                        if let Some(w) = ctx.read() {
-                            words.push(w);
-                        }
-                    }
-                    // Decode and format
-                    if let Some(value) = <#codec as rpl_lang::library::LiteralCodec>::decode(&words) {
-                        ctx.write(&<#codec as rpl_lang::library::LiteralCodec>::format(&value));
-                        return rpl_lang::library::DecompileResult::Ok;
-                    }
-                }
-            }
-        })
-        .collect();
-
-    let has_prologs = !prolog_checks.is_empty();
-    let has_literals = !literal_decompiles.is_empty();
-    let has_custom = lib.custom_decompile_prolog.is_some();
-
-    let prolog_handler = if has_prologs || has_literals || has_custom {
-        let custom_handler = if let Some(custom) = &lib.custom_decompile_prolog {
-            quote! { #custom }
-        } else {
-            quote! { rpl_lang::library::DecompileResult::Unknown }
-        };
-
-        let prolog_if_chain = if has_prologs {
-            quote! { #(#prolog_checks)* }
-        } else {
-            quote! {}
-        };
-
-        let literal_if_chain = if has_literals {
-            quote! { #(#literal_decompiles)* }
-        } else {
-            quote! {}
-        };
-
-        quote! {
-            if let Some(word) = ctx.peek()
-                && rpl_core::is_prolog(word)
-            {
-                let type_id = rpl_core::extract_type(word);
-                let size = rpl_core::extract_size(word) as usize;
-                // NOTE: Don't consume prolog here - each check consumes it if it matches.
-                // This allows other libraries to try if we don't handle this type.
-
-                // Check declarative prologs
-                #prolog_if_chain
-
-                // Check literal codecs
-                #literal_if_chain
-
-                // Fall through to custom handler or unknown
-                #custom_handler
-            } else {
-                rpl_lang::library::DecompileResult::Unknown
-            }
-        }
-    } else {
-        quote! { rpl_lang::library::DecompileResult::Unknown }
-    };
-
-    // Generate decompile arms for internal commands with operands
-    let control_decompile_arms = generate_control_decompile_arms(lib);
-    let has_control_decompile = !control_decompile_arms.is_empty();
-
-    let call_handler = if has_control_decompile {
-        quote! {
-            // Handle internal commands with operands first
-            match cmd {
-                #(#control_decompile_arms)*
-                _ => {}
-            }
-            // Then try command_name for regular commands and markers
-            if let Some(name) = Self::command_name(cmd) {
-                ctx.write(name);
-                rpl_lang::library::DecompileResult::Ok
-            } else {
-                rpl_lang::library::DecompileResult::Unknown
-            }
-        }
-    } else {
-        quote! {
-            if let Some(name) = Self::command_name(cmd) {
-                ctx.write(name);
-                rpl_lang::library::DecompileResult::Ok
-            } else {
-                rpl_lang::library::DecompileResult::Unknown
-            }
-        }
-    };
-
-    quote! {
-        fn decompile(&self, ctx: &mut rpl_lang::library::DecompileContext) -> rpl_lang::library::DecompileResult {
-            match ctx.mode() {
-                rpl_lang::library::DecompileMode::Prolog => { #prolog_handler }
-                rpl_lang::library::DecompileMode::Call(cmd) => {
-                    #call_handler
-                }
             }
         }
     }
@@ -1126,36 +919,6 @@ fn generate_stack_effect(lib: &LibraryDef) -> TokenStream {
     }
 }
 
-/// Collect all keywords from control patterns.
-/// Returns a list of (keyword_name, is_keyword) pairs.
-/// Keywords are user-visible (IF, THEN, etc.), non-keywords are internal markers.
-fn collect_control_keywords(lib: &LibraryDef) -> Vec<(String, bool)> {
-    let mut keywords = Vec::new();
-
-    for pattern in &lib.control_patterns {
-        // Add all positional keywords
-        for kw in &pattern.keywords {
-            keywords.push((kw.to_string().to_uppercase(), true));
-        }
-
-        // Add optional keywords from options
-        if let Some(alt) = &pattern.options.alt {
-            keywords.push((alt.to_string().to_uppercase(), true));
-        }
-        if let Some(step) = &pattern.options.step {
-            keywords.push((step.to_string().to_uppercase(), true));
-        }
-        if let Some(no_error) = &pattern.options.no_error {
-            keywords.push((no_error.to_string().to_uppercase(), true));
-        }
-    }
-
-    // Deduplicate (e.g., NEXT appears in multiple patterns)
-    keywords.sort_by(|a, b| a.0.cmp(&b.0));
-    keywords.dedup_by(|a, b| a.0 == b.0);
-    keywords
-}
-
 fn generate_register_operators(lib: &LibraryDef) -> TokenStream {
     if lib.operators.is_empty() {
         // No operators - don't override the default implementation
@@ -1262,503 +1025,88 @@ fn generate_register_coercions(lib: &LibraryDef) -> TokenStream {
 }
 
 // =============================================================================
-// Control Pattern Code Generation
+// Control Flow Code Generation
 // =============================================================================
+// The new control_flow DSL uses explicit role-based declarations:
+// - opener: Starts a construct
+// - transition: Emits bytecode, stays in construct (NeedMore)
+// - closer: Ends a construct
+// - inline: Regular commands with stack effects
 
-/// Internal command kinds for control flow patterns.
-/// Each kind has associated execute semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum InternalCmd {
-    /// No-op marker for decompilation (e.g., IF_MARKER, END_MARKER)
-    Marker,
-    /// Conditional jump: pop condition, jump if false
-    JumpIfFalse,
-    /// Unconditional jump
-    Jump,
-    /// Loop back if condition is false (for UNTIL)
-    UntilJump,
-    /// Initialize loop counter from stack (for START)
-    LoopSetup,
-    /// Increment loop counter and jump if not done (for NEXT)
-    LoopNext,
-    /// Custom increment from stack and jump (for STEP)
-    LoopStep,
-    /// Initialize FOR loop with symbol
-    ForSetup,
-    /// Increment FOR variable and jump if not done
-    ForNext,
-    /// Custom increment for FOR and jump
-    ForStep,
-    /// Setup error handler
-    IfErrSetup,
-    /// Pop error handler on success
-    IfErrSuccess,
-    /// Inline conditional: IFT (condition obj → obj or nothing)
-    Ift,
-    /// Inline conditional: IFTE (condition true_obj false_obj → selected)
-    Ifte,
+/// Check if library has control flow declarations.
+fn has_control_flow(lib: &LibraryDef) -> bool {
+    let cf = &lib.control_flow;
+    !cf.openers.is_empty()
+        || !cf.transitions.is_empty()
+        || !cf.closers.is_empty()
+        || !cf.inlines.is_empty()
 }
 
-/// Collected internal command with its name and kind.
-#[derive(Debug, Clone)]
-struct InternalCmdDef {
-    name: String,
-    kind: InternalCmd,
+/// Collect all keywords from control flow declarations.
+/// Returns a list of (keyword_name, is_keyword) pairs.
+fn collect_control_keywords(lib: &LibraryDef) -> Vec<(String, bool)> {
+    let mut keywords = Vec::new();
+    let cf = &lib.control_flow;
+
+    for opener in &cf.openers {
+        keywords.push((opener.keyword.to_string().to_uppercase(), true));
+    }
+    for transition in &cf.transitions {
+        keywords.push((transition.keyword.to_string().to_uppercase(), true));
+    }
+    for closer in &cf.closers {
+        keywords.push((closer.keyword.to_string().to_uppercase(), true));
+    }
+    for inline in &cf.inlines {
+        keywords.push((inline.keyword.to_string().to_uppercase(), true));
+    }
+
+    // Deduplicate
+    keywords.sort_by(|a, b| a.0.cmp(&b.0));
+    keywords.dedup_by(|a, b| a.0 == b.0);
+    keywords
 }
 
-/// Collect all internal commands needed by control patterns.
-/// Returns deduplicated list of (name, kind) pairs.
-fn collect_control_internal_commands(lib: &LibraryDef) -> Vec<InternalCmdDef> {
-    let mut commands = Vec::new();
+/// Collect all emit commands referenced in control flow declarations.
+/// These become internal commands that need CMD_* constants.
+fn collect_control_emit_commands(lib: &LibraryDef) -> Vec<String> {
+    let mut cmds = Vec::new();
+    let cf = &lib.control_flow;
 
-    for pattern in &lib.control_patterns {
-        match pattern.pattern {
-            ControlPattern::IfThenElse => {
-                // IF → IF_MARKER, THEN → JUMP_IF_FALSE, ELSE → JUMP, END → END_MARKER
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", open),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP_IF_FALSE".to_string(),
-                    kind: InternalCmd::JumpIfFalse,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP".to_string(),
-                    kind: InternalCmd::Jump,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", close),
-                    kind: InternalCmd::Marker,
-                });
-            }
-            ControlPattern::DoUntil => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", open),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: "UNTIL_JUMP".to_string(),
-                    kind: InternalCmd::UntilJump,
-                });
-            }
-            ControlPattern::WhileRepeat => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", open),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP_IF_FALSE".to_string(),
-                    kind: InternalCmd::JumpIfFalse,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", test),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP".to_string(),
-                    kind: InternalCmd::Jump,
-                });
-                commands.push(InternalCmdDef {
-                    name: "END_MARKER".to_string(),
-                    kind: InternalCmd::Marker,
-                });
-            }
-            ControlPattern::StartNext => {
-                commands.push(InternalCmdDef {
-                    name: "LOOP_SETUP".to_string(),
-                    kind: InternalCmd::LoopSetup,
-                });
-                commands.push(InternalCmdDef {
-                    name: "LOOP_NEXT".to_string(),
-                    kind: InternalCmd::LoopNext,
-                });
-                if pattern.options.step.is_some() {
-                    commands.push(InternalCmdDef {
-                        name: "LOOP_STEP".to_string(),
-                        kind: InternalCmd::LoopStep,
-                    });
-                }
-            }
-            ControlPattern::ForNext => {
-                commands.push(InternalCmdDef {
-                    name: "FOR_SETUP".to_string(),
-                    kind: InternalCmd::ForSetup,
-                });
-                commands.push(InternalCmdDef {
-                    name: "FOR_NEXT".to_string(),
-                    kind: InternalCmd::ForNext,
-                });
-                if pattern.options.step.is_some() {
-                    commands.push(InternalCmdDef {
-                        name: "FOR_STEP".to_string(),
-                        kind: InternalCmd::ForStep,
-                    });
-                }
-            }
-            ControlPattern::InlineConditional => {
-                // IFT and IFTE are direct commands (keywords that execute directly).
-                // They're already in control_keywords, so we don't add them to
-                // internal_cmds to avoid duplicate constants. Their execute bodies
-                // are generated separately.
-            }
-            ControlPattern::Case => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let end_branch = pattern.keywords[2].to_string().to_uppercase();
-                let close = pattern.keywords[3].to_string().to_uppercase();
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", open),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP_IF_FALSE".to_string(),
-                    kind: InternalCmd::JumpIfFalse,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP".to_string(),
-                    kind: InternalCmd::Jump,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", end_branch),
-                    kind: InternalCmd::Marker,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", close),
-                    kind: InternalCmd::Marker,
-                });
-            }
-            ControlPattern::ErrorHandler => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let handler_start = pattern.keywords[1].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
-                commands.push(InternalCmdDef {
-                    name: format!("{}_SETUP", open),
-                    kind: InternalCmd::IfErrSetup,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_SUCCESS", open),
-                    kind: InternalCmd::IfErrSuccess,
-                });
-                commands.push(InternalCmdDef {
-                    name: "JUMP".to_string(),
-                    kind: InternalCmd::Jump,
-                });
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", handler_start),
-                    kind: InternalCmd::Marker,
-                });
-                if let Some(no_error) = &pattern.options.no_error {
-                    commands.push(InternalCmdDef {
-                        name: format!("{}_MARKER", no_error.to_string().to_uppercase()),
-                        kind: InternalCmd::Marker,
-                    });
-                }
-                commands.push(InternalCmdDef {
-                    name: format!("{}_MARKER", close),
-                    kind: InternalCmd::Marker,
-                });
-            }
+    // Collect names of commands already defined in the commands block
+    let existing_cmd_names: std::collections::HashSet<String> = lib
+        .commands
+        .iter()
+        .map(|cmd| cmd.name.to_string().to_uppercase())
+        .collect();
+
+    for opener in &cf.openers {
+        for cmd in &opener.emit {
+            cmds.push(cmd.to_string().to_uppercase());
+        }
+    }
+    for transition in &cf.transitions {
+        for cmd in &transition.emit {
+            cmds.push(cmd.to_string().to_uppercase());
+        }
+    }
+    for closer in &cf.closers {
+        for cmd in &closer.emit {
+            cmds.push(cmd.to_string().to_uppercase());
         }
     }
 
-    // Deduplicate by name
-    commands.sort_by(|a, b| a.name.cmp(&b.name));
-    commands.dedup_by(|a, b| a.name == b.name);
-    commands
+    // Deduplicate
+    cmds.sort();
+    cmds.dedup();
+
+    // Filter out commands already defined in commands block
+    cmds.into_iter()
+        .filter(|cmd| !existing_cmd_names.contains(cmd))
+        .collect()
 }
 
-/// Generate execute body for an internal command.
-fn generate_internal_cmd_execute(cmd: &InternalCmdDef) -> TokenStream {
-    match cmd.kind {
-        InternalCmd::Marker => {
-            quote! {
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::JumpIfFalse => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let condition = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                if Self::is_falsy(&condition) {
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::Jump => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                Ok(rpl_lang::library::ExecuteOk::Jump(target))
-            }
-        }
-        InternalCmd::UntilJump => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let condition = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                // UNTIL loops while false (exits when true)
-                if Self::is_falsy(&condition) {
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::LoopSetup => {
-            quote! {
-                let finish = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow".to_string()),
-                    },
-                };
-                let start = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow".to_string()),
-                    },
-                };
-                let direction = if start < finish { -1i64 } else if start > finish { 1i64 } else { 0i64 };
-                if ctx.push_start_loop(start, finish, direction, start).is_err() {
-                    return Err("Return stack overflow".to_string());
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::LoopNext => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let (start, end, direction, counter) = match ctx.pop_start_loop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Return stack underflow".to_string()),
-                };
-                let new_counter = counter + 1;
-                if new_counter <= end {
-                    if ctx.push_start_loop(start, end, direction, new_counter).is_err() {
-                        return Err("Return stack overflow".to_string());
-                    }
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::LoopStep => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let increment = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow: STEP requires increment".to_string()),
-                    },
-                };
-                let (start, end, direction, counter) = match ctx.pop_start_loop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Return stack underflow".to_string()),
-                };
-                let new_counter = counter + increment;
-                let should_continue = if direction < 0 {
-                    new_counter <= end
-                } else if direction > 0 {
-                    new_counter >= end
-                } else {
-                    new_counter == end
-                };
-                if should_continue {
-                    if ctx.push_start_loop(start, end, direction, new_counter).is_err() {
-                        return Err("Return stack overflow".to_string());
-                    }
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::ForSetup => {
-            quote! {
-                let sym_id = match ctx.read_operand() {
-                    Ok(w) => w,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let finish = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow".to_string()),
-                    },
-                };
-                let start = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow".to_string()),
-                    },
-                };
-                let direction = if start < finish { -1i64 } else if start > finish { 1i64 } else { 0i64 };
-                let symbol = rpl_core::Symbol::from_raw(sym_id);
-                if ctx.create_local_frame_for(symbol, start).is_err() {
-                    return Err("Failed to create local frame".to_string());
-                }
-                if ctx.push_for_loop(start, finish, direction, start).is_err() {
-                    return Err("Return stack overflow".to_string());
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::ForNext => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let (start, end, direction, counter) = match ctx.pop_for_loop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Return stack underflow".to_string()),
-                };
-                let new_counter = counter + 1;
-                if new_counter <= end {
-                    ctx.set_for_variable(new_counter);
-                    if ctx.push_for_loop(start, end, direction, new_counter).is_err() {
-                        return Err("Return stack overflow".to_string());
-                    }
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    ctx.pop_local_frame();
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::ForStep => {
-            quote! {
-                let target = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let increment = match ctx.pop_int() {
-                    Ok(v) => v,
-                    Err(_) => match ctx.pop_real() {
-                        Ok(v) => v as i64,
-                        Err(_) => return Err("Stack underflow: STEP requires increment".to_string()),
-                    },
-                };
-                let (start, end, direction, counter) = match ctx.pop_for_loop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Return stack underflow".to_string()),
-                };
-                let new_counter = counter + increment;
-                let should_continue = if direction < 0 {
-                    new_counter <= end
-                } else if direction > 0 {
-                    new_counter >= end
-                } else {
-                    new_counter == end
-                };
-                if should_continue {
-                    ctx.set_for_variable(new_counter);
-                    if ctx.push_for_loop(start, end, direction, new_counter).is_err() {
-                        return Err("Return stack overflow".to_string());
-                    }
-                    Ok(rpl_lang::library::ExecuteOk::Jump(target))
-                } else {
-                    ctx.pop_local_frame();
-                    Ok(rpl_lang::library::ExecuteOk::Ok)
-                }
-            }
-        }
-        InternalCmd::IfErrSetup => {
-            quote! {
-                let handler_pc = match ctx.read_operand() {
-                    Ok(w) => w as usize,
-                    Err(e) => return Err(e.to_string()),
-                };
-                let code = ctx.current_code();
-                if ctx.push_error_handler(handler_pc, code).is_err() {
-                    return Err("Return stack overflow".to_string());
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::IfErrSuccess => {
-            quote! {
-                if ctx.pop_error_handler().is_err() {
-                    return Err("No error handler to pop".to_string());
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::Ift => {
-            quote! {
-                // IFT: condition obj → obj (if true) or nothing (if false)
-                let obj = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                let condition = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                if !Self::is_falsy(&condition) {
-                    ctx.push(obj).map_err(|_| "Stack overflow")?;
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-        InternalCmd::Ifte => {
-            quote! {
-                // IFTE: condition true_obj false_obj → selected_obj
-                let false_obj = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                let true_obj = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                let condition = match ctx.pop() {
-                    Ok(v) => v,
-                    Err(_) => return Err("Stack underflow".to_string()),
-                };
-                if Self::is_falsy(&condition) {
-                    ctx.push(false_obj).map_err(|_| "Stack overflow")?;
-                } else {
-                    ctx.push(true_obj).map_err(|_| "Stack overflow")?;
-                }
-                Ok(rpl_lang::library::ExecuteOk::Ok)
-            }
-        }
-    }
-}
-
-/// Generate probe match arms for control pattern keywords.
+/// Generate probe match arms for control flow keywords.
 fn generate_control_probe_arms(lib: &LibraryDef) -> Vec<TokenStream> {
     let keywords = collect_control_keywords(lib);
 
@@ -1776,462 +1124,316 @@ fn generate_control_probe_arms(lib: &LibraryDef) -> Vec<TokenStream> {
         .collect()
 }
 
-/// Generate compile match arms for control pattern keywords.
+/// Generate compile match arms for control flow keywords.
 fn generate_control_compile_arms(lib: &LibraryDef) -> Vec<TokenStream> {
     let mut arms = Vec::new();
+    let cf = &lib.control_flow;
 
-    for pattern in &lib.control_patterns {
-        match pattern.pattern {
-            ControlPattern::IfThenElse => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
-                let open_marker = format_ident!("CMD_{}_MARKER", open);
+    // Openers - return StartConstruct, optionally emit setup commands
+    for opener in &cf.openers {
+        let kw = opener.keyword.to_string().to_uppercase();
+        let construct = &opener.construct;
 
-                arms.push(quote! {
-                    #open => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#open_marker);
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::If,
-                        }
+        let emit_code = if opener.emit.is_empty() {
+            quote! {}
+        } else {
+            let emit_stmts: Vec<_> = opener
+                .emit
+                .iter()
+                .map(|cmd| {
+                    let cmd_const = format_ident!("CMD_{}", cmd.to_string().to_uppercase());
+                    quote! {
+                        ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                        ctx.emit(0); // placeholder
                     }
-                });
-                arms.push(quote! {
-                    #test => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP_IF_FALSE);
+                })
+                .collect();
+            quote! { #(#emit_stmts)* }
+        };
+
+        arms.push(quote! {
+            #kw => {
+                #emit_code
+                return rpl_lang::library::CompileResult::StartConstruct {
+                    kind: rpl_lang::library::ConstructKind::#construct,
+                }
+            }
+        });
+    }
+
+    // Transitions - emit commands and return NeedMore
+    // NOTE: Only JUMP commands need placeholders (for offset). Other commands don't.
+    for transition in &cf.transitions {
+        let kw = transition.keyword.to_string().to_uppercase();
+
+        let emit_stmts: Vec<_> = transition
+            .emit
+            .iter()
+            .map(|cmd| {
+                let cmd_name = cmd.to_string().to_uppercase();
+                let cmd_const = format_ident!("CMD_{}", cmd_name);
+                // Only emit placeholder for JUMP-type commands
+                let needs_placeholder = cmd_name.contains("JUMP");
+                if needs_placeholder {
+                    quote! {
+                        ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
                         ctx.emit(0); // placeholder for jump target
-                        return rpl_lang::library::CompileResult::NeedMore
                     }
-                });
-                arms.push(quote! {
-                    #close => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_END_MARKER);
-                        return rpl_lang::library::CompileResult::EndConstruct
+                } else {
+                    quote! {
+                        ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
                     }
-                });
+                }
+            })
+            .collect();
 
-                if let Some(alt) = &pattern.options.alt {
-                    let alt_upper = alt.to_string().to_uppercase();
-                    arms.push(quote! {
-                        #alt_upper => {
-                            ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP);
-                            ctx.emit(0); // placeholder
+        // If valid_in is specified, check current_construct
+        if transition.valid_in.is_empty() {
+            arms.push(quote! {
+                #kw => {
+                    #(#emit_stmts)*
+                    return rpl_lang::library::CompileResult::NeedMore
+                }
+            });
+        } else {
+            let kinds: Vec<_> = transition
+                .valid_in
+                .iter()
+                .map(|k| {
+                    quote! { Some(rpl_lang::library::ConstructKind::#k) }
+                })
+                .collect();
+            // IMPORTANT: Return Unknown if construct doesn't match to prevent
+            // falling through to default command_id handling
+            arms.push(quote! {
+                #kw => {
+                    match ctx.current_construct() {
+                        #(#kinds)|* => {
+                            #(#emit_stmts)*
                             return rpl_lang::library::CompileResult::NeedMore
                         }
-                    });
+                        _ => return rpl_lang::library::CompileResult::NoMatch
+                    }
                 }
-            }
-            ControlPattern::DoUntil => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
-                let open_marker = format_ident!("CMD_{}_MARKER", open);
-
-                arms.push(quote! {
-                    #open => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#open_marker);
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::DoUntil,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #close => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_UNTIL_JUMP);
-                        ctx.emit(0); // placeholder for loop-back target
-                        return rpl_lang::library::CompileResult::EndConstruct
-                    }
-                });
-            }
-            ControlPattern::WhileRepeat => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                let open_marker = format_ident!("CMD_{}_MARKER", open);
-                let test_marker = format_ident!("CMD_{}_MARKER", test);
-
-                arms.push(quote! {
-                    #open => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#open_marker);
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::While,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #test => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP_IF_FALSE);
-                        ctx.emit(0); // placeholder
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#test_marker);
-                        return rpl_lang::library::CompileResult::NeedMore
-                    }
-                });
-                // END is shared with IfThenElse and handled there
-            }
-            ControlPattern::StartNext => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! {
-                    #open => {
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::Start,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #close => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_LOOP_NEXT);
-                        ctx.emit(0); // placeholder
-                        return rpl_lang::library::CompileResult::EndConstruct
-                    }
-                });
-
-                if let Some(step) = &pattern.options.step {
-                    let step_upper = step.to_string().to_uppercase();
-                    arms.push(quote! {
-                        #step_upper => {
-                            ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_LOOP_STEP);
-                            ctx.emit(0); // placeholder
-                            return rpl_lang::library::CompileResult::EndConstruct
-                        }
-                    });
-                }
-            }
-            ControlPattern::ForNext => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! {
-                    #open => {
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::For,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #close => {
-                        let cmd = match ctx.current_construct() {
-                            Some(rpl_lang::library::ConstructKind::For)
-                            | Some(rpl_lang::library::ConstructKind::ForUp)
-                            | Some(rpl_lang::library::ConstructKind::ForDn) => Self::CMD_FOR_NEXT,
-                            _ => Self::CMD_LOOP_NEXT,
-                        };
-                        ctx.emit_opcode(Self::ID.as_u16(), cmd);
-                        ctx.emit(0);
-                        return rpl_lang::library::CompileResult::EndConstruct
-                    }
-                });
-
-                if let Some(step) = &pattern.options.step {
-                    let step_upper = step.to_string().to_uppercase();
-                    arms.push(quote! {
-                        #step_upper => {
-                            let cmd = match ctx.current_construct() {
-                                Some(rpl_lang::library::ConstructKind::For)
-                                | Some(rpl_lang::library::ConstructKind::ForUp)
-                                | Some(rpl_lang::library::ConstructKind::ForDn) => Self::CMD_FOR_STEP,
-                                _ => Self::CMD_LOOP_STEP,
-                            };
-                            ctx.emit_opcode(Self::ID.as_u16(), cmd);
-                            ctx.emit(0);
-                            return rpl_lang::library::CompileResult::EndConstruct
-                        }
-                    });
-                }
-            }
-            ControlPattern::InlineConditional => {
-                let ift = pattern.keywords[0].to_string().to_uppercase();
-                let ifte = pattern.keywords[1].to_string().to_uppercase();
-                let ift_cmd = format_ident!("CMD_{}", ift);
-                let ifte_cmd = format_ident!("CMD_{}", ifte);
-
-                arms.push(quote! {
-                    #ift => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#ift_cmd);
-                        return rpl_lang::library::CompileResult::Ok
-                    }
-                });
-                arms.push(quote! {
-                    #ifte => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#ifte_cmd);
-                        return rpl_lang::library::CompileResult::Ok
-                    }
-                });
-            }
-            ControlPattern::Case => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                let end_branch = pattern.keywords[2].to_string().to_uppercase();
-                let close = pattern.keywords[3].to_string().to_uppercase();
-                let open_marker = format_ident!("CMD_{}_MARKER", open);
-                let end_branch_marker = format_ident!("CMD_{}_MARKER", end_branch);
-                let close_marker = format_ident!("CMD_{}_MARKER", close);
-
-                arms.push(quote! {
-                    #open => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#open_marker);
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::Case,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #test => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP_IF_FALSE);
-                        ctx.emit(0); // placeholder
-                        return rpl_lang::library::CompileResult::NeedMore
-                    }
-                });
-                arms.push(quote! {
-                    #end_branch => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP);
-                        ctx.emit(0); // placeholder
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#end_branch_marker);
-                        return rpl_lang::library::CompileResult::NeedMore
-                    }
-                });
-                arms.push(quote! {
-                    #close => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#close_marker);
-                        return rpl_lang::library::CompileResult::EndConstruct
-                    }
-                });
-            }
-            ControlPattern::ErrorHandler => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let handler_start = pattern.keywords[1].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
-                let setup_cmd = format_ident!("CMD_{}_SETUP", open);
-                let success_cmd = format_ident!("CMD_{}_SUCCESS", open);
-                let handler_marker = format_ident!("CMD_{}_MARKER", handler_start);
-                let close_marker = format_ident!("CMD_{}_MARKER", close);
-
-                arms.push(quote! {
-                    #open => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#setup_cmd);
-                        ctx.emit(0); // placeholder for handler PC
-                        return rpl_lang::library::CompileResult::StartConstruct {
-                            kind: rpl_lang::library::ConstructKind::ErrorHandler,
-                        }
-                    }
-                });
-                arms.push(quote! {
-                    #handler_start => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#success_cmd);
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP);
-                        ctx.emit(0); // placeholder
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#handler_marker);
-                        return rpl_lang::library::CompileResult::NeedMore
-                    }
-                });
-                arms.push(quote! {
-                    #close => {
-                        ctx.emit_opcode(Self::ID.as_u16(), Self::#close_marker);
-                        return rpl_lang::library::CompileResult::EndConstruct
-                    }
-                });
-
-                if let Some(no_error) = &pattern.options.no_error {
-                    let ne_upper = no_error.to_string().to_uppercase();
-                    let ne_marker = format_ident!("CMD_{}_MARKER", ne_upper);
-                    arms.push(quote! {
-                        #ne_upper => {
-                            ctx.emit_opcode(Self::ID.as_u16(), Self::CMD_JUMP);
-                            ctx.emit(0); // placeholder
-                            ctx.emit_opcode(Self::ID.as_u16(), Self::#ne_marker);
-                            return rpl_lang::library::CompileResult::NeedMore
-                        }
-                    });
-                }
-            }
+            });
         }
     }
 
-    // Deduplicate (same keyword might appear in multiple patterns)
-    // For now, we just return all arms and rely on match ordering
+    // Closers - may emit commands, return EndConstruct
+    // Group closers by keyword to handle shared keywords (like NEXT)
+    let mut closer_map: std::collections::HashMap<String, Vec<&ControlCloser>> =
+        std::collections::HashMap::new();
+    for closer in &cf.closers {
+        let kw = closer.keyword.to_string().to_uppercase();
+        closer_map.entry(kw).or_default().push(closer);
+    }
+
+    for (kw, closers) in &closer_map {
+        if closers.len() == 1 && closers[0].emit.is_empty() {
+            // Simple case: single closer, no emit
+            let kinds: Vec<_> = closers[0]
+                .valid_in
+                .iter()
+                .map(|k| {
+                    quote! { Some(rpl_lang::library::ConstructKind::#k) }
+                })
+                .collect();
+            arms.push(quote! {
+                #kw => {
+                    match ctx.current_construct() {
+                        #(#kinds)|* => return rpl_lang::library::CompileResult::EndConstruct,
+                        _ => return rpl_lang::library::CompileResult::NoMatch
+                    }
+                }
+            });
+        } else if closers.len() == 1 {
+            // Single closer with emit
+            let closer = closers[0];
+            let kinds: Vec<_> = closer
+                .valid_in
+                .iter()
+                .map(|k| {
+                    quote! { Some(rpl_lang::library::ConstructKind::#k) }
+                })
+                .collect();
+            let emit_stmts: Vec<_> = closer
+                .emit
+                .iter()
+                .map(|cmd| {
+                    let cmd_name = cmd.to_string().to_uppercase();
+                    let cmd_const = format_ident!("CMD_{}", cmd_name);
+                    // Only JUMP and LOOP/FOR commands need placeholders
+                    let needs_placeholder = cmd_name.contains("JUMP")
+                        || cmd_name.contains("LOOP_NEXT")
+                        || cmd_name.contains("LOOP_STEP")
+                        || cmd_name.contains("FOR_NEXT")
+                        || cmd_name.contains("FOR_STEP");
+                    if needs_placeholder {
+                        quote! {
+                            ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                            ctx.emit(0); // placeholder
+                        }
+                    } else {
+                        quote! {
+                            ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                        }
+                    }
+                })
+                .collect();
+            arms.push(quote! {
+                #kw => {
+                    match ctx.current_construct() {
+                        #(#kinds)|* => {
+                            #(#emit_stmts)*
+                            return rpl_lang::library::CompileResult::EndConstruct
+                        }
+                        _ => return rpl_lang::library::CompileResult::NoMatch
+                    }
+                }
+            });
+        } else {
+            // Multiple closers for same keyword (e.g., NEXT for Start vs For)
+            // Generate match arms for each
+            let mut match_arms = Vec::new();
+            for closer in closers {
+                let kinds: Vec<_> = closer
+                    .valid_in
+                    .iter()
+                    .map(|k| {
+                        quote! { Some(rpl_lang::library::ConstructKind::#k) }
+                    })
+                    .collect();
+
+                if closer.emit.is_empty() {
+                    match_arms.push(quote! {
+                        #(#kinds)|* => return rpl_lang::library::CompileResult::EndConstruct,
+                    });
+                } else {
+                    let emit_stmts: Vec<_> = closer
+                        .emit
+                        .iter()
+                        .map(|cmd| {
+                            let cmd_name = cmd.to_string().to_uppercase();
+                            let cmd_const = format_ident!("CMD_{}", cmd_name);
+                            // Only JUMP and LOOP/FOR commands need placeholders
+                            let needs_placeholder = cmd_name.contains("JUMP")
+                                || cmd_name.contains("LOOP_NEXT")
+                                || cmd_name.contains("LOOP_STEP")
+                                || cmd_name.contains("FOR_NEXT")
+                                || cmd_name.contains("FOR_STEP");
+                            if needs_placeholder {
+                                quote! {
+                                    ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                                    ctx.emit(0);
+                                }
+                            } else {
+                                quote! {
+                                    ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                                }
+                            }
+                        })
+                        .collect();
+                    match_arms.push(quote! {
+                        #(#kinds)|* => {
+                            #(#emit_stmts)*
+                            return rpl_lang::library::CompileResult::EndConstruct
+                        }
+                    });
+                }
+            }
+            // Add fallthrough to NoMatch for unmatched constructs
+            arms.push(quote! {
+                #kw => {
+                    match ctx.current_construct() {
+                        #(#match_arms)*
+                        _ => return rpl_lang::library::CompileResult::NoMatch
+                    }
+                }
+            });
+        }
+    }
+
+    // Inlines - just emit command and return Ok
+    for inline in &cf.inlines {
+        let kw = inline.keyword.to_string().to_uppercase();
+        let cmd_const = format_ident!("CMD_{}", kw);
+        arms.push(quote! {
+            #kw => {
+                ctx.emit_opcode(Self::ID.as_u16(), Self::#cmd_const);
+                return rpl_lang::library::CompileResult::Ok
+            }
+        });
+    }
+
     arms
 }
 
-/// Generate stack effect match arms for control pattern keywords.
+/// Generate stack effect match arms for control flow keywords.
 fn generate_control_stack_effect_arms(lib: &LibraryDef) -> Vec<TokenStream> {
     let mut arms = Vec::new();
+    let cf = &lib.control_flow;
 
-    for pattern in &lib.control_patterns {
-        match pattern.pattern {
-            ControlPattern::IfThenElse => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
+    // Openers
+    for opener in &cf.openers {
+        let kw = opener.keyword.to_string().to_uppercase();
+        if let Some(StackEffectDef::Fixed { consumes, produces }) = &opener.effect {
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: #consumes, produces: #produces }, });
+        } else {
+            // Default: StartConstruct
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::StartConstruct, });
+        }
+    }
 
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::StartConstruct, });
-                arms.push(quote! { #test => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::EndConstruct, });
+    // Transitions
+    for transition in &cf.transitions {
+        let kw = transition.keyword.to_string().to_uppercase();
+        if let Some(StackEffectDef::Fixed { consumes, produces }) = &transition.effect {
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: #consumes, produces: #produces }, });
+        } else {
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
+        }
+    }
 
-                if let Some(alt) = &pattern.options.alt {
-                    let alt_upper = alt.to_string().to_uppercase();
-                    arms.push(quote! { #alt_upper => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-                }
+    // Closers - deduplicate by keyword
+    let mut seen_closers: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for closer in &cf.closers {
+        let kw = closer.keyword.to_string().to_uppercase();
+        if seen_closers.contains(&kw) {
+            continue;
+        }
+        seen_closers.insert(kw.clone());
+
+        if let Some(StackEffectDef::Fixed { consumes, produces }) = &closer.effect {
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: #consumes, produces: #produces }, });
+        } else {
+            // Default for closers is EndConstruct or (0 -> 0)
+            // Check if any closer for this keyword has an effect
+            let any_has_emit = cf
+                .closers
+                .iter()
+                .any(|c| c.keyword.to_string().to_uppercase() == kw && !c.emit.is_empty());
+            if any_has_emit {
+                arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
+            } else {
+                arms.push(quote! { #kw => rpl_lang::library::StackEffect::EndConstruct, });
             }
-            ControlPattern::DoUntil => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
+        }
+    }
 
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::StartConstruct, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-            }
-            ControlPattern::WhileRepeat => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::StartConstruct, });
-                arms.push(quote! { #test => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-                // END is shared
-            }
-            ControlPattern::StartNext => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::Fixed { consumes: 2, produces: 0 }, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-
-                if let Some(step) = &pattern.options.step {
-                    let step_upper = step.to_string().to_uppercase();
-                    arms.push(quote! { #step_upper => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-                }
-            }
-            ControlPattern::ForNext => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let close = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::Fixed { consumes: 2, produces: 0 }, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-
-                if let Some(step) = &pattern.options.step {
-                    let step_upper = step.to_string().to_uppercase();
-                    arms.push(quote! { #step_upper => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-                }
-            }
-            ControlPattern::InlineConditional => {
-                let ift = pattern.keywords[0].to_string().to_uppercase();
-                let ifte = pattern.keywords[1].to_string().to_uppercase();
-
-                arms.push(quote! { #ift => rpl_lang::library::StackEffect::Fixed { consumes: 2, produces: 1 }, });
-                arms.push(quote! { #ifte => rpl_lang::library::StackEffect::Fixed { consumes: 3, produces: 1 }, });
-            }
-            ControlPattern::Case => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let test = pattern.keywords[1].to_string().to_uppercase();
-                let end_branch = pattern.keywords[2].to_string().to_uppercase();
-                let close = pattern.keywords[3].to_string().to_uppercase();
-
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::StartConstruct, });
-                arms.push(quote! { #test => rpl_lang::library::StackEffect::Fixed { consumes: 1, produces: 0 }, });
-                arms.push(quote! { #end_branch => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::EndConstruct, });
-            }
-            ControlPattern::ErrorHandler => {
-                let open = pattern.keywords[0].to_string().to_uppercase();
-                let handler_start = pattern.keywords[1].to_string().to_uppercase();
-                let close = pattern.keywords[2].to_string().to_uppercase();
-
-                arms.push(quote! { #open => rpl_lang::library::StackEffect::StartConstruct, });
-                arms.push(quote! { #handler_start => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-                arms.push(quote! { #close => rpl_lang::library::StackEffect::EndConstruct, });
-
-                if let Some(no_error) = &pattern.options.no_error {
-                    let ne_upper = no_error.to_string().to_uppercase();
-                    arms.push(quote! { #ne_upper => rpl_lang::library::StackEffect::Fixed { consumes: 0, produces: 0 }, });
-                }
-            }
+    // Inlines
+    for inline in &cf.inlines {
+        let kw = inline.keyword.to_string().to_uppercase();
+        if let StackEffectDef::Fixed { consumes, produces } = &inline.effect {
+            arms.push(quote! { #kw => rpl_lang::library::StackEffect::Fixed { consumes: #consumes, produces: #produces }, });
         }
     }
 
     arms
 }
 
-/// Check if library has control patterns.
-fn has_control_patterns(lib: &LibraryDef) -> bool {
-    !lib.control_patterns.is_empty()
-}
-
-/// Get the keyword name an internal command should decompile to.
-/// Returns None if the command shouldn't appear in decompiled output (e.g., pure jumps).
-fn internal_cmd_decompile_name(cmd: &InternalCmdDef) -> Option<String> {
-    match cmd.kind {
-        InternalCmd::Marker => {
-            // Extract keyword from marker name: "IF_MARKER" -> "IF"
-            cmd.name.strip_suffix("_MARKER").map(|s| s.to_string())
-        }
-        InternalCmd::JumpIfFalse => Some("THEN".to_string()), // Default context
-        InternalCmd::Jump => None, // Invisible in output (part of ELSE handling)
-        InternalCmd::UntilJump => Some("UNTIL".to_string()),
-        InternalCmd::LoopSetup => Some("START".to_string()),
-        InternalCmd::LoopNext => Some("NEXT".to_string()),
-        InternalCmd::LoopStep => Some("STEP".to_string()),
-        InternalCmd::ForSetup => Some("FOR".to_string()),
-        InternalCmd::ForNext => Some("NEXT".to_string()),
-        InternalCmd::ForStep => Some("STEP".to_string()),
-        InternalCmd::IfErrSetup => Some("IFERR".to_string()),
-        InternalCmd::IfErrSuccess => None, // Part of THEN handling
-        InternalCmd::Ift => Some("IFT".to_string()),
-        InternalCmd::Ifte => Some("IFTE".to_string()),
-    }
-}
-
-/// Check if an internal command has an operand that needs to be read during decompilation.
-fn internal_cmd_has_operand(cmd: &InternalCmdDef) -> bool {
-    matches!(
-        cmd.kind,
-        InternalCmd::JumpIfFalse
-            | InternalCmd::Jump
-            | InternalCmd::UntilJump
-            | InternalCmd::LoopNext
-            | InternalCmd::LoopStep
-            | InternalCmd::ForSetup
-            | InternalCmd::ForNext
-            | InternalCmd::ForStep
-            | InternalCmd::IfErrSetup
-    )
-}
-
-/// Generate decompile match arms for internal commands with operands.
-/// These need special handling to skip their operands during decompilation.
-fn generate_control_decompile_arms(lib: &LibraryDef) -> Vec<TokenStream> {
-    let internal_cmds = collect_control_internal_commands(lib);
-
-    internal_cmds
-        .iter()
-        .filter(|cmd| internal_cmd_has_operand(cmd))
-        .map(|cmd| {
-            let const_name = format_ident!("CMD_{}", cmd.name);
-            let decompile_name = internal_cmd_decompile_name(cmd);
-
-            match decompile_name {
-                Some(name) => {
-                    quote! {
-                        Self::#const_name => {
-                            ctx.read(); // skip operand
-                            ctx.write(#name);
-                            return rpl_lang::library::DecompileResult::Ok;
-                        }
-                    }
-                }
-                None => {
-                    // Command is invisible (like JUMP) - just skip operand
-                    quote! {
-                        Self::#const_name => {
-                            ctx.read(); // skip operand
-                            return rpl_lang::library::DecompileResult::Ok;
-                        }
-                    }
-                }
-            }
-        })
-        .collect()
-}
-
-/// Generate the is_falsy helper function if control patterns are present.
+/// Generate the is_falsy helper function if control flow is present.
 fn generate_is_falsy_helper(lib: &LibraryDef) -> TokenStream {
-    if !has_control_patterns(lib) {
+    if !has_control_flow(lib) {
         return quote! {};
     }
 

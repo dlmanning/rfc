@@ -31,19 +31,9 @@ pub enum ReturnEntry {
         debug_info: Option<Arc<ProgramDebugInfo>>,
     },
     /// FOR/NEXT loop state.
-    ForLoop {
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    },
+    ForLoop { end: i64, counter: i64 },
     /// START/NEXT loop state (no local variable).
-    StartLoop {
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    },
+    StartLoop { end: i64, counter: i64 },
     /// Error handler frame (for IFERR/THENERR/ENDERR).
     ErrorHandler {
         /// PC to jump to when an error occurs (start of THENERR block).
@@ -319,68 +309,38 @@ impl VM {
     }
 
     /// Push a FOR loop state onto the return stack.
-    pub fn push_for_loop(
-        &mut self,
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    ) -> Result<(), StackError> {
+    pub fn push_for_loop(&mut self, end: i64, counter: i64) -> Result<(), StackError> {
         if self.return_stack.len() >= self.max_return_depth {
             return Err(StackError::Overflow);
         }
-        self.return_stack.push(ReturnEntry::ForLoop {
-            start,
-            end,
-            direction,
-            counter,
-        });
+        self.return_stack
+            .push(ReturnEntry::ForLoop { end, counter });
         Ok(())
     }
 
     /// Pop a FOR loop state from the return stack.
-    pub fn pop_for_loop(&mut self) -> Result<(i64, i64, i64, i64), StackError> {
+    pub fn pop_for_loop(&mut self) -> Result<(i64, i64), StackError> {
         match self.return_stack.pop() {
-            Some(ReturnEntry::ForLoop {
-                start,
-                end,
-                direction,
-                counter,
-            }) => Ok((start, end, direction, counter)),
+            Some(ReturnEntry::ForLoop { end, counter }) => Ok((end, counter)),
             Some(_) => Err(StackError::ReturnTypeMismatch),
             None => Err(StackError::ReturnUnderflow),
         }
     }
 
     /// Push a START loop state onto the return stack.
-    pub fn push_start_loop(
-        &mut self,
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    ) -> Result<(), StackError> {
+    pub fn push_start_loop(&mut self, end: i64, counter: i64) -> Result<(), StackError> {
         if self.return_stack.len() >= self.max_return_depth {
             return Err(StackError::Overflow);
         }
-        self.return_stack.push(ReturnEntry::StartLoop {
-            start,
-            end,
-            direction,
-            counter,
-        });
+        self.return_stack
+            .push(ReturnEntry::StartLoop { end, counter });
         Ok(())
     }
 
     /// Pop a START loop state from the return stack.
-    pub fn pop_start_loop(&mut self) -> Result<(i64, i64, i64, i64), StackError> {
+    pub fn pop_start_loop(&mut self) -> Result<(i64, i64), StackError> {
         match self.return_stack.pop() {
-            Some(ReturnEntry::StartLoop {
-                start,
-                end,
-                direction,
-                counter,
-            }) => Ok((start, end, direction, counter)),
+            Some(ReturnEntry::StartLoop { end, counter }) => Ok((end, counter)),
             Some(_) => Err(StackError::ReturnTypeMismatch),
             None => Err(StackError::ReturnUnderflow),
         }
@@ -798,12 +758,12 @@ mod tests {
     #[test]
     fn vm_for_loop_stack() {
         let mut vm = VM::new();
-        vm.push_for_loop(1, 10, 1, 1).unwrap();
-        vm.push_for_loop(1, 5, 1, 3).unwrap();
+        vm.push_for_loop(10, 1).unwrap();
+        vm.push_for_loop(5, 3).unwrap();
 
         assert_eq!(vm.return_depth(), 2);
-        assert_eq!(vm.pop_for_loop(), Ok((1, 5, 1, 3)));
-        assert_eq!(vm.pop_for_loop(), Ok((1, 10, 1, 1)));
+        assert_eq!(vm.pop_for_loop(), Ok((5, 3)));
+        assert_eq!(vm.pop_for_loop(), Ok((10, 1)));
         assert_eq!(vm.pop_for_loop(), Err(StackError::ReturnUnderflow));
     }
 
@@ -893,11 +853,11 @@ mod tests {
         let mut vm = VM::with_limits(100, 2);
 
         // Should succeed for first 2 pushes
-        vm.push_for_loop(1, 10, 1, 1).unwrap();
-        vm.push_for_loop(1, 5, 1, 1).unwrap();
+        vm.push_for_loop(10, 1).unwrap();
+        vm.push_for_loop(5, 1).unwrap();
 
         // Third push should fail
-        assert_eq!(vm.push_for_loop(1, 3, 1, 1), Err(StackError::Overflow));
+        assert_eq!(vm.push_for_loop(3, 1), Err(StackError::Overflow));
     }
 
     #[test]

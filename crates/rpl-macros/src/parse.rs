@@ -1,14 +1,16 @@
 //! Parsing for the define_library! macro.
 
 use proc_macro2::TokenStream;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::{braced, Ident, LitInt, LitStr, Path, Result, Token};
+use syn::{
+    Ident, LitInt, LitStr, Path, Result, Token, braced,
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+};
 
 use crate::ast::{
-    Arity, CoercionDef, CommandDef, ConstructAction, ConstructDef, ControlPattern,
-    ControlPatternDef, ControlPatternOptions, DocDef, LibraryDef, LiteralDef, OpSigDef,
-    OperatorDef, OperatorSyntaxDef, PrologDef, PrologKind, StackEffectDef,
+    Arity, CoercionDef, CommandDef, ConstructAction, ConstructDef, ControlCloser, ControlFlowDef,
+    ControlInline, ControlOpener, ControlTransition, DocDef, LibraryDef, LiteralDef, OpSigDef,
+    OperatorDef, OperatorSyntaxDef, StackEffectDef,
 };
 
 mod kw {
@@ -22,27 +24,23 @@ mod kw {
     syn::custom_keyword!(commands);
     syn::custom_keyword!(constructs);
     syn::custom_keyword!(operators);
-    syn::custom_keyword!(syntax);           // NEW: renamed from operator_syntax
-    syn::custom_keyword!(operator_syntax);  // COMPAT: keep old name
-    syn::custom_keyword!(prologs);
-    syn::custom_keyword!(control_patterns);
+    syn::custom_keyword!(syntax); // NEW: renamed from operator_syntax
+    syn::custom_keyword!(operator_syntax); // COMPAT: keep old name
     syn::custom_keyword!(coercions);
     syn::custom_keyword!(custom);
 
     // Custom handler keywords
     syn::custom_keyword!(probe);
     syn::custom_keyword!(compile);
-    syn::custom_keyword!(decompile_prolog);
-    syn::custom_keyword!(decompile);
     syn::custom_keyword!(stack_effect);
 
     // Command keywords
-    syn::custom_keyword!(dynamic);          // COMPAT: old dynamic keyword
+    syn::custom_keyword!(dynamic); // COMPAT: old dynamic keyword
     syn::custom_keyword!(brief);
     syn::custom_keyword!(stack);
     syn::custom_keyword!(example);
     syn::custom_keyword!(see_also);
-    syn::custom_keyword!(alias);            // NEW: for command alias in options block
+    syn::custom_keyword!(alias); // NEW: for command alias in options block
 
     // Construct keywords
     syn::custom_keyword!(open);
@@ -50,8 +48,8 @@ mod kw {
 
     // Prolog keywords
     syn::custom_keyword!(delimited);
-    syn::custom_keyword!(format);           // NEW: renamed from format_codec
-    syn::custom_keyword!(format_codec);     // COMPAT: keep old name
+    syn::custom_keyword!(format); // NEW: renamed from format_codec
+    syn::custom_keyword!(format_codec); // COMPAT: keep old name
 
     // Operator keywords
     syn::custom_keyword!(Symmetric);
@@ -65,20 +63,12 @@ mod kw {
     syn::custom_keyword!(unary);
     syn::custom_keyword!(binary);
 
-    // Control pattern keywords
-    syn::custom_keyword!(if_then_else);
-    syn::custom_keyword!(do_until);
-    syn::custom_keyword!(while_repeat);
-    syn::custom_keyword!(start_next);
-    syn::custom_keyword!(for_next);
-    syn::custom_keyword!(inline_conditional);
-    syn::custom_keyword!(case_pattern);     // COMPAT: old name
-    syn::custom_keyword!(error_handler);
-
-    // Control pattern option keywords
-    syn::custom_keyword!(alt);              // NEW: for if_then_else ELSE
-    syn::custom_keyword!(step);             // NEW: for start_next STEP
-    syn::custom_keyword!(no_error);
+    // Control flow keywords
+    syn::custom_keyword!(control_flow);
+    syn::custom_keyword!(opener);
+    syn::custom_keyword!(transition);
+    syn::custom_keyword!(closer);
+    syn::custom_keyword!(emit);
 
     // Coercion keywords
     syn::custom_keyword!(implicit);
@@ -133,13 +123,10 @@ impl Parse for LibraryDef {
         let mut constructs = Vec::new();
         let mut operators = Vec::new();
         let mut operator_syntax = Vec::new();
-        let mut prologs = Vec::new();
-        let mut control_patterns = Vec::new();
+        let mut control_flow = ControlFlowDef::default();
         let mut coercions = Vec::new();
         let mut custom_probe = None;
         let mut custom_compile = None;
-        let mut custom_decompile_prolog = None;
-        let mut custom_decompile = None;
         let mut custom_stack_effect = None;
 
         // Parse remaining blocks: literals { ... }, commands { ... }, constructs { ... }, operators { ... }, custom probe { ... }, etc.
@@ -184,22 +171,11 @@ impl Parse for LibraryDef {
                 while !ops_content.is_empty() {
                     operator_syntax.push(parse_operator_syntax(&ops_content)?);
                 }
-            } else if input.peek(kw::prologs) {
-                input.parse::<kw::prologs>()?;
-                let prologs_content;
-                braced!(prologs_content in input);
-
-                while !prologs_content.is_empty() {
-                    prologs.push(parse_prolog(&prologs_content)?);
-                }
-            } else if input.peek(kw::control_patterns) {
-                input.parse::<kw::control_patterns>()?;
-                let patterns_content;
-                braced!(patterns_content in input);
-
-                while !patterns_content.is_empty() {
-                    control_patterns.push(parse_control_pattern(&patterns_content)?);
-                }
+            } else if input.peek(kw::control_flow) {
+                input.parse::<kw::control_flow>()?;
+                let flow_content;
+                braced!(flow_content in input);
+                control_flow = parse_control_flow_block(&flow_content)?;
             } else if input.peek(kw::coercions) {
                 input.parse::<kw::coercions>()?;
                 let coercions_content;
@@ -233,28 +209,6 @@ impl Parse for LibraryDef {
                     let body_content;
                     braced!(body_content in input);
                     custom_compile = Some(body_content.parse()?);
-                } else if input.peek(kw::decompile_prolog) {
-                    input.parse::<kw::decompile_prolog>()?;
-                    // Optionally parse (ctx) - we ignore it since ctx is always available
-                    if input.peek(syn::token::Paren) {
-                        let args_content;
-                        syn::parenthesized!(args_content in input);
-                        let _: Ident = args_content.parse()?; // consume ctx
-                    }
-                    let body_content;
-                    braced!(body_content in input);
-                    custom_decompile_prolog = Some(body_content.parse()?);
-                } else if input.peek(kw::decompile) {
-                    input.parse::<kw::decompile>()?;
-                    // Optionally parse (ctx) - we ignore it since ctx is always available
-                    if input.peek(syn::token::Paren) {
-                        let args_content;
-                        syn::parenthesized!(args_content in input);
-                        let _: Ident = args_content.parse()?; // consume ctx
-                    }
-                    let body_content;
-                    braced!(body_content in input);
-                    custom_decompile = Some(body_content.parse()?);
                 } else if input.peek(kw::stack_effect) {
                     input.parse::<kw::stack_effect>()?;
                     // Optionally parse (token) - we ignore it since token is always available
@@ -267,10 +221,11 @@ impl Parse for LibraryDef {
                     braced!(body_content in input);
                     custom_stack_effect = Some(body_content.parse()?);
                 } else {
-                    return Err(input.error("expected 'probe', 'compile', 'decompile_prolog', 'decompile', or 'stack_effect' after 'custom'"));
+                    return Err(input
+                        .error("expected 'probe', 'compile', or 'stack_effect' after 'custom'"));
                 }
             } else {
-                return Err(input.error("expected 'literals', 'commands', 'constructs', 'operators', 'operator_syntax', 'prologs', 'control_patterns', 'coercions', or 'custom'"));
+                return Err(input.error("expected 'literals', 'commands', 'constructs', 'operators', 'operator_syntax', 'control_flow', 'coercions', or 'custom'"));
             }
         }
 
@@ -284,13 +239,10 @@ impl Parse for LibraryDef {
             constructs,
             operators,
             operator_syntax,
-            prologs,
-            control_patterns,
+            control_flow,
             coercions,
             custom_probe,
             custom_compile,
-            custom_decompile_prolog,
-            custom_decompile,
             custom_stack_effect,
         })
     }
@@ -571,163 +523,221 @@ fn parse_literal(input: ParseStream) -> Result<LiteralDef> {
     Ok(LiteralDef { name, codec })
 }
 
-/// Parse a prolog definition:
-/// NEW syntax: LIST: delimited("{", "}");
-/// NEW syntax: REAL: format(RealCodec);
-/// NEW syntax: SYMBOLIC: custom { ... };
-fn parse_prolog(input: ParseStream) -> Result<PrologDef> {
-    // Parse type ID name (e.g., LIST, REAL, SYMBOLIC)
-    let type_id: Ident = input.parse()?;
+// =============================================================================
+// Control Flow DSL Parsing
+// =============================================================================
 
-    // Parse : (colon)
-    input.parse::<Token![:]>()?;
+/// Parse a control_flow block containing opener, transition, closer, and inline declarations.
+fn parse_control_flow_block(input: ParseStream) -> Result<ControlFlowDef> {
+    let mut def = ControlFlowDef::default();
 
-    // Parse prolog kind
-    let kind = if input.peek(kw::delimited) {
-        input.parse::<kw::delimited>()?;
-        let delim_content;
-        syn::parenthesized!(delim_content in input);
-        let open: LitStr = delim_content.parse()?;
-        delim_content.parse::<Token![,]>()?;
-        let close: LitStr = delim_content.parse()?;
-        PrologKind::Delimited {
-            open: open.value(),
-            close: close.value(),
+    while !input.is_empty() {
+        if input.peek(kw::opener) {
+            input.parse::<kw::opener>()?;
+            def.openers.push(parse_opener(input)?);
+        } else if input.peek(kw::transition) {
+            input.parse::<kw::transition>()?;
+            def.transitions.push(parse_transition(input)?);
+        } else if input.peek(kw::closer) {
+            input.parse::<kw::closer>()?;
+            def.closers.push(parse_closer(input)?);
+        } else if input.peek(kw::infix) {
+            // 'inline' keyword - but we use 'infix' since it exists in the crate already
+            // Actually let's just check for the identifier 'inline' directly
+            let ident: Ident = input.parse()?;
+            if ident != "inline" {
+                return Err(input.error("expected 'opener', 'transition', 'closer', or 'inline'"));
+            }
+            def.inlines.push(parse_inline(input)?);
+        } else if input.peek(Ident) {
+            let ident: Ident = input.parse()?;
+            if ident == "inline" {
+                def.inlines.push(parse_inline(input)?);
+            } else {
+                return Err(input.error("expected 'opener', 'transition', 'closer', or 'inline'"));
+            }
+        } else {
+            return Err(input.error("expected 'opener', 'transition', 'closer', or 'inline'"));
         }
-    } else if input.peek(kw::format) {
-        input.parse::<kw::format>()?;
-        let codec_content;
-        syn::parenthesized!(codec_content in input);
-        let codec: Path = codec_content.parse()?;
-        PrologKind::Format(codec)
-    } else if input.peek(kw::format_codec) {
-        // COMPAT: Keep old format_codec syntax
-        input.parse::<kw::format_codec>()?;
-        let codec_content;
-        syn::parenthesized!(codec_content in input);
-        let codec: Path = codec_content.parse()?;
-        PrologKind::Format(codec)
-    } else if input.peek(kw::custom) {
-        input.parse::<kw::custom>()?;
-        let body_content;
-        braced!(body_content in input);
-        let body: TokenStream = body_content.parse()?;
-        PrologKind::Custom(body)
-    } else {
-        return Err(input.error("expected 'delimited', 'format', or 'custom'"));
-    };
-
-    // Parse semicolon
-    input.parse::<Token![;]>()?;
-
-    Ok(PrologDef { type_id, kind })
-}
-
-/// Parse a control pattern definition:
-/// NEW syntax: if_then_else(IF, THEN, END) { alt: ELSE };
-/// NEW syntax: start_next(START, NEXT) { step: STEP };
-fn parse_control_pattern(input: ParseStream) -> Result<ControlPatternDef> {
-    // Determine pattern type by keyword
-    let pattern = if input.peek(kw::if_then_else) {
-        input.parse::<kw::if_then_else>()?;
-        ControlPattern::IfThenElse
-    } else if input.peek(kw::do_until) {
-        input.parse::<kw::do_until>()?;
-        ControlPattern::DoUntil
-    } else if input.peek(kw::while_repeat) {
-        input.parse::<kw::while_repeat>()?;
-        ControlPattern::WhileRepeat
-    } else if input.peek(kw::start_next) {
-        input.parse::<kw::start_next>()?;
-        ControlPattern::StartNext
-    } else if input.peek(kw::for_next) {
-        input.parse::<kw::for_next>()?;
-        ControlPattern::ForNext
-    } else if input.peek(kw::inline_conditional) {
-        input.parse::<kw::inline_conditional>()?;
-        ControlPattern::InlineConditional
-    } else if input.peek(kw::case_pattern) {
-        input.parse::<kw::case_pattern>()?;
-        ControlPattern::Case
-    } else if input.peek(kw::error_handler) {
-        input.parse::<kw::error_handler>()?;
-        ControlPattern::ErrorHandler
-    } else {
-        return Err(input.error("expected control pattern type"));
-    };
-
-    // Parse positional keywords in parentheses: (IF, THEN, END)
-    let args_content;
-    syn::parenthesized!(args_content in input);
-
-    let keywords: Punctuated<Ident, Token![,]> = Punctuated::parse_terminated(&args_content)?;
-    let keywords: Vec<Ident> = keywords.into_iter().collect();
-
-    // Validate arity
-    if keywords.len() != pattern.arity() {
-        return Err(input.error(format!(
-            "{:?} requires {} keywords, got {}",
-            pattern,
-            pattern.arity(),
-            keywords.len()
-        )));
     }
 
-    // Parse optional modifiers block: { alt: ELSE }
-    let options = if input.peek(syn::token::Brace) {
-        parse_control_options(input, pattern)?
+    Ok(def)
+}
+
+/// Parse an opener declaration:
+/// `opener KEYWORD => Construct;`
+/// `opener KEYWORD (N -> M) => Construct;`
+/// `opener KEYWORD (N -> M) => Construct { emit CMD, CMD2 };`
+fn parse_opener(input: ParseStream) -> Result<ControlOpener> {
+    let keyword: Ident = input.parse()?;
+
+    // Optional stack effect
+    let effect = if input.peek(syn::token::Paren) {
+        Some(parse_stack_effect(input)?)
     } else {
-        ControlPatternOptions::default()
+        None
+    };
+
+    // Parse =>
+    input.parse::<Token![=>]>()?;
+
+    // Parse construct kind
+    let construct: Ident = input.parse()?;
+
+    // Optional emit block
+    let emit = if input.peek(syn::token::Brace) {
+        parse_emit_block(input)?
+    } else {
+        Vec::new()
     };
 
     // Parse semicolon
     input.parse::<Token![;]>()?;
 
-    Ok(ControlPatternDef {
-        pattern,
-        keywords,
-        options,
+    Ok(ControlOpener {
+        keyword,
+        effect,
+        construct,
+        emit,
     })
 }
 
-/// Parse control pattern options block: { alt: ELSE, step: STEP }
-fn parse_control_options(input: ParseStream, pattern: ControlPattern) -> Result<ControlPatternOptions> {
+/// Parse a transition declaration:
+/// `transition KEYWORD (N -> M) => emit CMD;`
+/// `transition KEYWORD (N -> M) in [Kind1, Kind2] => emit CMD;`
+fn parse_transition(input: ParseStream) -> Result<ControlTransition> {
+    let keyword: Ident = input.parse()?;
+
+    // Optional stack effect
+    let effect = if input.peek(syn::token::Paren) {
+        Some(parse_stack_effect(input)?)
+    } else {
+        None
+    };
+
+    // Optional valid_in clause
+    let valid_in = if input.peek(Token![in]) {
+        input.parse::<Token![in]>()?;
+        parse_construct_list(input)?
+    } else {
+        Vec::new()
+    };
+
+    // Parse => emit CMD
+    input.parse::<Token![=>]>()?;
+    input.parse::<kw::emit>()?;
+    let emit = parse_emit_list(input)?;
+
+    // Parse semicolon
+    input.parse::<Token![;]>()?;
+
+    Ok(ControlTransition {
+        keyword,
+        effect,
+        valid_in,
+        emit,
+    })
+}
+
+/// Parse a closer declaration:
+/// `closer KEYWORD in [Kind1, Kind2];`
+/// `closer KEYWORD (N -> M) in [Kind1] => emit CMD;`
+fn parse_closer(input: ParseStream) -> Result<ControlCloser> {
+    let keyword: Ident = input.parse()?;
+
+    // Optional stack effect
+    let effect = if input.peek(syn::token::Paren) {
+        Some(parse_stack_effect(input)?)
+    } else {
+        None
+    };
+
+    // Required valid_in clause
+    input.parse::<Token![in]>()?;
+    let valid_in = parse_construct_list(input)?;
+
+    // Optional => emit CMD
+    let emit = if input.peek(Token![=>]) {
+        input.parse::<Token![=>]>()?;
+        input.parse::<kw::emit>()?;
+        parse_emit_list(input)?
+    } else {
+        Vec::new()
+    };
+
+    // Parse semicolon
+    input.parse::<Token![;]>()?;
+
+    Ok(ControlCloser {
+        keyword,
+        effect,
+        valid_in,
+        emit,
+    })
+}
+
+/// Parse an inline declaration:
+/// `inline KEYWORD (N -> M);`
+fn parse_inline(input: ParseStream) -> Result<ControlInline> {
+    let keyword: Ident = input.parse()?;
+
+    // Required stack effect
+    let effect = parse_stack_effect(input)?;
+
+    // Parse semicolon
+    input.parse::<Token![;]>()?;
+
+    Ok(ControlInline { keyword, effect })
+}
+
+/// Parse a stack effect: (N -> M)
+fn parse_stack_effect(input: ParseStream) -> Result<StackEffectDef> {
+    let effect_content;
+    syn::parenthesized!(effect_content in input);
+
+    let consumes: LitInt = effect_content.parse()?;
+    effect_content.parse::<Token![->]>()?;
+    let produces: LitInt = effect_content.parse()?;
+
+    Ok(StackEffectDef::Fixed {
+        consumes: consumes.base10_parse()?,
+        produces: produces.base10_parse()?,
+    })
+}
+
+/// Parse a construct list: [Kind1, Kind2, Kind3]
+fn parse_construct_list(input: ParseStream) -> Result<Vec<Ident>> {
+    let list_content;
+    syn::bracketed!(list_content in input);
+
+    let kinds: Punctuated<Ident, Token![,]> = Punctuated::parse_terminated(&list_content)?;
+    Ok(kinds.into_iter().collect())
+}
+
+/// Parse an emit block: { emit CMD, CMD2 }
+fn parse_emit_block(input: ParseStream) -> Result<Vec<Ident>> {
     let content;
     braced!(content in input);
 
-    let mut options = ControlPatternOptions::default();
+    content.parse::<kw::emit>()?;
+    parse_emit_list(&content)
+}
 
-    while !content.is_empty() {
-        if content.peek(kw::alt) {
-            if pattern != ControlPattern::IfThenElse {
-                return Err(content.error("'alt' only valid for if_then_else"));
-            }
-            content.parse::<kw::alt>()?;
-            content.parse::<Token![:]>()?;
-            options.alt = Some(content.parse()?);
-        } else if content.peek(kw::step) {
-            if pattern != ControlPattern::StartNext {
-                return Err(content.error("'step' only valid for start_next"));
-            }
-            content.parse::<kw::step>()?;
-            content.parse::<Token![:]>()?;
-            options.step = Some(content.parse()?);
-        } else if content.peek(kw::no_error) {
-            if pattern != ControlPattern::ErrorHandler {
-                return Err(content.error("'no_error' only valid for error_handler"));
-            }
-            content.parse::<kw::no_error>()?;
-            content.parse::<Token![:]>()?;
-            options.no_error = Some(content.parse()?);
+/// Parse an emit list: CMD, CMD2
+fn parse_emit_list(input: ParseStream) -> Result<Vec<Ident>> {
+    let mut cmds = Vec::new();
+    cmds.push(input.parse()?);
+
+    while input.peek(Token![,]) && !input.peek2(Token![;]) {
+        input.parse::<Token![,]>()?;
+        if input.peek(Ident) && !input.peek(kw::emit) {
+            cmds.push(input.parse()?);
         } else {
-            return Err(content.error("unexpected option"));
+            break;
         }
-
-        // Optional comma
-        let _ = content.parse::<Token![,]>();
     }
 
-    Ok(options)
+    Ok(cmds)
 }
 
 /// Parse a coercion definition:

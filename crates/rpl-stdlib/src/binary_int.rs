@@ -14,10 +14,6 @@ rpl_macros::define_library! {
     literals {
         bint: BintCodec;
     }
-
-    prologs {
-        BINT: format(BintCodec);
-    }
 }
 
 #[cfg(test)]

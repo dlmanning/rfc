@@ -348,62 +348,6 @@ rpl_macros::define_library! {
 
         rpl_lang::library::CompileResult::NoMatch
     }
-
-    custom decompile(ctx) {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => {
-                // Check for LIBPTR prolog
-                if let Some(word) = ctx.peek()
-                    && rpl_core::is_prolog(word) {
-                        let type_id = rpl_core::extract_type(word);
-                        if type_id == TypeId::LIBPTR.as_u16() {
-                            ctx.read(); // consume prolog
-                            let lib_id = ctx.read().unwrap_or(0);
-                            let cmd_index = ctx.read().unwrap_or(0);
-
-                            let cmd_name = ctx
-                                .user_lib_registry()
-                                .and_then(|r| r.get_command_name(lib_id, cmd_index))
-                                .map(|s| s.to_string());
-
-                            if let Some(name) = cmd_name {
-                                ctx.write(&name);
-                            } else {
-                                let lib_name = decode_lib_id(lib_id);
-                                ctx.write(&format!("{}.{}", lib_name, cmd_index));
-                            }
-                            return rpl_lang::library::DecompileResult::Ok;
-                        }
-
-                        if type_id == TypeId::LIBRARY.as_u16() {
-                            let size = rpl_core::extract_size(word) as usize;
-                            ctx.read(); // consume prolog
-
-                            let lib_id = ctx.read().unwrap_or(0);
-                            let lib_name = decode_lib_id(lib_id);
-
-                            for _ in 1..size {
-                                ctx.read();
-                            }
-
-                            ctx.write(&format!("<Library {}>", lib_name));
-                            return rpl_lang::library::DecompileResult::Ok;
-                        }
-                    }
-                rpl_lang::library::DecompileResult::Unknown
-            }
-            DecompileMode::Call(cmd) => {
-                if let Some(name) = Self::command_name(cmd) {
-                    ctx.write(name);
-                    rpl_lang::library::DecompileResult::Ok
-                } else {
-                    rpl_lang::library::DecompileResult::Unknown
-                }
-            }
-        }
-    }
 }
 
 // ============================================================================

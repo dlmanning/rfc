@@ -456,38 +456,6 @@ rpl_macros::define_library! {
         rpl_lang::library::CompileResult::NoMatch
     }
 
-    custom decompile {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => {
-                if let Some(word) = ctx.peek()
-                    && is_prolog(word)
-                    && extract_type(word) == TypeId::SYMBOLIC.as_u16()
-                {
-                    let size = extract_size(word) as usize;
-                    ctx.read(); // consume prolog
-
-                    ctx.write("'");
-
-                    if size > 0 {
-                        let inner_code = ctx.slice(size);
-                        let expr = parse_rpn_to_tree(inner_code, None, ctx.interner);
-                        let infix = format_infix(&expr);
-                        ctx.write(&infix);
-                        ctx.skip(size);
-                    }
-
-                    ctx.write("'");
-                    rpl_lang::library::DecompileResult::Ok
-                } else {
-                    rpl_lang::library::DecompileResult::Unknown
-                }
-            }
-            DecompileMode::Call(_) => rpl_lang::library::DecompileResult::Unknown,
-        }
-    }
-
     custom stack_effect {
         match token {
             "'" => StackEffect::Dynamic,

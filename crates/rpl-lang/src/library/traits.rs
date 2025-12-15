@@ -2,7 +2,7 @@ use super::id::LibraryId;
 use crate::operator::OperatorRegistry;
 use rpl_core::token::{SemanticKind, TokenInfo};
 
-use super::context::{CompileContext, DecompileContext, ExecuteContext, ProbeContext};
+use super::context::{CompileContext, ExecuteContext, ProbeContext};
 use super::effect::StackEffect;
 
 /// Result of probing a token.
@@ -79,15 +79,6 @@ pub type ExecuteResult = Result<ExecuteOk, String>;
 /// Convenience constant for successful execution.
 pub const EXEC_OK: ExecuteResult = Ok(ExecuteOk::Ok);
 
-/// Result of decompiling bytecode.
-#[derive(Clone, Debug)]
-pub enum DecompileResult {
-    /// Decompilation successful.
-    Ok,
-    /// Unknown bytecode.
-    Unknown,
-}
-
 /// Kind of syntactic construct.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ConstructKind {
@@ -138,9 +129,6 @@ pub trait Library: Send + Sync + 'static {
     /// The context provides access to the VM, the command ID, and any operand
     /// words following the opcode in the code stream.
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult;
-
-    /// Decompile bytecode.
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult;
 
     /// Get the stack effect of a token.
     fn stack_effect(&self, _token: &str) -> StackEffect {

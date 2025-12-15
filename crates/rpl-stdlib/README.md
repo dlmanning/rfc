@@ -70,7 +70,6 @@ pub trait Library: Send + Sync + 'static {
     fn probe(&self, ctx: &ProbeContext) -> ProbeResult;
     fn compile(&self, ctx: &mut CompileContext) -> CompileResult;
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult;
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult;
     fn stack_effect(&self, token: &str) -> StackEffect { ... }
 }
 ```
@@ -80,9 +79,8 @@ pub trait Library: Send + Sync + 'static {
 ```rust
 use rpl_core::token::{SemanticKind, TokenInfo};
 use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileResult,
-    DecompileMode, ExecuteContext, ExecuteResult, Library, LibraryId,
-    ProbeContext, ProbeResult, StackEffect,
+    CompileContext, CompileResult, ExecuteContext, ExecuteResult, Library,
+    LibraryId, ProbeContext, ProbeResult, StackEffect,
 };
 use rpl_lang::Value;
 
@@ -153,20 +151,6 @@ impl Library for MyLib {
                 ExecuteResult::Ok
             }
             _ => ExecuteResult::Error(format!("Unknown command: {}", ctx.cmd())),
-        }
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        match ctx.mode() {
-            DecompileMode::Prolog => DecompileResult::Unknown,
-            DecompileMode::Call(cmd) => {
-                if let Some(name) = Self::command_name(cmd) {
-                    ctx.write(name);
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
-            }
         }
     }
 

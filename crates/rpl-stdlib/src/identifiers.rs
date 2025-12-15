@@ -123,31 +123,6 @@ rpl_macros::define_library! {
 
         rpl_lang::library::CompileResult::Ok
     }
-
-    custom decompile {
-        use rpl_lang::library::{DecompileMode, DecompileResult};
-
-        let cmd = match ctx.mode() {
-            DecompileMode::Prolog => return DecompileResult::Unknown,
-            DecompileMode::Call(cmd) => cmd,
-        };
-
-        match cmd {
-            Self::CMD_EVAL_NAME => {
-                // Read symbol ID and resolve to name
-                let sym_id = ctx.read().unwrap_or(0);
-                let symbol = Symbol::from_raw(sym_id);
-                let name = if let Some(interner) = ctx.interner {
-                    interner.resolve(symbol).to_string()
-                } else {
-                    format!("${}", sym_id)
-                };
-                ctx.write(&name);
-                DecompileResult::Ok
-            }
-            _ => DecompileResult::Unknown,
-        }
-    }
 }
 
 // Re-export command constants for compiler

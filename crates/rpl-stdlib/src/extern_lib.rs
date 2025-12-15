@@ -25,9 +25,8 @@ use std::sync::{Arc, RwLock};
 
 use rpl_core::token::{SemanticKind, TokenInfo};
 use rpl_lang::library::{
-    CompileContext, CompileResult, DecompileContext, DecompileMode, DecompileResult,
-    ExecuteContext, ExecuteResult, Library, LibraryId, ProbeContext, ProbeResult, StackEffect,
-    TokenDoc,
+    CompileContext, CompileResult, ExecuteContext, ExecuteResult, Library, LibraryId,
+    ProbeContext, ProbeResult, StackEffect, TokenDoc,
 };
 
 /// A declared external command.
@@ -223,20 +222,6 @@ impl Library for ExternLib {
             "{}: no native handler registered for {}.{}",
             cmd_name, self.interface.name, cmd_name
         ))
-    }
-
-    fn decompile(&self, ctx: &mut DecompileContext) -> DecompileResult {
-        match ctx.mode() {
-            DecompileMode::Prolog => DecompileResult::Unknown,
-            DecompileMode::Call(cmd_id) => {
-                if let Some(cmd) = self.interface.get(cmd_id) {
-                    ctx.write(&cmd.name);
-                    DecompileResult::Ok
-                } else {
-                    DecompileResult::Unknown
-                }
-            }
-        }
     }
 
     fn stack_effect(&self, token: &str) -> StackEffect {

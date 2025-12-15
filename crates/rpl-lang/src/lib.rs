@@ -4,7 +4,6 @@
 //! - `library` - Library trait and registry for extensibility
 //! - `analysis` - Tokenization, pattern detection, and symbol resolution
 //! - `compile` - Bytecode compilation
-//! - `decompile` - Bytecode to source conversion
 //! - `operator` - Operator registry and dispatch
 //! - `dispatch_impl` - Library dispatcher for VM command execution
 //! - `execute` - High-level execution wrappers
@@ -12,7 +11,6 @@
 pub mod analysis;
 pub mod compile;
 pub mod debug_helpers;
-pub mod decompile;
 pub mod dispatch_impl;
 pub mod execute;
 pub mod library;
@@ -27,11 +25,9 @@ pub use analysis::{
     build_scopes, default_pattern_registry, resolve_references, run_symbol_pass,
 };
 pub use compile::{CompiledProgram, Compiler, Construct, OutputBuffer};
-pub use decompile::{Decompiler, decompile, decompile_inner, decompile_with_interner};
 pub use library::{
-    CompileContext, CompileResult, ConstructKind, DecompileContext, DecompileMode,
-    DecompileResult, ExecuteContext, ExecuteResult, Library, LibraryId, LibraryRegistry,
-    ProbeContext, ProbeResult, StackEffect, TokenDoc,
+    CompileContext, CompileResult, ConstructKind, ExecuteContext, ExecuteResult, Library,
+    LibraryId, LibraryRegistry, ProbeContext, ProbeResult, StackEffect, TokenDoc,
 };
 pub use operator::{OperatorKind, OperatorRegistry, OpSignature, Resolution};
 

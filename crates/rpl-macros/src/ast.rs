@@ -24,20 +24,14 @@ pub struct LibraryDef {
     pub operators: Vec<OperatorDef>,
     /// Operator syntax definitions (for syntax libraries like ArithmeticLib)
     pub operator_syntax: Vec<OperatorSyntaxDef>,
-    /// Prolog decompilation definitions
-    pub prologs: Vec<PrologDef>,
-    /// Control flow pattern definitions
-    pub control_patterns: Vec<ControlPatternDef>,
+    /// Control flow declarations (openers, transitions, closers, inlines)
+    pub control_flow: ControlFlowDef,
     /// Coercion registrations
     pub coercions: Vec<CoercionDef>,
     /// Custom probe implementation (optional)
     pub custom_probe: Option<TokenStream>,
     /// Custom compile implementation (optional)
     pub custom_compile: Option<TokenStream>,
-    /// Custom decompile prolog handler (optional)
-    pub custom_decompile_prolog: Option<TokenStream>,
-    /// Custom decompile handler (optional, replaces entire decompile implementation)
-    pub custom_decompile: Option<TokenStream>,
     /// Custom stack_effect handler (optional, replaces entire stack_effect implementation)
     pub custom_stack_effect: Option<TokenStream>,
 }
@@ -140,91 +134,96 @@ pub enum OpSigDef {
     Binary { left: String, right: String },
 }
 
-/// A prolog decompilation definition.
+// =============================================================================
+// Control Flow DSL Types
+// =============================================================================
+// The control_flow block uses an explicit, role-based DSL for defining
+// control flow keywords. Each keyword has one of four roles:
+//
+// - opener: Starts a construct (IF, DO, START, FOR, etc.)
+// - transition: Changes state within a construct (THEN, ELSE, REPEAT, etc.)
+// - closer: Ends a construct (END, UNTIL, NEXT, STEP, etc.)
+// - inline: Stack-based conditionals (IFT, IFTE)
+//
+// This explicit structure makes the parser enforce correct syntax and
+// makes the generated code obvious.
+
+/// A control flow opener declaration.
 ///
-/// Defines how to decompile object prologs (the first word that identifies type and size).
+/// Openers start new constructs. They may optionally emit setup bytecode.
+/// Example: `opener START (2 -> 0) => Start { emit LOOP_SETUP };`
 #[derive(Debug)]
-pub struct PrologDef {
-    /// The type ID this prolog handles (e.g., `LIST`, `REAL`)
-    pub type_id: Ident,
-    /// How to decompile this prolog
-    pub kind: PrologKind,
+pub struct ControlOpener {
+    /// The keyword (e.g., IF, START, FOR)
+    pub keyword: Ident,
+    /// Stack effect (defaults to 0 -> 0)
+    pub effect: Option<StackEffectDef>,
+    /// The construct kind to start (e.g., If, Start, For)
+    pub construct: Ident,
+    /// Optional setup commands to emit (e.g., LOOP_SETUP)
+    pub emit: Vec<Ident>,
 }
 
-/// The kind of prolog decompilation.
-#[derive(Debug)]
-pub enum PrologKind {
-    /// Delimited construct: emit open, decompile body, emit close
-    /// Example: `TypeId::LIST => delimited("{", "}")`
-    Delimited { open: String, close: String },
-    /// Format using a codec: decode data words and format to string
-    /// Example: `TypeId::REAL => format(RealCodec)`
-    Format(Path),
-    /// Custom decompilation logic
-    /// Example: `TypeId::SYMBOLIC => custom { ... }`
-    Custom(TokenStream),
-}
-
-/// A control pattern definition.
+/// A control flow transition declaration.
 ///
-/// Defines a high-level flow control pattern that generates keywords,
-/// internal commands, and all necessary handlers.
+/// Transitions emit bytecode and return NeedMore to stay in the construct.
+/// Example: `transition THEN (1 -> 0) => emit JUMP_IF_FALSE;`
+/// Example: `transition ELSE (0 -> 0) in [If] => emit JUMP;`
 #[derive(Debug)]
-pub struct ControlPatternDef {
-    /// Pattern type
-    pub pattern: ControlPattern,
-    /// Positional keywords (e.g., [IF, THEN, END] for if_then_else)
-    pub keywords: Vec<Ident>,
-    /// Optional modifiers
-    pub options: ControlPatternOptions,
+pub struct ControlTransition {
+    /// The keyword (e.g., THEN, ELSE, REPEAT)
+    pub keyword: Ident,
+    /// Stack effect (required for transitions that consume values)
+    pub effect: Option<StackEffectDef>,
+    /// Which construct kinds this transition is valid in (empty = all)
+    pub valid_in: Vec<Ident>,
+    /// Commands to emit (e.g., JUMP_IF_FALSE, JUMP)
+    pub emit: Vec<Ident>,
 }
 
-/// The type of control pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlPattern {
-    /// IF/THEN/END conditional pattern (with optional ELSE via options.alt)
-    IfThenElse,
-    /// DO/UNTIL loop (test at end, loops while false)
-    DoUntil,
-    /// WHILE/REPEAT loop (test at start, loops while true)
-    WhileRepeat,
-    /// START/NEXT definite loop (with optional STEP via options.step)
-    StartNext,
-    /// FOR/NEXT loop with named counter variable
-    ForNext,
-    /// Inline conditional (IFT/IFTE)
-    InlineConditional,
-    /// CASE/THENCASE/ENDTHEN/ENDCASE multi-way branch
-    Case,
-    /// IFERR/THENERR/ENDERR error handling (with optional ELSEERR via options.no_error)
-    ErrorHandler,
+/// A control flow closer declaration.
+///
+/// Closers end constructs. They may emit bytecode (like NEXT emitting LOOP_NEXT).
+/// Shared closers (END, NEXT, STEP) have multiple entries for different constructs.
+/// Example: `closer END in [If, While];`
+/// Example: `closer NEXT in [Start] => emit LOOP_NEXT;`
+/// Example: `closer NEXT in [For, ForUp, ForDn] => emit FOR_NEXT;`
+#[derive(Debug)]
+pub struct ControlCloser {
+    /// The keyword (e.g., END, NEXT, STEP)
+    pub keyword: Ident,
+    /// Stack effect (defaults to 0 -> 0)
+    pub effect: Option<StackEffectDef>,
+    /// Which construct kinds this closer handles (required)
+    pub valid_in: Vec<Ident>,
+    /// Commands to emit (e.g., LOOP_NEXT, FOR_NEXT)
+    pub emit: Vec<Ident>,
 }
 
-impl ControlPattern {
-    /// Expected number of positional keyword arguments.
-    pub fn arity(&self) -> usize {
-        match self {
-            ControlPattern::IfThenElse => 3,    // IF, THEN, END
-            ControlPattern::DoUntil => 2,       // DO, UNTIL
-            ControlPattern::WhileRepeat => 2,   // WHILE, REPEAT
-            ControlPattern::StartNext => 2,     // START, NEXT
-            ControlPattern::ForNext => 2,       // FOR, NEXT
-            ControlPattern::InlineConditional => 2, // IFT, IFTE
-            ControlPattern::Case => 4,          // CASE, THEN, END_BRANCH, END
-            ControlPattern::ErrorHandler => 3,  // IFERR, THEN, END
-        }
-    }
+/// A control flow inline declaration.
+///
+/// Inline commands are regular commands with fixed stack effects.
+/// They don't involve construct management.
+/// Example: `inline IFT (2 -> 1);`
+#[derive(Debug)]
+pub struct ControlInline {
+    /// The keyword (e.g., IFT, IFTE)
+    pub keyword: Ident,
+    /// Stack effect (required)
+    pub effect: StackEffectDef,
 }
 
-/// Optional modifiers for control patterns.
+/// Container for all control flow declarations in a library.
 #[derive(Debug, Default)]
-pub struct ControlPatternOptions {
-    /// Alternative branch keyword for if_then_else (ELSE)
-    pub alt: Option<Ident>,
-    /// Step variant keyword for start_next (STEP)
-    pub step: Option<Ident>,
-    /// No-error branch keyword for error_handler (ELSEERR)
-    pub no_error: Option<Ident>,
+pub struct ControlFlowDef {
+    /// Opener declarations
+    pub openers: Vec<ControlOpener>,
+    /// Transition declarations
+    pub transitions: Vec<ControlTransition>,
+    /// Closer declarations
+    pub closers: Vec<ControlCloser>,
+    /// Inline command declarations
+    pub inlines: Vec<ControlInline>,
 }
 
 /// A coercion registration definition.

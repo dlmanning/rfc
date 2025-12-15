@@ -94,37 +94,6 @@ rpl_macros::define_library! {
 
         rpl_lang::library::CompileResult::NoMatch
     }
-
-    custom decompile_prolog {
-        // Check for COMMENT prolog
-        if let Some(word) = ctx.peek()
-            && rpl_core::is_prolog(word)
-            && rpl_core::extract_type(word) == TypeId::COMMENT.as_u16()
-        {
-            let size = rpl_core::extract_size(word) as usize;
-            ctx.read(); // consume prolog
-
-            // Read comment data
-            let mut bytes = Vec::with_capacity(size * 4);
-            for _ in 0..size {
-                if let Some(w) = ctx.read() {
-                    bytes.push((w & 0xFF) as u8);
-                    bytes.push(((w >> 8) & 0xFF) as u8);
-                    bytes.push(((w >> 16) & 0xFF) as u8);
-                    bytes.push(((w >> 24) & 0xFF) as u8);
-                }
-            }
-
-            // Find actual length (stop at null padding)
-            let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-            let comment = String::from_utf8_lossy(&bytes[..len]);
-
-            ctx.write(&comment);
-            rpl_lang::library::DecompileResult::Ok
-        } else {
-            rpl_lang::library::DecompileResult::Unknown
-        }
-    }
 }
 
 /// Comment type based on @ prefix count.

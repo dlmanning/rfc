@@ -32,9 +32,6 @@ mod strings;
 mod symbolic;
 mod transcendentals;
 
-#[cfg(test)]
-mod control_test;
-
 pub use arithmetic::ArithmeticLib;
 pub use binary_int::BinaryIntLib;
 pub use binary_ops::BinaryOpsLib;
@@ -50,13 +47,14 @@ pub use locals::LocalsLib;
 pub use numbers::RealNumbersLib;
 pub use plot::PlotLib;
 pub use programs::ProgramsLib;
+use rpl_lang::{
+    library::{Library, LibraryRegistry},
+    operator::OperatorRegistry,
+};
 pub use stack::StackLib;
 pub use strings::StringsLib;
 pub use symbolic::SymbolicLib;
 pub use transcendentals::TranscendentalsLib;
-
-use rpl_lang::library::{Library, LibraryRegistry};
-use rpl_lang::operator::OperatorRegistry;
 
 /// Register all standard libraries with a registry.
 pub fn register_standard_libs(registry: &mut LibraryRegistry) {
@@ -89,8 +87,9 @@ pub fn register_standard_operators(registry: &mut OperatorRegistry) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rpl_lang::library::Library;
+
+    use super::*;
 
     #[test]
     fn register_standard_libs_populates_registry() {

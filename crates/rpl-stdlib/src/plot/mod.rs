@@ -758,64 +758,6 @@ rpl_macros::define_library! {
         }
     }
 
-    custom decompile {
-        use rpl_lang::library::DecompileMode;
-
-        match ctx.mode() {
-            DecompileMode::Prolog => {
-                if let Some(word) = ctx.peek()
-                    && rpl_core::is_prolog(word)
-                    && rpl_core::extract_type(word) == TypeId::PLOT.as_u16()
-                {
-                    let size = rpl_core::extract_size(word) as usize;
-                    ctx.read();
-
-                    let data: Vec<Word> = (0..size).filter_map(|_| ctx.read()).collect();
-                    let bytes = words_to_bytes(&data);
-                    let cmd_count = count_commands(&bytes);
-
-                    ctx.write(&format!("«Plot: {} cmds»", cmd_count));
-                    return rpl_lang::library::DecompileResult::Ok;
-                }
-                rpl_lang::library::DecompileResult::Unknown
-            }
-            DecompileMode::Call(cmd) => {
-                let name = match cmd {
-                    Self::CMD_BEGINPLOT => "BEGINPLOT",
-                    Self::CMD_EDITPLOT => "EDITPLOT",
-                    Self::CMD_ENDPLOT => "ENDPLOT",
-                    Self::CMD_MOVETO => "MOVETO",
-                    Self::CMD_LINETO => "LINETO",
-                    Self::CMD_CIRCLE => "CIRCLE",
-                    Self::CMD_RECT => "RECT",
-                    Self::CMD_ELLIPSE => "ELLIPSE",
-                    Self::CMD_ARC => "ARC",
-                    Self::CMD_BEZIER => "BEZIER",
-                    Self::CMD_PIXEL => "PIXEL",
-                    Self::CMD_TEXT => "TEXT",
-                    Self::CMD_FILL => "FILL",
-                    Self::CMD_STROKE => "STROKE",
-                    Self::CMD_LINEWIDTH => "LINEWIDTH",
-                    Self::CMD_COLOR => "COLOR",
-                    Self::CMD_FILLCOLOR => "FILLCOLOR",
-                    Self::CMD_FONT => "FONT",
-                    Self::CMD_IDENTITY => "IDENTITY",
-                    Self::CMD_TRANSFORM => "TRANSFORM",
-                    Self::CMD_SCALE => "SCALE",
-                    Self::CMD_ROTATE => "ROTATE",
-                    Self::CMD_TRANSLATE => "TRANSLATE",
-                    Self::CMD_PUSHSTATE => "PUSHSTATE",
-                    Self::CMD_POPSTATE => "POPSTATE",
-                    Self::CMD_CLIP => "CLIP",
-                    Self::CMD_RGBA => "RGBA",
-                    _ => return rpl_lang::library::DecompileResult::Unknown,
-                };
-                ctx.write(name);
-                rpl_lang::library::DecompileResult::Ok
-            }
-        }
-    }
-
     custom stack_effect {
         match token.to_ascii_uppercase().as_str() {
             "BEGINPLOT" => StackEffect::Fixed {

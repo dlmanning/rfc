@@ -337,9 +337,9 @@ impl<'a> Compiler<'a> {
                     }
                     ConstructKind::ErrorHandler => {
                         // IFERR: emit IFERR_SETUP + placeholder, track placeholder position
-                        use crate::well_known::FLOW_CONTROL_LIB_ID;
+                        use crate::well_known::{FLOW_CONTROL_LIB_ID, CMD_IFERR_SETUP};
                         self.output.emit(
-                            rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), 21), // CMD_IFERR_SETUP
+                            rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_IFERR_SETUP),
                             token.span,
                         );
                         let placeholder_pos = self.output.len();
@@ -369,9 +369,9 @@ impl<'a> Compiler<'a> {
                         // Stack has: start finish
                         // LOOP_SETUP pops start/finish, computes direction, pushes 4 values to return stack
                         // No skip check - body always runs at least once (matches HP behavior)
-                        use crate::well_known::FLOW_CONTROL_LIB_ID;
+                        use crate::well_known::{FLOW_CONTROL_LIB_ID, CMD_LOOP_SETUP};
                         self.output.emit(
-                            rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), 4), // CMD_LOOP_SETUP
+                            rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_LOOP_SETUP),
                             token.span,
                         );
 
@@ -470,14 +470,13 @@ impl<'a> Compiler<'a> {
                     // UNTIL consumes the test result from the stack
                     self.stack.pop();
                 } else if upper_text == "REPEAT" {
-                    // REPEAT just emitted JUMP_IF_FALSE + placeholder + REPEAT_MARKER
+                    // REPEAT just emitted JUMP_IF_FALSE + placeholder
                     // Record the placeholder for END to patch (exit jump)
                     if let Some(construct) = self.constructs.top_mut()
                         && matches!(construct.kind, ConstructKind::While)
                     {
                         // Position of the placeholder (for exit jump)
-                        // -2 because: -1 for REPEAT_MARKER, -1 more for the placeholder
-                        construct.control_data.then_jump_target = Some(self.output.len() - 2);
+                        construct.control_data.then_jump_target = Some(self.output.len() - 1);
                     }
                     // REPEAT consumes the test result from the stack
                     self.stack.pop();
@@ -493,12 +492,12 @@ impl<'a> Compiler<'a> {
                     // THENCASE consumes the test result from the stack
                     self.stack.pop();
                 } else if upper_text == "ENDTHEN" {
-                    // ENDTHEN just emitted JUMP + placeholder + ENDTHEN_MARKER
-                    // 1. Patch THENCASE's conditional jump to point here (after ENDTHEN_MARKER)
+                    // ENDTHEN just emitted JUMP + placeholder
+                    // 1. Patch THENCASE's conditional jump to point here
                     // 2. Record ENDTHEN's exit jump for ENDCASE to patch
                     let target = self.make_jump_target(self.output.len());
-                    // Position of ENDTHEN's jump placeholder: -2 for ENDTHEN_MARKER, -1 for placeholder
-                    let exit_jump_pos = self.output.len() - 2;
+                    // Position of ENDTHEN's jump placeholder
+                    let exit_jump_pos = self.output.len() - 1;
                     if let Some(construct) = self.constructs.top_mut()
                         && matches!(construct.kind, ConstructKind::Case)
                     {
@@ -512,12 +511,12 @@ impl<'a> Compiler<'a> {
                         construct.control_data.then_jump_target = None;
                     }
                 } else if upper_text == "THENERR" {
-                    // THENERR just emitted IFERR_SUCCESS + JUMP + placeholder + THENERR_MARKER
+                    // THENERR just emitted IFERR_SUCCESS + JUMP + placeholder
                     // 1. Patch IFERR's handler PC to point here (start of error handler)
                     // 2. Record THENERR's skip jump for ELSEERR or ENDERR to patch
                     let handler_target = self.make_jump_target(self.output.len());
-                    // Position of THENERR's skip jump placeholder: -2 for THENERR_MARKER, -1 for placeholder
-                    let skip_jump_pos = self.output.len() - 2;
+                    // Position of THENERR's skip jump placeholder
+                    let skip_jump_pos = self.output.len() - 1;
                     if let Some(construct) = self.constructs.top_mut()
                         && matches!(construct.kind, ConstructKind::ErrorHandler)
                     {
@@ -527,12 +526,12 @@ impl<'a> Compiler<'a> {
                         construct.control_data.then_jump_target = Some(skip_jump_pos);
                     }
                 } else if upper_text == "ELSEERR" {
-                    // ELSEERR just emitted JUMP + placeholder + ELSEERR_MARKER
+                    // ELSEERR just emitted JUMP + placeholder
                     // 1. Patch THENERR's skip jump to point here (start of no-error code)
                     // 2. Record ELSEERR's exit jump for ENDERR to patch
                     let target = self.make_jump_target(self.output.len());
-                    // Position of ELSEERR's exit jump placeholder: -2 for ELSEERR_MARKER, -1 for placeholder
-                    let exit_jump_pos = self.output.len() - 2;
+                    // Position of ELSEERR's exit jump placeholder
+                    let exit_jump_pos = self.output.len() - 1;
                     if let Some(construct) = self.constructs.top_mut()
                         && matches!(construct.kind, ConstructKind::ErrorHandler)
                     {
@@ -943,12 +942,12 @@ impl<'a> Compiler<'a> {
                 // WHILE/REPEAT/END: END needs to:
                 // 1. Emit unconditional jump back to WHILE (loop_start)
                 // 2. Patch REPEAT's exit jump to point here (after the backward jump)
-                use crate::well_known::FLOW_CONTROL_LIB_ID;
+                use crate::well_known::{FLOW_CONTROL_LIB_ID, CMD_JUMP};
 
                 // Emit backward jump to loop start
                 if let Some(loop_start) = construct.control_data.loop_start {
                     self.output.emit(
-                        rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), 1), // CMD_JUMP
+                        rpl_core::make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_JUMP),
                         construct.open_span,
                     );
                     self.output.emit(loop_start as u32, construct.open_span);
@@ -1116,14 +1115,14 @@ impl<'a> Compiler<'a> {
 
         // Emit setup command based on construct kind
         // Stack has: start finish
-        use crate::well_known::FLOW_CONTROL_LIB_ID;
+        use crate::well_known::{FLOW_CONTROL_LIB_ID, CMD_FOR_SETUP, CMD_FORUP_SETUP, CMD_FORDN_SETUP};
         match kind {
             ConstructKind::For => {
                 // FOR_SETUP pops start/finish, computes direction, creates local frame, pushes 4 values
                 // No skip check - body always runs at least once (matches HP behavior)
                 // CMD_FOR_SETUP <symbol>
                 self.output.emit(
-                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), 11), // CMD_FOR_SETUP
+                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_FOR_SETUP),
                     token.span,
                 );
                 self.output.emit(symbol.as_u32(), token.span);
@@ -1132,7 +1131,7 @@ impl<'a> Compiler<'a> {
                 // FORUP_SETUP: ascending FOR with skip if start > end
                 // CMD_FORUP_SETUP <symbol> <skip_target>
                 self.output.emit(
-                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), 16), // CMD_FORUP_SETUP
+                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_FORUP_SETUP),
                     token.span,
                 );
                 self.output.emit(symbol.as_u32(), token.span);
@@ -1147,7 +1146,7 @@ impl<'a> Compiler<'a> {
                 // FORDN_SETUP: descending FOR with skip if start < end
                 // CMD_FORDN_SETUP <symbol> <skip_target>
                 self.output.emit(
-                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), 17), // CMD_FORDN_SETUP
+                    make_call(FLOW_CONTROL_LIB_ID.as_u16(), CMD_FORDN_SETUP),
                     token.span,
                 );
                 self.output.emit(symbol.as_u32(), token.span);

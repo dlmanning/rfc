@@ -53,29 +53,6 @@ rpl_macros::define_library! {
             }
         }
     }
-
-    custom decompile_prolog {
-        // Check for PROGRAM prolog
-        if let Some(word) = ctx.peek()
-            && rpl_core::is_prolog(word)
-            && rpl_core::extract_type(word) == TypeId::PROGRAM.as_u16()
-        {
-            let size = rpl_core::extract_size(word) as usize;
-            ctx.read(); // consume prolog
-            ctx.write("::");
-
-            // Recursively decompile the program body
-            if size > 0 {
-                ctx.write(" ");
-                ctx.decompile_inner(size);
-            }
-
-            ctx.write(" ;");
-            rpl_lang::library::DecompileResult::Ok
-        } else {
-            rpl_lang::library::DecompileResult::Unknown
-        }
-    }
 }
 
 #[cfg(test)]

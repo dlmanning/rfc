@@ -250,10 +250,6 @@ rpl_macros::define_library! {
             }
         }
     }
-
-    prologs {
-        LIST: delimited("{", "}");
-    }
 }
 
 #[cfg(test)]

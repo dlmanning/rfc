@@ -422,36 +422,22 @@ impl<'a> ExecuteContext<'a> {
     }
 
     /// Push a FOR loop state onto the return stack.
-    pub fn push_for_loop(
-        &mut self,
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    ) -> Result<(), rpl_vm::StackError> {
-        self.vm.push_for_loop(start, end, direction, counter)
+    pub fn push_for_loop(&mut self, end: i64, counter: i64) -> Result<(), rpl_vm::StackError> {
+        self.vm.push_for_loop(end, counter)
     }
 
     /// Pop a FOR loop state from the return stack.
-    pub fn pop_for_loop(&mut self) -> Result<(i64, i64, i64, i64), rpl_vm::StackError> {
+    pub fn pop_for_loop(&mut self) -> Result<(i64, i64), rpl_vm::StackError> {
         self.vm.pop_for_loop()
     }
 
     /// Push a START loop state onto the return stack.
-    pub fn push_start_loop(
-        &mut self,
-        start: i64,
-        end: i64,
-        direction: i64,
-        counter: i64,
-    ) -> Result<(), rpl_vm::StackError> {
-        self.vm.push_start_loop(start, end, direction, counter)
+    pub fn push_start_loop(&mut self, end: i64, counter: i64) -> Result<(), rpl_vm::StackError> {
+        self.vm.push_start_loop(end, counter)
     }
 
     /// Pop a START loop state from the return stack.
-    pub fn pop_start_loop(
-        &mut self,
-    ) -> Result<(i64, i64, i64, i64), rpl_vm::StackError> {
+    pub fn pop_start_loop(&mut self) -> Result<(i64, i64), rpl_vm::StackError> {
         self.vm.pop_start_loop()
     }
 
@@ -684,256 +670,6 @@ impl<'a> ExecuteContext<'a> {
     }
 }
 
-/// Mode for decompilation - distinguishes prolog vs call handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecompileMode {
-    /// Driver is asking "is this your prolog type?"
-    Prolog,
-    /// Driver is asking "decompile this call with the given cmd"
-    Call(u16),
-}
-
-/// Context for decompiling bytecode.
-pub struct DecompileContext<'a> {
-    code: &'a [Word],
-    pos: &'a mut usize,
-    output: &'a mut String,
-    indent: usize,
-    registry: Option<&'a crate::library::LibraryRegistry>,
-    mode: DecompileMode,
-    /// Interner for resolving symbol names (for local variables).
-    pub interner: Option<&'a Interner>,
-    /// User library registry for decompiling LIBPTR to command names.
-    user_lib_registry: Option<&'a UserLibraryRegistry>,
-}
-
-impl<'a> DecompileContext<'a> {
-    /// Create a context for prolog decompilation (trying to match a literal type).
-    pub fn for_prolog(code: &'a [Word], pos: &'a mut usize, output: &'a mut String) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: None,
-            mode: DecompileMode::Prolog,
-            interner: None,
-            user_lib_registry: None,
-        }
-    }
-
-    /// Create a context for call decompilation (specific command).
-    pub fn for_call(
-        code: &'a [Word],
-        pos: &'a mut usize,
-        output: &'a mut String,
-        cmd: u16,
-    ) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: None,
-            mode: DecompileMode::Call(cmd),
-            interner: None,
-            user_lib_registry: None,
-        }
-    }
-
-    /// Create a prolog context with registry for recursive decompilation.
-    pub fn for_prolog_with_registry(
-        code: &'a [Word],
-        pos: &'a mut usize,
-        output: &'a mut String,
-        registry: &'a crate::library::LibraryRegistry,
-    ) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: Some(registry),
-            mode: DecompileMode::Prolog,
-            interner: None,
-            user_lib_registry: None,
-        }
-    }
-
-    /// Create a prolog context with registry and interner for recursive decompilation.
-    pub fn for_prolog_with_interner(
-        code: &'a [Word],
-        pos: &'a mut usize,
-        output: &'a mut String,
-        registry: &'a crate::library::LibraryRegistry,
-        interner: &'a Interner,
-    ) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: Some(registry),
-            mode: DecompileMode::Prolog,
-            interner: Some(interner),
-            user_lib_registry: None,
-        }
-    }
-
-    /// Create a call context with registry for recursive decompilation.
-    pub fn for_call_with_registry(
-        code: &'a [Word],
-        pos: &'a mut usize,
-        output: &'a mut String,
-        registry: &'a crate::library::LibraryRegistry,
-        cmd: u16,
-    ) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: Some(registry),
-            mode: DecompileMode::Call(cmd),
-            interner: None,
-            user_lib_registry: None,
-        }
-    }
-
-    /// Create a call context with registry and interner for recursive decompilation.
-    pub fn for_call_with_interner(
-        code: &'a [Word],
-        pos: &'a mut usize,
-        output: &'a mut String,
-        registry: &'a crate::library::LibraryRegistry,
-        cmd: u16,
-        interner: &'a Interner,
-    ) -> Self {
-        Self {
-            code,
-            pos,
-            output,
-            indent: 0,
-            registry: Some(registry),
-            mode: DecompileMode::Call(cmd),
-            interner: Some(interner),
-            user_lib_registry: None,
-        }
-    }
-
-    /// Get the decompilation mode.
-    pub fn mode(&self) -> DecompileMode {
-        self.mode
-    }
-
-    /// Get the command ID if in Call mode.
-    pub fn cmd(&self) -> Option<u16> {
-        match self.mode {
-            DecompileMode::Call(cmd) => Some(cmd),
-            DecompileMode::Prolog => None,
-        }
-    }
-
-    /// Read the next word.
-    pub fn read(&mut self) -> Option<Word> {
-        if *self.pos < self.code.len() {
-            let word = self.code[*self.pos];
-            *self.pos += 1;
-            Some(word)
-        } else {
-            None
-        }
-    }
-
-    /// Peek at the next word without advancing.
-    pub fn peek(&self) -> Option<Word> {
-        self.code.get(*self.pos).copied()
-    }
-
-    /// Write text to the output.
-    pub fn write(&mut self, s: &str) {
-        self.output.push_str(s);
-    }
-
-    /// Increase indentation.
-    pub fn indent(&mut self) {
-        self.indent += 2;
-    }
-
-    /// Decrease indentation.
-    pub fn dedent(&mut self) {
-        self.indent = self.indent.saturating_sub(2);
-    }
-
-    /// Write a newline with current indentation.
-    pub fn newline(&mut self) {
-        self.output.push('\n');
-        for _ in 0..self.indent {
-            self.output.push(' ');
-        }
-    }
-
-    /// Get the current position in the code.
-    pub fn position(&self) -> usize {
-        *self.pos
-    }
-
-    /// Get the remaining code slice from current position.
-    pub fn remaining(&self) -> &[Word] {
-        &self.code[*self.pos..]
-    }
-
-    /// Get a slice of code from current position with given length.
-    pub fn slice(&self, len: usize) -> &[Word] {
-        let end = (*self.pos + len).min(self.code.len());
-        &self.code[*self.pos..end]
-    }
-
-    /// Skip a number of words without reading them.
-    pub fn skip(&mut self, count: usize) {
-        *self.pos = (*self.pos + count).min(self.code.len());
-    }
-
-    /// Write a space if the output doesn't end with whitespace.
-    pub fn write_space(&mut self) {
-        if !self.output.is_empty() && !self.output.ends_with(' ') && !self.output.ends_with('\n') {
-            self.output.push(' ');
-        }
-    }
-
-    /// Decompile inner bytecode recursively.
-    ///
-    /// This reads `count` words from the current position and decompiles them,
-    /// appending the result to the output. Requires the context to have been
-    /// created with a registry.
-    pub fn decompile_inner(&mut self, count: usize) {
-        if let Some(registry) = self.registry {
-            // Extract the inner code
-            let end = (*self.pos + count).min(self.code.len());
-            let inner_code = &self.code[*self.pos..end];
-            *self.pos = end;
-
-            // Decompile the inner code (pass interner if available)
-            let inner_output =
-                crate::decompile::decompile_inner(inner_code, registry, self.interner);
-            self.output.push_str(&inner_output);
-        } else {
-            // No registry - just skip the words
-            self.skip(count);
-        }
-    }
-
-    /// Check if this context has a registry for recursive decompilation.
-    pub fn has_registry(&self) -> bool {
-        self.registry.is_some()
-    }
-
-    /// Get the user library registry for decompiling LIBPTR to command names.
-    pub fn user_lib_registry(&self) -> Option<&UserLibraryRegistry> {
-        self.user_lib_registry
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rpl_core::Pos;
@@ -987,43 +723,4 @@ mod tests {
         assert_eq!(ctx.position(), 2);
     }
 
-    #[test]
-    fn decompile_context_read_write() {
-        let code = vec![1, 2, 3];
-        let mut pos = 0;
-        let mut output = String::new();
-
-        let mut ctx = DecompileContext::for_prolog(&code, &mut pos, &mut output);
-
-        assert_eq!(ctx.peek(), Some(1));
-        assert_eq!(ctx.read(), Some(1));
-        assert_eq!(ctx.read(), Some(2));
-
-        ctx.write("hello");
-        ctx.indent();
-        ctx.newline();
-        ctx.write("world");
-
-        assert!(output.contains("hello"));
-        assert!(output.contains("world"));
-    }
-
-    #[test]
-    fn decompile_context_mode() {
-        let code = vec![1];
-        let mut pos = 0;
-        let mut output = String::new();
-
-        // Test prolog mode
-        let ctx = DecompileContext::for_prolog(&code, &mut pos, &mut output);
-        assert_eq!(ctx.mode(), DecompileMode::Prolog);
-        assert_eq!(ctx.cmd(), None);
-
-        // Test call mode
-        let mut pos2 = 0;
-        let mut output2 = String::new();
-        let ctx2 = DecompileContext::for_call(&code, &mut pos2, &mut output2, 42);
-        assert_eq!(ctx2.mode(), DecompileMode::Call(42));
-        assert_eq!(ctx2.cmd(), Some(42));
-    }
 }

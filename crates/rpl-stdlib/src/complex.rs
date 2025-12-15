@@ -464,52 +464,6 @@ rpl_macros::define_library! {
 
         rpl_lang::library::CompileResult::NoMatch
     }
-
-    custom decompile_prolog {
-        // Check for COMPLEX prolog
-        if let Some(word) = ctx.peek()
-            && rpl_core::is_prolog(word)
-            && rpl_core::extract_type(word) == TypeId::COMPLEX.as_u16()
-        {
-            let size = rpl_core::extract_size(word) as usize;
-            ctx.read(); // consume prolog
-
-            if size == 4 {
-                // Rectangular: (re, im)
-                let re_hi = ctx.read().unwrap_or(0);
-                let re_lo = ctx.read().unwrap_or(0);
-                let im_hi = ctx.read().unwrap_or(0);
-                let im_lo = ctx.read().unwrap_or(0);
-
-                let re = decode_f64(re_hi, re_lo);
-                let im = decode_f64(im_hi, im_lo);
-
-                ctx.write(&format!("({}, {})", re, im));
-                rpl_lang::library::DecompileResult::Ok
-            } else if size == 5 {
-                // Polar: (mag∠angle) or (mag∠angle°)
-                let mag_hi = ctx.read().unwrap_or(0);
-                let mag_lo = ctx.read().unwrap_or(0);
-                let angle_hi = ctx.read().unwrap_or(0);
-                let angle_lo = ctx.read().unwrap_or(0);
-                let mode = ctx.read().unwrap_or(0) as u8;
-
-                let mag = decode_f64(mag_hi, mag_lo);
-                let angle = decode_f64(angle_hi, angle_lo);
-
-                if mode == 1 {
-                    ctx.write(&format!("({}∠{}°)", mag, angle));
-                } else {
-                    ctx.write(&format!("({}∠{})", mag, angle));
-                }
-                rpl_lang::library::DecompileResult::Ok
-            } else {
-                rpl_lang::library::DecompileResult::Unknown
-            }
-        } else {
-            rpl_lang::library::DecompileResult::Unknown
-        }
-    }
 }
 
 // ============================================================================

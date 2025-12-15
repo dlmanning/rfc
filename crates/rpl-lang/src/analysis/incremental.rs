@@ -261,8 +261,8 @@ mod tests {
 
     use super::*;
     use crate::library::{
-        CompileContext, CompileResult, DecompileContext, DecompileResult, ExecuteOk, ExecuteResult,
-        Library, LibraryId, ProbeContext, ProbeResult,
+        CompileContext, CompileResult, ExecuteOk, ExecuteResult, Library, LibraryId, ProbeContext,
+        ProbeResult,
     };
 
     // Simple mock library for testing
@@ -300,10 +300,6 @@ mod tests {
 
         fn execute(&self, _ctx: &mut crate::library::ExecuteContext) -> ExecuteResult {
             Ok(ExecuteOk::Ok)
-        }
-
-        fn decompile(&self, _ctx: &mut DecompileContext) -> DecompileResult {
-            DecompileResult::Ok
         }
     }
 
@@ -462,10 +458,6 @@ mod tests {
 
         fn execute(&self, _ctx: &mut crate::library::ExecuteContext) -> ExecuteResult {
             Ok(ExecuteOk::Ok)
-        }
-
-        fn decompile(&self, _ctx: &mut DecompileContext) -> DecompileResult {
-            DecompileResult::Ok
         }
 
         fn stack_effect(&self, token: &str) -> crate::library::StackEffect {
