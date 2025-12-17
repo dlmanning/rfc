@@ -79,6 +79,8 @@ pub struct Definition {
     pub referenced: bool,
     /// Inferred type of the value stored to this variable, if known.
     pub value_type: Option<CType>,
+    /// For functions: the number of parameters (arity).
+    pub arity: Option<usize>,
 }
 
 impl Definition {
@@ -92,6 +94,7 @@ impl Definition {
             scope,
             referenced: false,
             value_type: None,
+            arity: None,
         }
     }
 
@@ -111,6 +114,28 @@ impl Definition {
             scope,
             referenced: false,
             value_type: Some(value_type),
+            arity: None,
+        }
+    }
+
+    /// Create a new definition with a known value type and arity.
+    pub fn with_type_and_arity(
+        name: String,
+        span: Span,
+        kind: DefinitionKind,
+        scope: ScopeId,
+        value_type: CType,
+        arity: usize,
+    ) -> Self {
+        Self {
+            id: DefinitionId::new(0),
+            name,
+            span,
+            kind,
+            scope,
+            referenced: false,
+            value_type: Some(value_type),
+            arity: Some(arity),
         }
     }
 }

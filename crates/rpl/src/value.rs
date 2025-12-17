@@ -21,6 +21,10 @@ pub struct ProgramData {
     pub strings: Arc<[String]>,
     /// Optional source map for debugging (maps bytecode offsets to source spans).
     pub source_map: Option<SourceMap>,
+    /// Number of parameters (0 for regular programs, N for functions).
+    /// When param_count > 0, the call convention pops N values from the stack
+    /// and binds them to locals 0..N before executing the body.
+    pub param_count: u16,
 }
 
 impl ProgramData {
@@ -30,6 +34,7 @@ impl ProgramData {
             code: code.into(),
             strings: Arc::new([]),
             source_map: None,
+            param_count: 0,
         }
     }
 
@@ -39,6 +44,7 @@ impl ProgramData {
             code: code.into(),
             strings: strings.into(),
             source_map: None,
+            param_count: 0,
         }
     }
 
@@ -52,7 +58,42 @@ impl ProgramData {
             code: code.into(),
             strings: strings.into(),
             source_map: Some(source_map),
+            param_count: 0,
         }
+    }
+
+    /// Create a function with bytecode, string table, and parameter count.
+    pub fn function(
+        code: impl Into<Arc<[u8]>>,
+        strings: impl Into<Arc<[String]>>,
+        param_count: u16,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            strings: strings.into(),
+            source_map: None,
+            param_count,
+        }
+    }
+
+    /// Create a function with bytecode, string table, source map, and parameter count.
+    pub fn function_with_source_map(
+        code: impl Into<Arc<[u8]>>,
+        strings: impl Into<Arc<[String]>>,
+        source_map: SourceMap,
+        param_count: u16,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            strings: strings.into(),
+            source_map: Some(source_map),
+            param_count,
+        }
+    }
+
+    /// Returns true if this is a function (has declared parameters).
+    pub fn is_function(&self) -> bool {
+        self.param_count > 0
     }
 
     /// Check if this program has debug info (source map).

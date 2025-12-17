@@ -70,6 +70,8 @@ pub struct CompiledProgram {
     /// String table (data section) for local variable names, etc.
     /// Referenced by index from bytecode.
     pub string_table: Vec<String>,
+    /// Number of parameters (0 for regular programs, N for functions).
+    pub param_count: u16,
 }
 
 impl CompiledProgram {
@@ -80,6 +82,7 @@ impl CompiledProgram {
             spans: Vec::new(),
             span_offsets: Vec::new(),
             string_table: Vec::new(),
+            param_count: 0,
         }
     }
 
@@ -157,6 +160,8 @@ pub struct BytecodeBuffer {
     current_span: Option<Span>,
     /// String table (data section) for local variable names.
     string_table: Vec<String>,
+    /// Number of parameters (0 for regular programs, N for functions).
+    param_count: u16,
 }
 
 impl Default for BytecodeBuffer {
@@ -181,7 +186,13 @@ impl BytecodeBuffer {
             span_offsets: Vec::with_capacity(code_capacity / 8),
             current_span: None,
             string_table: Vec::new(),
+            param_count: 0,
         }
+    }
+
+    /// Set the parameter count for this program (making it a function).
+    pub fn set_param_count(&mut self, count: u16) {
+        self.param_count = count;
     }
 
     /// Intern a string in the string table, returning its index.
@@ -277,10 +288,12 @@ impl BytecodeBuffer {
     }
 
     /// Emit make_program with embedded string table and source map.
-    /// Format: MakeProgram <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
+    /// Format: MakeProgram <param_count:leb128> <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
     ///         <span_count> [<bytecode_offset:u16> <source_start:u32> <source_end:u32>]*
     pub fn emit_make_program(&mut self, program: &CompiledProgram) {
         self.emit_opcode(Opcode::MakeProgram);
+        // Write param count (0 for regular programs, N for functions)
+        write_leb128_u32(program.param_count as u32, &mut self.code);
         // Write string table
         write_leb128_u32(program.string_table.len() as u32, &mut self.code);
         for s in &program.string_table {
@@ -449,6 +462,7 @@ impl BytecodeBuffer {
             spans: self.spans,
             span_offsets: self.span_offsets,
             string_table: self.string_table,
+            param_count: self.param_count,
         }
     }
 }

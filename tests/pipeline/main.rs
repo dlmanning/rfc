@@ -7,6 +7,7 @@ use rpl::value::Value;
 use rpl::Session;
 
 // Test modules
+mod analysis;
 mod arithmetic;
 mod binary_int;
 mod comparison;

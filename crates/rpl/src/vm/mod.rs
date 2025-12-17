@@ -438,8 +438,22 @@ impl Vm {
         registry: &Registry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
+        // Pop parameters from stack before saving locals (for functions with param_count > 0)
+        let params = if program_data.param_count > 0 {
+            let mut args = self.stack.pop_many(program_data.param_count as usize)?;
+            args.reverse(); // First param should be local 0
+            args
+        } else {
+            Vec::new()
+        };
+
         let saved = self.locals.save();
         self.locals.clear();
+
+        // Bind parameters to locals 0..N
+        for (i, param) in params.into_iter().enumerate() {
+            self.locals.set(i as u32, param)?;
+        }
 
         self.return_stack.push(ReturnEntry::Call {
             program: program_data,
@@ -786,6 +800,9 @@ impl Vm {
                 self.stack.push(Value::list(items))?;
             }
             MakeProgram => {
+                // Read param count (0 for regular programs, N for functions)
+                let param_count =
+                    read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as u16;
                 let string_count =
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 let mut prog_strings = Vec::with_capacity(string_count);
@@ -826,7 +843,9 @@ impl Vm {
                         offsets,
                         spans,
                     };
-                    ProgramData::with_source_map(prog_code, prog_strings, source_map)
+                    ProgramData::function_with_source_map(prog_code, prog_strings, source_map, param_count)
+                } else if param_count > 0 {
+                    ProgramData::function(prog_code, prog_strings, param_count)
                 } else {
                     ProgramData::with_strings(prog_code, prog_strings)
                 };
@@ -1212,6 +1231,8 @@ fn skip_operands(code: &[u8], mut pc: usize, op: Opcode) -> Result<usize, VmErro
             pc += len;
         }
         MakeProgram => {
+            // param_count
+            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
             let str_count = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
             for _ in 0..str_count {
                 let len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;

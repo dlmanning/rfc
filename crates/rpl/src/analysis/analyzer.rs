@@ -50,6 +50,12 @@ struct Analyzer<'a> {
     scope_definitions: Vec<HashMap<String, DefinitionId>>,
     /// Compile-time type stack for inferring value types.
     type_stack: CStack,
+    /// Pending arity for functions being defined.
+    /// Set when we see a program that starts with a local binding.
+    pending_arity: Option<usize>,
+    /// Stack of local index -> DefinitionId mappings for each scope.
+    /// Used to mark local references (LocalRef) as referenced.
+    local_index_to_def: Vec<HashMap<usize, DefinitionId>>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -63,6 +69,8 @@ impl<'a> Analyzer<'a> {
             pending_name: None,
             scope_definitions: vec![HashMap::new()], // Root scope
             type_stack: CStack::new(),
+            pending_arity: None,
+            local_index_to_def: vec![HashMap::new()], // Root scope
         }
     }
 
@@ -88,6 +96,7 @@ impl<'a> Analyzer<'a> {
         let scope_id = self.scopes.add_scope(scope, self.current_scope);
         self.current_scope = scope_id;
         self.scope_definitions.push(HashMap::new());
+        self.local_index_to_def.push(HashMap::new());
     }
 
     /// Exit the current scope.
@@ -95,6 +104,7 @@ impl<'a> Analyzer<'a> {
         if let Some(parent) = self.scopes.parent(self.current_scope) {
             self.current_scope = parent;
             self.scope_definitions.pop();
+            self.local_index_to_def.pop();
         }
     }
 
@@ -223,7 +233,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// Handle a command, checking for STO/RCL patterns.
-    fn handle_command(&mut self, lib: LibId, cmd: u16, span: Span) {
+    fn handle_command(&mut self, lib: LibId, cmd: u16, _span: Span) {
         if lib == DIRECTORY_LIB {
             match cmd {
                 dir_cmd::STO => {
@@ -234,21 +244,42 @@ impl<'a> Analyzer<'a> {
                     let value_type = self.type_stack.pop(); // Pop value being stored
 
                     if let Some((name, name_span)) = self.pending_name.take() {
-                        // Create definition with inferred type
+                        // Create definition with inferred type and optional arity
+                        let arity = self.pending_arity.take();
                         let inferred_type =
                             if value_type.is_known() || matches!(value_type, CType::OneOf(_)) {
                                 Some(value_type)
                             } else {
                                 None
                             };
-                        self.add_definition_with_type(
-                            name.clone(),
-                            name_span,
-                            DefinitionKind::Global,
-                            inferred_type,
-                        );
-                        // Also add a write reference
-                        self.add_reference(name, span, ReferenceKind::Write);
+
+                        let def = match (inferred_type, arity) {
+                            (Some(ty), Some(ar)) => Definition::with_type_and_arity(
+                                name.clone(),
+                                name_span,
+                                DefinitionKind::Global,
+                                self.current_scope,
+                                ty,
+                                ar,
+                            ),
+                            (Some(ty), None) => Definition::with_type(
+                                name.clone(),
+                                name_span,
+                                DefinitionKind::Global,
+                                self.current_scope,
+                                ty,
+                            ),
+                            _ => Definition::new(
+                                name.clone(),
+                                name_span,
+                                DefinitionKind::Global,
+                                self.current_scope,
+                            ),
+                        };
+
+                        self.symbols.add_definition(def);
+                        // Also add a write reference at the name's location
+                        self.add_reference(name, name_span, ReferenceKind::Write);
                     }
                 }
                 dir_cmd::RCL => {
@@ -306,42 +337,145 @@ impl<'a> Analyzer<'a> {
         self.add_reference(name, span, ReferenceKind::Read);
     }
 
+    /// Handle a local variable reference.
+    fn handle_local_ref(&mut self, index: usize, span: Span) {
+        // Look up the definition by local index in all enclosing scopes
+        for scope_map in self.local_index_to_def.iter().rev() {
+            if let Some(&def_id) = scope_map.get(&index) {
+                // Get the name first to avoid borrow issues
+                let name = self
+                    .symbols
+                    .get_definition(def_id)
+                    .map(|d| d.name.clone());
+
+                if let Some(name) = name {
+                    // Mark the definition as referenced
+                    if let Some(def) = self.symbols.get_definition_mut(def_id) {
+                        def.referenced = true;
+                    }
+                    // Add a reference for semantic token highlighting
+                    let ref_id = self.add_reference(name, span, ReferenceKind::Read);
+                    // Resolve the reference immediately
+                    self.symbols.resolve_reference(ref_id, def_id);
+                }
+                return;
+            }
+        }
+    }
+
     /// Handle a local binding.
     fn handle_local_binding(&mut self, branches: &[Branch], span: Span) {
-        // branches[0] contains the local variable indices (as Integer nodes with symbols stored)
-        // branches[1] contains the body
-        // Actually, looking at the locals implementation more carefully...
-        // The first branch contains Symbol nodes for the variable names
+        // branches[0] = Integer nodes (local indices)
+        // branches[1] = body
+        // branches[2] = String nodes (local names)
+
+        // Check if we're directly inside a Program scope (for arity tracking)
+        // Only the outermost local binding in a program defines the function's arity
+        let parent_is_program = self
+            .scopes
+            .get(self.current_scope)
+            .map(|s| s.kind == ScopeKind::Program)
+            .unwrap_or(false);
 
         self.enter_scope(ScopeKind::LocalBinding, span);
 
-        if branches.len() >= 2 {
-            // First branch: variable declarations
-            for node in &branches[0] {
+        // Track arity for function definitions - only for outermost local binding
+        if parent_is_program {
+            let arity = self.get_local_binding_arity(branches);
+            self.pending_arity = Some(arity);
+        }
+
+        // Extract local indices from branches[0]
+        let indices: Vec<usize> = branches
+            .first()
+            .map(|b| {
+                b.iter()
+                    .filter_map(|node| {
+                        if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
+                            Some(*n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Get local names from branches[2] (String nodes) with their indices
+        if branches.len() >= 3 {
+            for (i, node) in branches[2].iter().enumerate() {
+                if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
+                    let def_id =
+                        self.add_definition(name.to_string(), node.span, DefinitionKind::Local);
+                    // Map local index to definition for LocalRef resolution
+                    if let Some(&idx) = indices.get(i) {
+                        if let Some(map) = self.local_index_to_def.last_mut() {
+                            map.insert(idx, def_id);
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: try branches[0] for Symbol nodes (older format)
+        else if branches.len() >= 2 {
+            for (i, node) in branches[0].iter().enumerate() {
                 if let NodeKind::Atom(AtomKind::Symbol(sym)) = &node.kind {
                     let name = self.interner.resolve(*sym).to_string();
-                    self.add_definition(name, node.span, DefinitionKind::Local);
+                    let def_id = self.add_definition(name, node.span, DefinitionKind::Local);
+                    if let Some(map) = self.local_index_to_def.last_mut() {
+                        map.insert(i, def_id);
+                    }
                 }
-                // Also handle Integer nodes which might store the local index
-                // but we extract the name from the Symbol
             }
+        }
+    }
 
-            // Second branch: body - will be visited normally
+    /// Get the arity (param count) from a local binding node.
+    fn get_local_binding_arity(&self, branches: &[Branch]) -> usize {
+        if branches.len() >= 3 {
+            branches[2].len()
+        } else if !branches.is_empty() {
+            branches[0].len()
+        } else {
+            0
         }
     }
 
     /// Handle a FOR loop with variable.
-    fn handle_for_loop(&mut self, branches: &[Branch], span: Span) {
-        // FOR i has the loop variable in the first branch
+    fn handle_for_loop(&mut self, branches: &[Branch], span: Span, is_step_variant: bool) {
+        // FOR/NEXT: branches[0] = [index], branches[1] = body, branches[2] = [name]
+        // FOR/STEP: branches[0] = [index], branches[1] = body, branches[2] = [step], branches[3] = [name]
         self.enter_scope(ScopeKind::Loop, span);
 
-        if !branches.is_empty() {
-            // Look for the loop variable (should be a symbol in the first branch)
-            for node in &branches[0] {
-                if let NodeKind::Atom(AtomKind::Symbol(sym)) = &node.kind {
-                    let name = self.interner.resolve(*sym).to_string();
-                    self.add_definition(name, node.span, DefinitionKind::LoopVar);
-                    break; // Only the first one is the loop variable
+        // Get the name branch index based on variant
+        let name_branch_idx = if is_step_variant { 3 } else { 2 };
+
+        // Get local index from branches[0]
+        let local_index = branches
+            .first()
+            .and_then(|b| b.first())
+            .and_then(|node| {
+                if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
+                    Some(*n as usize)
+                } else {
+                    None
+                }
+            });
+
+        // Get name from branches[2] or branches[3] (String node)
+        if let Some(name_branch) = branches.get(name_branch_idx) {
+            for node in name_branch {
+                if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
+                    // Use LoopVar to enable warnings for reassignment
+                    let def_id =
+                        self.add_definition(name.to_string(), node.span, DefinitionKind::LoopVar);
+                    // Map local index to definition for LocalRef resolution
+                    if let Some(idx) = local_index {
+                        if let Some(map) = self.local_index_to_def.last_mut() {
+                            map.insert(idx, def_id);
+                        }
+                    }
+                    break;
                 }
             }
         }
@@ -369,6 +503,10 @@ impl Visitor for Analyzer<'_> {
         self.handle_symbol(sym, node.span);
     }
 
+    fn visit_local_ref(&mut self, index: usize, node: &Node) {
+        self.handle_local_ref(index, node.span);
+    }
+
     fn visit_symbolic(&mut self, expr: &SymExpr, node: &Node) {
         self.handle_symbolic(expr, node.span);
     }
@@ -394,8 +532,21 @@ impl Visitor for Analyzer<'_> {
     fn visit_extended(&mut self, lib: LibId, id: u16, branches: &[Branch], node: &Node) {
         if lib == LOCALS_LIB && id == local_constructs::LOCAL_BINDING {
             self.handle_local_binding(branches, node.span);
-        } else if lib == FLOW_LIB && id == flow_constructs::FOR_NEXT {
-            self.handle_for_loop(branches, node.span);
+        } else if lib == FLOW_LIB {
+            // Handle all FOR loop variants
+            match id {
+                flow_constructs::FOR_NEXT
+                | flow_constructs::FORUP_NEXT
+                | flow_constructs::FORDN_NEXT => {
+                    self.handle_for_loop(branches, node.span, false);
+                }
+                flow_constructs::FOR_STEP
+                | flow_constructs::FORUP_STEP
+                | flow_constructs::FORDN_STEP => {
+                    self.handle_for_loop(branches, node.span, true);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -403,7 +554,16 @@ impl Visitor for Analyzer<'_> {
         // Exit scopes for extended constructs
         if let NodeKind::Composite(CompositeKind::Extended(lib, id), _) = &node.kind
             && ((*lib == LOCALS_LIB && *id == local_constructs::LOCAL_BINDING)
-                || (*lib == FLOW_LIB && *id == flow_constructs::FOR_NEXT))
+                || (*lib == FLOW_LIB
+                    && matches!(
+                        *id,
+                        flow_constructs::FOR_NEXT
+                            | flow_constructs::FOR_STEP
+                            | flow_constructs::FORUP_NEXT
+                            | flow_constructs::FORUP_STEP
+                            | flow_constructs::FORDN_NEXT
+                            | flow_constructs::FORDN_STEP
+                    )))
         {
             self.exit_scope();
         }

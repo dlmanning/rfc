@@ -65,6 +65,12 @@
         }
       ]
     }],
+    "commands": [
+      {
+        "command": "rpl.restartServer",
+        "title": "RPL: Restart Language Server"
+      }
+    ],
     "configuration": {
       "properties": {
         "rpl.server.path": {

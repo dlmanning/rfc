@@ -110,7 +110,7 @@ impl LocalsLib {
 
         // Parse variable names until « or <<
         let mut local_indices = Vec::new();
-        let mut local_names = Vec::new();
+        let mut local_names: Vec<(String, Span)> = Vec::new();
         loop {
             let token = ctx.peek().ok_or_else(|| ParseError {
                 message: "unexpected end of input, expected « or variable name".into(),
@@ -128,10 +128,11 @@ impl LocalsLib {
             // Must be a variable name - declare it
             let name_token = ctx.advance().unwrap();
             let name_str = name_token.text.clone();
+            let name_span = name_token.span;
             let name = ctx.interner.intern(&name_str);
             let index = ctx.declare_local(name);
             local_indices.push(index);
-            local_names.push(name_str);
+            local_names.push((name_str, name_span));
         }
 
         if local_indices.is_empty() {
@@ -171,14 +172,14 @@ impl LocalsLib {
         // Create branches:
         // branches[0] = local indices as Integer nodes
         // branches[1] = body
-        // branches[2] = local names as String nodes
+        // branches[2] = local names as String nodes (with correct spans)
         let index_nodes: Vec<Node> = local_indices
             .iter()
             .map(|&idx| Node::integer(idx as i64, start_span))
             .collect();
         let name_nodes: Vec<Node> = local_names
             .iter()
-            .map(|name| Node::string(name.clone(), start_span))
+            .map(|(name, span)| Node::string(name.clone(), *span))
             .collect();
 
         Ok(Node::extended(

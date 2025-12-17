@@ -290,19 +290,35 @@ pub fn hover(
 
 fn make_definition_hover(def: &Definition) -> HoverResult {
     let kind_str = match def.kind {
-        DefinitionKind::Global => "global variable",
+        DefinitionKind::Global => {
+            if def.arity.is_some() {
+                "function"
+            } else {
+                "global variable"
+            }
+        }
         DefinitionKind::Local => "local variable",
         DefinitionKind::LoopVar => "loop variable",
     };
 
-    let type_info = if let Some(ref ty) = def.value_type {
-        format!("\n\nType: `{:?}`", ty)
-    } else {
+    let mut details = Vec::new();
+
+    if let Some(ref ty) = def.value_type {
+        details.push(format!("Type: `{:?}`", ty));
+    }
+
+    if let Some(arity) = def.arity {
+        details.push(format!("Arity: {}", arity));
+    }
+
+    let detail_str = if details.is_empty() {
         String::new()
+    } else {
+        format!("\n\n{}", details.join("\n"))
     };
 
     HoverResult {
-        contents: format!("**{}** `{}`{}", kind_str, def.name, type_info),
+        contents: format!("**{}** `{}`{}", kind_str, def.name, detail_str),
         range: def.span,
     }
 }
@@ -438,6 +454,9 @@ pub fn semantic_tokens(analysis: &IncrementalAnalysis) -> Vec<SemanticToken> {
 }
 
 /// Encode semantic tokens for LSP (delta encoding).
+///
+/// LSP uses 0-indexed line and column positions, while our `line_col`
+/// returns 1-indexed values. This function handles the conversion.
 pub fn encode_semantic_tokens(tokens: &[SemanticToken], source: &SourceFile) -> Vec<u32> {
     let mut result = Vec::with_capacity(tokens.len() * 5);
     let mut prev_line = 0u32;
@@ -445,8 +464,9 @@ pub fn encode_semantic_tokens(tokens: &[SemanticToken], source: &SourceFile) -> 
 
     for token in tokens {
         let lc = source.line_col(token.start);
-        let line = lc.line;
-        let col = lc.col;
+        // Convert from 1-indexed to 0-indexed for LSP
+        let line = lc.line.saturating_sub(1);
+        let col = lc.col.saturating_sub(1);
 
         let delta_line = line - prev_line;
         let delta_char = if delta_line == 0 {

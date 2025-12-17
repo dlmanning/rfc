@@ -301,47 +301,53 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             }
         }
 
-        // MakeProgram - format: <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
+        // MakeProgram - format: <param_count> <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
         //                       <span_count:u16> [<offset:u16> <start:LEB128> <end:LEB128>]*
         Opcode::MakeProgram => {
-            // Read string table
-            if let Some(str_count) = read_leb128_u32(code, &mut offset) {
-                let mut valid = true;
-                for _ in 0..str_count {
-                    if let Some(slen) = read_leb128_u32(code, &mut offset) {
-                        if offset + slen as usize <= code.len() {
-                            offset += slen as usize;
+            // Read param count
+            if let Some(param_count) = read_leb128_u32(code, &mut offset) {
+                // Read string table
+                if let Some(str_count) = read_leb128_u32(code, &mut offset) {
+                    let mut valid = true;
+                    for _ in 0..str_count {
+                        if let Some(slen) = read_leb128_u32(code, &mut offset) {
+                            if offset + slen as usize <= code.len() {
+                                offset += slen as usize;
+                            } else {
+                                valid = false;
+                                break;
+                            }
                         } else {
                             valid = false;
                             break;
                         }
-                    } else {
-                        valid = false;
-                        break;
                     }
-                }
-                if !valid {
-                    return ("MakeProgram ???".into(), code.len().min(offset));
-                }
-                // Read code
-                if let Some(code_len) = read_leb128_u32(code, &mut offset) {
-                    let code_len = code_len as usize;
-                    if offset + code_len <= code.len() {
-                        offset += code_len;
-                        // Read span count (u16)
-                        if let Some(span_count) = read_u16(code, &mut offset) {
-                            // Each span is: u16 (offset) + LEB128 (start) + LEB128 (end)
-                            for _ in 0..span_count {
-                                // bytecode offset (u16)
-                                let _ = read_u16(code, &mut offset);
-                                // source start (LEB128)
-                                let _ = read_leb128_u32(code, &mut offset);
-                                // source end (LEB128)
-                                let _ = read_leb128_u32(code, &mut offset);
+                    if !valid {
+                        return ("MakeProgram ???".into(), code.len().min(offset));
+                    }
+                    // Read code
+                    if let Some(code_len) = read_leb128_u32(code, &mut offset) {
+                        let code_len = code_len as usize;
+                        if offset + code_len <= code.len() {
+                            offset += code_len;
+                            // Read span count (u16)
+                            if let Some(span_count) = read_u16(code, &mut offset) {
+                                // Each span is: u16 (offset) + LEB128 (start) + LEB128 (end)
+                                for _ in 0..span_count {
+                                    // bytecode offset (u16)
+                                    let _ = read_u16(code, &mut offset);
+                                    // source start (LEB128)
+                                    let _ = read_leb128_u32(code, &mut offset);
+                                    // source end (LEB128)
+                                    let _ = read_leb128_u32(code, &mut offset);
+                                }
+                                let kind = if param_count > 0 { "Function" } else { "Program" };
+                                (format!("Make{} <{} bytes, {} strings, {} params>", kind, code_len, str_count, param_count), offset.min(code.len()))
+                            } else {
+                                (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()))
                             }
-                            (format!("MakeProgram <{} bytes, {} strings>", code_len, str_count), offset.min(code.len()))
                         } else {
-                            (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()))
+                            ("MakeProgram ???".into(), code.len())
                         }
                     } else {
                         ("MakeProgram ???".into(), code.len())

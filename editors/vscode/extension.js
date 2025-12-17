@@ -113,6 +113,18 @@ function activate(context) {
             });
         })
     );
+
+    // Register Restart Language Server command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('rpl.restartServer', async () => {
+            if (client) {
+                vscode.window.showInformationMessage('Restarting RPL Language Server...');
+                await client.stop();
+                await client.start();
+                vscode.window.showInformationMessage('RPL Language Server restarted');
+            }
+        })
+    );
 }
 
 function deactivate() {

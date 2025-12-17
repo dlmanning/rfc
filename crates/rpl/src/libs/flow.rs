@@ -58,10 +58,10 @@ pub mod constructs {
     /// IF/THEN/ELSE/END (three branches: condition, then-body, else-body)
     pub const IF_THEN_ELSE: u16 = 2;
     /// FOR/NEXT loop
-    /// branches[0] = local index (as Integer), branches[1] = body
+    /// branches[0] = [local index as Integer], branches[1] = body, branches[2] = [name as String]
     pub const FOR_NEXT: u16 = 3;
     /// FOR/STEP loop (with custom step)
-    /// branches[0] = local index, branches[1] = body, branches[2] = step expression
+    /// branches[0] = [local index], branches[1] = body, branches[2] = [step], branches[3] = [name]
     pub const FOR_STEP: u16 = 4;
     /// START/NEXT loop
     /// branches[0] = body
@@ -370,8 +370,9 @@ impl FlowLib {
         let end_span = ctx.current_span();
         let full_span = Span::new(start_span.start(), end_span.end());
 
-        // Store var_index as an Integer node
-        let index_node = Node::integer(var_index as i64, start_span);
+        // Store var_index as an Integer node and var_name as a String node
+        let index_node = Node::integer(var_index as i64, var_token.span);
+        let name_node = Node::string(var_token.text.clone(), var_token.span);
 
         // Determine construct type based on variant and whether step is present
         let construct = if is_forup {
@@ -392,18 +393,20 @@ impl FlowLib {
             constructs::FOR_NEXT
         };
 
+        // Structure: branches[0] = [index], branches[1] = body, branches[2] = [name]
+        // For STEP variants: branches[0] = [index], branches[1] = body, branches[2] = [step], branches[3] = [name]
         if let Some(step) = step_expr {
             Ok(Node::extended(
                 FLOW_LIB,
                 construct,
-                vec![vec![index_node], body, vec![step]],
+                vec![vec![index_node], body, vec![step], vec![name_node]],
                 full_span,
             ))
         } else {
             Ok(Node::extended(
                 FLOW_LIB,
                 construct,
-                vec![vec![index_node], body],
+                vec![vec![index_node], body, vec![name_node]],
                 full_span,
             ))
         }
