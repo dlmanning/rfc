@@ -1,7 +1,7 @@
 //! Tests for user library system.
 
-use rpl_lang::Value;
-use rpl_session::Session;
+use rpl::value::Value;
+use rpl::Session;
 
 // ============================================================================
 // Library System (CRLIB, ATTACH, LIBPTR)
@@ -15,21 +15,20 @@ fn library_crlib_creates_library() {
 
     // First, just verify CRLIB works and produces something
     let result = session.eval(r#"{ { "ANSWER" << 42 >> } } "TEST" CRLIB"#);
-    assert!(result.is_ok(), "CRLIB should succeed");
+    assert!(result.is_ok(), "CRLIB should succeed: {:?}", result);
 
     // Stack should have 1 item (the library object)
     let values = result.unwrap();
     assert_eq!(values.len(), 1, "CRLIB should produce one value");
 
-    // The value should be a library object
-    match &values[0] {
-        Value::Object { type_id, data } => {
-            assert_eq!(type_id.as_u16(), 102, "Should be LIBRARY type (102)");
-            // data[0] should be the lib ID for "TEST"
-            assert!(data.len() >= 2, "Library should have header");
-        }
-        _ => panic!("Expected library object"),
-    }
+    // Verify it's a Library value
+    let lib = values[0].as_library();
+    assert!(lib.is_some(), "CRLIB should produce a library");
+
+    let lib_data = lib.unwrap();
+    assert_eq!(lib_data.id, "TEST");
+    assert_eq!(lib_data.commands.len(), 1);
+    assert_eq!(lib_data.commands[0].name, "ANSWER");
 }
 
 #[test]
@@ -77,7 +76,7 @@ fn library_libsto_librcl_roundtrip() {
     assert_eq!(values.len(), 1);
     match &values[0] {
         Value::Real(r) => assert_eq!(*r, 42.0),
-        Value::Int(i) => assert_eq!(*i, 42),
+        Value::Integer(i) => assert_eq!(*i, 42),
         _ => panic!("Expected number"),
     }
 }
@@ -94,7 +93,7 @@ fn library_libdefrcl_returns_stored_value() {
     assert_eq!(result.len(), 1);
     match &result[0] {
         Value::Real(r) => assert_eq!(*r, 100.0),
-        Value::Int(i) => assert_eq!(*i, 100),
+        Value::Integer(i) => assert_eq!(*i, 100),
         _ => panic!("Expected number"),
     }
 }
@@ -110,7 +109,7 @@ fn library_libdefrcl_returns_default() {
     assert_eq!(result.len(), 1);
     match &result[0] {
         Value::Real(r) => assert_eq!(*r, 999.0),
-        Value::Int(i) => assert_eq!(*i, 999),
+        Value::Integer(i) => assert_eq!(*i, 999),
         _ => panic!("Expected number"),
     }
 }
@@ -202,7 +201,7 @@ fn library_full_integration() {
     assert_eq!(values.len(), 1);
     match &values[0] {
         Value::Real(r) => assert_eq!(*r, 10.0),
-        Value::Int(i) => assert_eq!(*i, 10),
+        Value::Integer(i) => assert_eq!(*i, 10),
         _ => panic!("Expected number"),
     }
 
@@ -212,7 +211,7 @@ fn library_full_integration() {
     let values = result.unwrap();
     match &values[0] {
         Value::Real(r) => assert_eq!(*r, 100.0),
-        Value::Int(i) => assert_eq!(*i, 100),
+        Value::Integer(i) => assert_eq!(*i, 100),
         _ => panic!("Expected default value"),
     }
 
@@ -247,6 +246,128 @@ fn library_full_integration() {
     assert!(result.is_ok(), "DETACH should succeed");
 }
 
+// ============================================================================
+// Library Command Resolution (Phase 7)
+// ============================================================================
+
+/// Test that attached library commands can be called by name
+#[test]
+fn library_command_resolution() {
+    let mut session = Session::new();
+
+    // Create a library with a DOUBLE command that doubles a number (2 *)
+    let result = session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#);
+    assert!(result.is_ok(), "CRLIB + ATTACH should succeed: {:?}", result);
+
+    // Now call DOUBLE - it should be found in the attached library
+    let result = session.eval("5 DOUBLE");
+    assert!(result.is_ok(), "DOUBLE should be callable: {:?}", result);
+
+    let values = result.unwrap();
+    assert_eq!(values.len(), 1, "DOUBLE should produce one result");
+    match &values[0] {
+        Value::Real(r) => assert_eq!(*r, 10.0),
+        Value::Integer(i) => assert_eq!(*i, 10),
+        _ => panic!("Expected 10, got {:?}", values[0]),
+    }
+}
+
+/// Test multiple commands from the same library
+#[test]
+fn library_multiple_commands() {
+    let mut session = Session::new();
+
+    // Create a library with DOUBLE (2 *) and SQUARE (DUP *)
+    let result = session.eval(
+        r#"{ { "DOUBLE" << 2 * >> } { "SQUARE" << DUP * >> } } "MATH" CRLIB ATTACH"#,
+    );
+    assert!(result.is_ok(), "CRLIB + ATTACH should succeed");
+
+    // Test DOUBLE
+    let result = session.eval("3 DOUBLE").unwrap();
+    match &result[0] {
+        Value::Real(r) => assert_eq!(*r, 6.0),
+        Value::Integer(i) => assert_eq!(*i, 6),
+        _ => panic!("Expected 6"),
+    }
+
+    // Test SQUARE
+    let result = session.eval("4 SQUARE").unwrap();
+    match &result[0] {
+        Value::Real(r) => assert_eq!(*r, 16.0),
+        Value::Integer(i) => assert_eq!(*i, 16),
+        _ => panic!("Expected 16"),
+    }
+}
+
+/// Test that library commands are case-insensitive
+#[test]
+fn library_command_case_insensitive() {
+    let mut session = Session::new();
+
+    // Create a library with DOUBLE
+    session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
+
+    // Should work with any case
+    let result = session.eval("5 double").unwrap();
+    match &result[0] {
+        Value::Real(r) => assert_eq!(*r, 10.0),
+        Value::Integer(i) => assert_eq!(*i, 10),
+        _ => panic!("Expected 10"),
+    }
+}
+
+/// Test that detached library commands are no longer callable
+#[test]
+fn library_command_after_detach() {
+    let mut session = Session::new();
+
+    // Create and attach a library
+    session.eval(r#"{ { "TRIPLE" << 3 * >> } } "TEST" CRLIB ATTACH"#).unwrap();
+
+    // TRIPLE should work
+    let result = session.eval("5 TRIPLE");
+    assert!(result.is_ok(), "TRIPLE should be callable while attached");
+
+    // Detach the library
+    session.eval(r#""TEST" DETACH"#).unwrap();
+
+    // TRIPLE should no longer work
+    let result = session.eval("5 TRIPLE");
+    assert!(result.is_err(), "TRIPLE should not be callable after DETACH");
+}
+
+/// Test that directory variables take precedence over library commands
+#[test]
+fn library_command_precedence() {
+    let mut session = Session::new();
+
+    // Create a library with DOUBLE
+    session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
+
+    // Store a variable named DOUBLE in the directory
+    session.eval(r#"<< 3 * >> "DOUBLE" STO"#).unwrap();
+
+    // Now DOUBLE should refer to the directory variable (3 *), not the library command (2 *)
+    let result = session.eval("5 DOUBLE").unwrap();
+    match &result[0] {
+        Value::Real(r) => assert_eq!(*r, 15.0), // 5 * 3 = 15, not 5 * 2 = 10
+        Value::Integer(i) => assert_eq!(*i, 15),
+        _ => panic!("Expected 15"),
+    }
+
+    // Remove the directory variable
+    session.eval(r#""DOUBLE" PURGE"#).unwrap();
+
+    // Now DOUBLE should refer to the library command again
+    let result = session.eval("5 DOUBLE").unwrap();
+    match &result[0] {
+        Value::Real(r) => assert_eq!(*r, 10.0), // 5 * 2 = 10
+        Value::Integer(i) => assert_eq!(*i, 10),
+        _ => panic!("Expected 10"),
+    }
+}
+
 /// Test that library data is isolated between different libraries
 #[test]
 fn library_data_isolation() {
@@ -260,14 +381,14 @@ fn library_data_isolation() {
     let result = session.eval(r#""LIB1" "value" LIBRCL"#).unwrap();
     match &result[0] {
         Value::Real(r) => assert_eq!(*r, 100.0),
-        Value::Int(i) => assert_eq!(*i, 100),
+        Value::Integer(i) => assert_eq!(*i, 100),
         _ => panic!("Expected 100"),
     }
 
     let result = session.eval(r#""LIB2" "value" LIBRCL"#).unwrap();
     match &result[0] {
         Value::Real(r) => assert_eq!(*r, 200.0),
-        Value::Int(i) => assert_eq!(*i, 200),
+        Value::Integer(i) => assert_eq!(*i, 200),
         _ => panic!("Expected 200"),
     }
 

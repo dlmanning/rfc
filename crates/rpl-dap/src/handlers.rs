@@ -2,26 +2,28 @@
 //!
 //! Each handler processes a specific DAP request and sends the appropriate response.
 
-use std::io::{Read, Write};
-use std::path::PathBuf;
-
-use dap::events::{OutputEventBody, StoppedEventBody};
-use dap::prelude::*;
-use dap::requests::{
-    InitializeArguments, LaunchRequestArguments, ScopesArguments, SetBreakpointsArguments,
-    StackTraceArguments, VariablesArguments,
-};
-use dap::responses::{
-    ResponseBody, ScopesResponse, SetBreakpointsResponse, StackTraceResponse, ThreadsResponse,
-    VariablesResponse,
-};
-use dap::types::{
-    Breakpoint, Capabilities, OutputEventCategory, Scope, Source, StackFrame, StoppedEventReason,
-    Thread, Variable,
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
 };
 
-use rpl_lang::{DebugEvent, ExecuteOutcome, Value};
-use rpl_session::{LibraryRegistry, OperatorRegistry, Session};
+use dap::{
+    events::{OutputEventBody, StoppedEventBody},
+    prelude::*,
+    requests::{
+        DisassembleArguments, InitializeArguments, LaunchRequestArguments, ScopesArguments,
+        SetBreakpointsArguments, StackTraceArguments, VariablesArguments,
+    },
+    responses::{
+        DisassembleResponse, ResponseBody, ScopesResponse, SetBreakpointsResponse,
+        StackTraceResponse, ThreadsResponse, VariablesResponse,
+    },
+    types::{
+        Breakpoint, Capabilities, DisassembledInstruction, OutputEventCategory, Scope, Source,
+        StackFrame, StoppedEventReason, Thread, Variable,
+    },
+};
+use rpl::{DebugEvent, ExecuteOutcome, Pos, ReturnEntry, Session, value::Value};
 
 use super::session::DebugSession;
 
@@ -52,6 +54,7 @@ pub fn handle_initialize<R: Read, W: Write>(
         supports_function_breakpoints: Some(false),
         supports_data_breakpoints: Some(false),
         supports_instruction_breakpoints: Some(false),
+        supports_disassemble_request: Some(true),
         ..Default::default()
     };
 
@@ -103,24 +106,19 @@ pub fn handle_launch<R: Read, W: Write>(
         &source_code,
     );
 
-    let compiled = match rpl_session.compile(source_id) {
+    let compiled = match rpl_session.compile(&source_code) {
         Ok(program) => program,
-        Err(errors) => {
-            let msg = errors
-                .iter()
-                .map(|e| format!("{:?}", e))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let resp = req.error(&format!("Compilation failed:\n{}", msg));
+        Err(error) => {
+            let resp = req.error(&format!("Compilation failed: {:?}", error));
             return server.respond(resp);
         }
     };
 
     // Get the source file for line mapping
-    let source_file = rpl_session.get_source(source_id).unwrap();
+    let source_file = rpl_session.sources().get(source_id).unwrap().clone();
 
     // Create the debug session
-    *session = Some(DebugSession::new(compiled, source_file.clone(), path));
+    *session = Some(DebugSession::new(compiled, source_file, path));
 
     let resp = req.success(ResponseBody::Launch);
     server.respond(resp)
@@ -168,8 +166,6 @@ pub fn handle_set_breakpoints<R: Read, W: Write>(
 pub fn handle_configuration_done<R: Read, W: Write>(
     server: &mut Server<R, W>,
     session: &mut Option<DebugSession>,
-    registry: &LibraryRegistry,
-    operators: &OperatorRegistry,
     req: Request,
 ) -> HandlerResult {
     let resp = req.success(ResponseBody::ConfigurationDone);
@@ -178,7 +174,7 @@ pub fn handle_configuration_done<R: Read, W: Write>(
     // Start execution and stop at first breakpoint or start paused
     if let Some(session) = session.as_mut() {
         // Run until first pause point
-        match session.run(registry, operators) {
+        match session.run() {
             Ok(outcome) => {
                 send_stop_event(server, session, &outcome)?;
             }
@@ -198,10 +194,7 @@ pub fn handle_configuration_done<R: Read, W: Write>(
 }
 
 /// Handle the threads request.
-pub fn handle_threads<R: Read, W: Write>(
-    server: &mut Server<R, W>,
-    req: Request,
-) -> HandlerResult {
+pub fn handle_threads<R: Read, W: Write>(server: &mut Server<R, W>, req: Request) -> HandlerResult {
     // RPL is single-threaded
     let threads = vec![Thread {
         id: THREAD_ID,
@@ -225,88 +218,59 @@ pub fn handle_stack_trace<R: Read, W: Write>(
     };
 
     let mut frames = Vec::new();
-    use rpl_lang::ReturnEntry;
 
     // Build the call stack from the return stack
-    // The return stack has Call entries for each function call, with the most recent at the end
-    let return_stack = session.vm.return_stack_snapshot();
+    let return_stack = session.vm.return_stack();
 
     // Collect call frames in reverse order (most recent call last in return stack)
     let call_frames: Vec<_> = return_stack
         .iter()
-        .filter_map(|entry| {
-            if let ReturnEntry::Call {
-                return_pc,
-                name,
-                debug_info,
-                ..
-            } = entry
-            {
-                Some((*return_pc, name.clone(), debug_info.clone()))
-            } else {
-                None
-            }
+        .map(|entry| {
+            let ReturnEntry::Call {
+                return_pc, name, ..
+            } = entry;
+            (*return_pc, name.clone())
         })
         .collect();
 
     // Current frame (top of stack) - either in a called function or main
-    if let Some((_, current_name, current_debug_info)) = call_frames.last() {
+    let current_line = session.current_line().unwrap_or(1) as i64;
+
+    // Current instruction pointer reference for disassembly
+    // Encode call depth in high bits to create unique address spaces for nested programs
+    // Format: 0xDDPPPPPP where DD = call depth (0-255), PPPPPP = PC within that program
+    let call_depth = session.call_depth();
+    let current_pc = session.current_pc();
+    let current_ipr = format!("0x{:02X}{:06X}", call_depth, current_pc);
+
+    if let Some((_, current_name)) = call_frames.last() {
         // We're inside a called function
-        let frame_name = current_name.clone().unwrap_or_else(|| "<anonymous>".to_string());
+        let frame_name = current_name
+            .clone()
+            .unwrap_or_else(|| "<anonymous>".to_string());
 
-        // Try to get the line number from debug info
-        let line = current_debug_info
-            .as_ref()
-            .and_then(|dbg| {
-                let pc = session.vm.pc;
-                dbg.spans.get(pc).map(|span| {
-                    // Convert byte offset to line number using source
-                    dbg.source.as_ref().map_or(0, |src| {
-                        src[..span.start().offset() as usize]
-                            .chars()
-                            .filter(|&c| c == '\n')
-                            .count() as i64
-                            + 1
-                    })
-                })
-            })
-            .unwrap_or(0);
-
-        // Use the debug info's source name and path if available
-        let (source_name, source_path) = current_debug_info
-            .as_ref()
-            .and_then(|dbg| {
-                dbg.source_name
-                    .as_ref()
-                    .map(|name| (name.clone(), name.clone()))
-            })
-            .unwrap_or_else(|| {
-                (
+        frames.push(StackFrame {
+            id: 0,
+            name: frame_name,
+            source: Some(Source {
+                name: Some(
                     session
                         .source_path
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("program.rpl")
                         .to_string(),
-                    session.source_path.to_string_lossy().to_string(),
-                )
-            });
-
-        frames.push(StackFrame {
-            id: 0,
-            name: frame_name,
-            source: Some(Source {
-                name: Some(source_name),
-                path: Some(source_path),
+                ),
+                path: Some(session.source_path.to_string_lossy().to_string()),
                 ..Default::default()
             }),
-            line,
-            column: if line > 0 { 1 } else { 0 },
+            line: current_line,
+            column: 1,
+            instruction_pointer_reference: Some(current_ipr.clone()),
             ..Default::default()
         });
     } else {
         // We're in the main program
-        let line = session.current_line().unwrap_or(1);
         frames.push(StackFrame {
             id: 0,
             name: "<main>".to_string(),
@@ -322,18 +286,22 @@ pub fn handle_stack_trace<R: Read, W: Write>(
                 path: Some(session.source_path.to_string_lossy().to_string()),
                 ..Default::default()
             }),
-            line: line as i64,
+            line: current_line,
             column: 1,
+            instruction_pointer_reference: Some(current_ipr.clone()),
             ..Default::default()
         });
     }
 
     // Add caller frames (from most recent to oldest)
-    // Skip the last entry since that's the current function (handled above)
-    for (frame_idx, (return_pc, name, _debug_info)) in call_frames.iter().rev().skip(1).enumerate()
-    {
+    // Each caller frame is one level shallower than the current
+    for (frame_idx, (return_pc, name)) in call_frames.iter().rev().skip(1).enumerate() {
+        // Caller's depth is (current_depth - 1 - frame_idx)
+        let caller_depth = call_depth.saturating_sub(1 + frame_idx);
         let line = session.line_for_pc(*return_pc).unwrap_or(1);
-        let frame_name = name.clone().unwrap_or_else(|| format!("<caller {}>", frame_idx + 1));
+        let frame_name = name
+            .clone()
+            .unwrap_or_else(|| format!("<caller {}>", frame_idx + 1));
         frames.push(StackFrame {
             id: (frame_idx + 1) as i64,
             name: frame_name,
@@ -351,13 +319,14 @@ pub fn handle_stack_trace<R: Read, W: Write>(
             }),
             line: line as i64,
             column: 1,
+            instruction_pointer_reference: Some(format!("0x{:02X}{:06X}", caller_depth, return_pc)),
             ..Default::default()
         });
     }
 
     // If we have call frames, add the main program as the bottom frame
     if !call_frames.is_empty() {
-        let (return_pc, _, _) = &call_frames[0];
+        let (return_pc, _) = &call_frames[0];
         let line = session.line_for_pc(*return_pc).unwrap_or(1);
         frames.push(StackFrame {
             id: call_frames.len() as i64,
@@ -376,6 +345,8 @@ pub fn handle_stack_trace<R: Read, W: Write>(
             }),
             line: line as i64,
             column: 1,
+            // Main program is always depth 0
+            instruction_pointer_reference: Some(format!("0x{:02X}{:06X}", 0, return_pc)),
             ..Default::default()
         });
     }
@@ -435,7 +406,7 @@ pub fn handle_variables<R: Read, W: Write>(
             // Data stack
             session
                 .vm
-                .stack_snapshot()
+                .stack_contents()
                 .iter()
                 .enumerate()
                 .map(|(i, v)| Variable {
@@ -448,31 +419,35 @@ pub fn handle_variables<R: Read, W: Write>(
         }
         LOCALS_REF => {
             // Local variables
-            session
-                .vm
-                .locals_snapshot()
-                .map(|locals| {
-                    locals
-                        .into_iter()
-                        .map(|(name, v)| Variable {
+            let locals = &session.vm.locals;
+            (0..locals.len() as u32)
+                .filter_map(|i| {
+                    locals.try_get(i).map(|v| {
+                        // Try to find a name for this local index
+                        let name = session
+                            .vm
+                            .local_name_for_index(i)
+                            .unwrap_or_else(|| format!("local_{}", i));
+                        Variable {
                             name,
-                            value: format_value(&v),
+                            value: format_value(v),
                             variables_reference: 0,
                             ..Default::default()
-                        })
-                        .collect()
+                        }
+                    })
                 })
-                .unwrap_or_default()
+                .collect()
         }
         GLOBALS_REF => {
-            // Global variables
+            // Global variables from directory
             session
                 .vm
-                .globals_snapshot()
-                .into_iter()
-                .map(|(name, v)| Variable {
-                    name,
-                    value: format_value(&v),
+                .directory
+                .current_node()
+                .vars_iter()
+                .map(|(name, value)| Variable {
+                    name: name.clone(),
+                    value: format_value(value),
                     variables_reference: 0,
                     ..Default::default()
                 })
@@ -489,8 +464,6 @@ pub fn handle_variables<R: Read, W: Write>(
 pub fn handle_continue<R: Read, W: Write>(
     server: &mut Server<R, W>,
     session: &mut Option<DebugSession>,
-    registry: &LibraryRegistry,
-    operators: &OperatorRegistry,
     req: Request,
 ) -> HandlerResult {
     let Some(session) = session.as_mut() else {
@@ -504,7 +477,7 @@ pub fn handle_continue<R: Read, W: Write>(
     server.respond(resp)?;
 
     // Continue execution
-    match session.continue_running(registry, operators) {
+    match session.continue_running() {
         Ok(outcome) => send_stop_event(server, session, &outcome),
         Err(e) => {
             server.send_event(Event::Output(OutputEventBody {
@@ -521,8 +494,6 @@ pub fn handle_continue<R: Read, W: Write>(
 pub fn handle_next<R: Read, W: Write>(
     server: &mut Server<R, W>,
     session: &mut Option<DebugSession>,
-    registry: &LibraryRegistry,
-    operators: &OperatorRegistry,
     req: Request,
 ) -> HandlerResult {
     let Some(session) = session.as_mut() else {
@@ -533,7 +504,7 @@ pub fn handle_next<R: Read, W: Write>(
     let resp = req.success(ResponseBody::Next);
     server.respond(resp)?;
 
-    match session.step_over(registry, operators) {
+    match session.step_over() {
         Ok(outcome) => send_stop_event(server, session, &outcome),
         Err(e) => {
             server.send_event(Event::Output(OutputEventBody {
@@ -550,8 +521,6 @@ pub fn handle_next<R: Read, W: Write>(
 pub fn handle_step_in<R: Read, W: Write>(
     server: &mut Server<R, W>,
     session: &mut Option<DebugSession>,
-    registry: &LibraryRegistry,
-    operators: &OperatorRegistry,
     req: Request,
 ) -> HandlerResult {
     let Some(session) = session.as_mut() else {
@@ -562,7 +531,7 @@ pub fn handle_step_in<R: Read, W: Write>(
     let resp = req.success(ResponseBody::StepIn);
     server.respond(resp)?;
 
-    match session.step_into(registry, operators) {
+    match session.step_into() {
         Ok(outcome) => send_stop_event(server, session, &outcome),
         Err(e) => {
             server.send_event(Event::Output(OutputEventBody {
@@ -579,8 +548,6 @@ pub fn handle_step_in<R: Read, W: Write>(
 pub fn handle_step_out<R: Read, W: Write>(
     server: &mut Server<R, W>,
     session: &mut Option<DebugSession>,
-    registry: &LibraryRegistry,
-    operators: &OperatorRegistry,
     req: Request,
 ) -> HandlerResult {
     let Some(session) = session.as_mut() else {
@@ -591,7 +558,7 @@ pub fn handle_step_out<R: Read, W: Write>(
     let resp = req.success(ResponseBody::StepOut);
     server.respond(resp)?;
 
-    match session.step_out(registry, operators) {
+    match session.step_out() {
         Ok(outcome) => send_stop_event(server, session, &outcome),
         Err(e) => {
             server.send_event(Event::Output(OutputEventBody {
@@ -601,6 +568,152 @@ pub fn handle_step_out<R: Read, W: Write>(
             }))?;
             server.send_event(Event::Terminated(None))
         }
+    }
+}
+
+/// Handle the disassemble request.
+pub fn handle_disassemble<R: Read, W: Write>(
+    server: &mut Server<R, W>,
+    session: &Option<DebugSession>,
+    req: Request,
+    args: &DisassembleArguments,
+) -> HandlerResult {
+    let Some(session) = session.as_ref() else {
+        let resp = req.error("No active debug session");
+        return server.respond(resp);
+    };
+
+    // Parse memory_reference as hex address
+    // Format: 0xDDPPPPPP where DD = call depth, PPPPPP = PC within that program
+    let full_addr = parse_memory_reference(&args.memory_reference).unwrap_or(0);
+    let requested_depth = (full_addr >> 24) as usize;
+    let base_pc = (full_addr & 0x00FFFFFF) as usize;
+
+    // Apply byte offset to get starting address
+    let start_pc = (base_pc as i64 + args.offset.unwrap_or(0)).max(0) as usize;
+
+    // Get the bytecode for the requested call depth
+    let current_depth = session.call_depth();
+    let code = if requested_depth == current_depth {
+        // Requesting disassembly for the current execution context
+        session.current_bytecode()
+    } else if requested_depth == 0 {
+        // Requesting main program disassembly
+        &session.program.code
+    } else {
+        // Requesting a specific nested call level
+        // Try to get it from the return stack
+        let return_stack = session.vm.return_stack();
+        if requested_depth <= return_stack.len() {
+            let rpl::ReturnEntry::Call { program, .. } = &return_stack[requested_depth - 1];
+            &program.code[..]
+        } else {
+            // Fall back to current bytecode
+            session.current_bytecode()
+        }
+    };
+
+    // Handle instruction_offset (offset in INSTRUCTIONS, not bytes)
+    // We need to skip forward or backward by instruction_offset instructions
+    let instruction_offset = args.instruction_offset.unwrap_or(0);
+    let adjusted_pc = if instruction_offset >= 0 {
+        // Skip forward by instruction_offset instructions
+        let mut pc = start_pc;
+        for _ in 0..instruction_offset {
+            if let Some((_, next_pc)) = rpl::vm::disasm::disassemble_one(code, pc) {
+                pc = next_pc;
+            } else {
+                pc += 1; // Can't decode, skip 1 byte
+            }
+        }
+        pc
+    } else {
+        // For negative offsets, we need to scan from the beginning
+        // to find the correct starting point
+        let target_offset = (-instruction_offset) as usize;
+        let mut pc = 0;
+        let mut instructions = Vec::new();
+
+        // Disassemble from start to find instruction boundaries
+        while pc < start_pc && pc < code.len() {
+            if let Some((_, next_pc)) = rpl::vm::disasm::disassemble_one(code, pc) {
+                instructions.push(pc);
+                pc = next_pc;
+            } else {
+                instructions.push(pc);
+                pc += 1;
+            }
+        }
+
+        // Go back by target_offset instructions
+        if instructions.len() >= target_offset {
+            instructions[instructions.len() - target_offset]
+        } else {
+            0
+        }
+    };
+
+    // Disassemble requested number of instructions
+    let instructions =
+        rpl::vm::disasm::disassemble(code, adjusted_pc, args.instruction_count as usize);
+
+    // Build source reference for line mapping
+    let source = Source {
+        name: Some(
+            session
+                .source_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("program.rpl")
+                .to_string(),
+        ),
+        path: Some(session.source_path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    // Convert to DAP format
+    // Include call depth in addresses to create unique address spaces
+    let dap_instructions: Vec<DisassembledInstruction> = instructions
+        .iter()
+        .map(|instr| {
+            // Get line number - for nested programs, use source map from that program
+            let line = if requested_depth == 0 {
+                session.line_for_pc(instr.pc).map(|l| l as i64)
+            } else if requested_depth <= session.vm.return_stack().len() {
+                // Get source offset from nested program's source map
+                let return_stack = session.vm.return_stack();
+                let rpl::ReturnEntry::Call { program, .. } = &return_stack[requested_depth - 1];
+                program
+                    .source_offset_for_pc(instr.pc)
+                    .map(|offset| session.source.line_col(Pos::new(offset)).line as i64)
+            } else {
+                None
+            };
+
+            DisassembledInstruction {
+                address: format!("0x{:02X}{:06X}", requested_depth, instr.pc),
+                instruction: instr.text.clone(),
+                instruction_bytes: Some(instr.bytes.clone()),
+                line,
+                location: Some(source.clone()),
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    let resp = req.success(ResponseBody::Disassemble(DisassembleResponse {
+        instructions: dap_instructions,
+    }));
+    server.respond(resp)
+}
+
+/// Parse a memory reference string (hex or decimal) to a PC value.
+fn parse_memory_reference(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        usize::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse().ok()
     }
 }
 
@@ -624,9 +737,9 @@ fn send_stop_event<R: Read, W: Write>(
     match outcome {
         ExecuteOutcome::Debug(event) => {
             let reason = match event {
-                DebugEvent::Breakpoint(_) => StoppedEventReason::Breakpoint,
-                DebugEvent::Step => StoppedEventReason::Step,
-                DebugEvent::Paused => StoppedEventReason::Entry,
+                DebugEvent::Breakpoint { .. } => StoppedEventReason::Breakpoint,
+                DebugEvent::Step { .. } => StoppedEventReason::Step,
+                DebugEvent::Entry => StoppedEventReason::Entry,
             };
 
             server.send_event(Event::Stopped(StoppedEventBody {
@@ -641,13 +754,9 @@ fn send_stop_event<R: Read, W: Write>(
         }
         ExecuteOutcome::Completed => {
             // Print final stack to output
-            let stack = session.vm.stack_snapshot();
+            let stack = session.vm.stack_contents();
             if !stack.is_empty() {
-                let output = stack
-                    .iter()
-                    .map(format_value)
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let output = stack.iter().map(format_value).collect::<Vec<_>>().join(" ");
                 server.send_event(Event::Output(OutputEventBody {
                     output: format!("Result: {}\n", output),
                     category: Some(OutputEventCategory::Stdout),
@@ -663,20 +772,21 @@ fn send_stop_event<R: Read, W: Write>(
 fn format_value(value: &Value) -> String {
     match value {
         Value::Real(r) => format!("{}", r),
-        Value::Int(i) => format!("{}", i),
-        Value::Bool(b) => format!("{}", b),
+        Value::Integer(i) => format!("{}", i),
         Value::String(s) => format!("\"{}\"", s),
-        Value::Symbol(sym) => format!("'{:?}", sym),
+        Value::Symbolic(sym) => format!("'{}", sym),
         Value::List(items) => {
             let inner: Vec<String> = items.iter().map(format_value).collect();
             format!("{{ {} }}", inner.join(" "))
         }
-        Value::Program { code, debug_info } => {
-            let debug_marker = if debug_info.is_some() { " [debug]" } else { "" };
-            format!("<program size={}{}>", code.len(), debug_marker)
+        Value::Program(prog) => {
+            format!("<program size={}>", prog.code.len())
         }
-        Value::Object { type_id, data } => {
-            format!("<object type={:?} size={}>", type_id, data.len())
+        Value::Library(lib) => {
+            format!("<library {} commands={}>", lib.id, lib.commands.len())
+        }
+        Value::Bytes(bytes) => {
+            format!("<bytes len={}>", bytes.len())
         }
     }
 }

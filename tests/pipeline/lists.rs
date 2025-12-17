@@ -1,7 +1,8 @@
 //! Tests for list operations.
 
+use rpl::value::Value;
+
 use super::{eval_to_values, list_to_reals};
-use rpl_lang::Value;
 
 // ============================================================================
 // Lists

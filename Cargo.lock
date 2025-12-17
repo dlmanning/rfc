@@ -2124,17 +2124,12 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 name = "rfc"
 version = "0.1.0"
 dependencies = [
- "rpl-core",
+ "rpl",
  "rpl-dap",
- "rpl-lang",
- "rpl-session",
- "rpl-source",
- "rpl-stdlib",
- "rpl-vm",
 ]
 
 [[package]]
-name = "rpl-core"
+name = "rpl"
 version = "0.1.0"
 dependencies = [
  "smallvec",
@@ -2147,21 +2142,8 @@ version = "0.1.0"
 dependencies = [
  "dap",
  "log",
- "rpl-lang",
- "rpl-session",
- "rpl-stdlib",
+ "rpl",
  "serde_json",
-]
-
-[[package]]
-name = "rpl-lang"
-version = "0.1.0"
-dependencies = [
- "rpl-core",
- "rpl-source",
- "rpl-vm",
- "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -2170,50 +2152,16 @@ version = "0.1.0"
 dependencies = [
  "log",
  "lsp-types",
- "rpl-session",
+ "rpl",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "rpl-macros"
+name = "rpl-plot"
 version = "0.1.0"
 dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
-]
-
-[[package]]
-name = "rpl-repl"
-version = "0.1.0"
-dependencies = [
- "crossterm 0.28.1",
- "dirs",
- "ratatui",
- "rpl-core",
- "rpl-lang",
- "rpl-session",
- "rpl-stdlib",
- "unicode-segmentation",
- "unicode-width 0.2.2",
-]
-
-[[package]]
-name = "rpl-session"
-version = "0.1.0"
-dependencies = [
- "rpl-core",
- "rpl-lang",
- "rpl-source",
- "rpl-stdlib",
-]
-
-[[package]]
-name = "rpl-source"
-version = "0.1.0"
-dependencies = [
- "rpl-core",
+ "rpl",
 ]
 
 [[package]]
@@ -2221,29 +2169,23 @@ name = "rpl-sr5"
 version = "0.1.0"
 dependencies = [
  "pixels",
- "rpl-core",
- "rpl-lang",
- "rpl-session",
- "rpl-stdlib",
- "rpl-vm",
+ "rpl",
+ "rpl-plot",
  "thiserror 2.0.17",
  "winit",
 ]
 
 [[package]]
-name = "rpl-stdlib"
+name = "rpl-tui"
 version = "0.1.0"
 dependencies = [
- "rpl-core",
- "rpl-lang",
- "rpl-macros",
-]
-
-[[package]]
-name = "rpl-vm"
-version = "0.1.0"
-dependencies = [
- "rpl-core",
+ "crossterm 0.28.1",
+ "dirs",
+ "ratatui",
+ "rpl",
+ "rpl-plot",
+ "unicode-segmentation",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

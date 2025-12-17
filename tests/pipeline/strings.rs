@@ -1,6 +1,6 @@
 //! Tests for string operations.
 
-use rpl_lang::Value;
+use rpl::value::Value;
 
 use super::{assert_error, assert_stack_eq, eval_to_values, to_int, to_string};
 

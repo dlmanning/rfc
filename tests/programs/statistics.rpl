@@ -1,0 +1,78 @@
+@ Statistics Calculator
+@ Demonstrates list operations, locals, and mathematical computations
+@
+@ Computes: count, sum, mean, variance, standard deviation, min, max
+
+@ Sum of a list
+@ { list } sum -> total
+<< -> lst <<
+    0
+    1 lst SIZE FOR i
+        lst i GET +
+    NEXT
+>> >>
+"sum" STO
+
+@ Mean (average) of a list
+@ { list } mean -> average
+<< -> lst <<
+    lst sum lst SIZE /
+>> >>
+"mean" STO
+
+@ Variance of a list
+@ { list } variance -> var
+<< -> lst <<
+    lst mean -> m <<
+        0
+        1 lst SIZE FOR i
+            lst i GET m - DUP * +
+        NEXT
+        lst SIZE /
+    >>
+>> >>
+"variance" STO
+
+@ Standard deviation
+@ { list } stdev -> sd
+<< variance SQRT >>
+"stdev" STO
+
+@ Minimum of a list
+@ { list } minimum -> min
+<< -> lst <<
+    lst 1 GET
+    2 lst SIZE FOR i
+        lst i GET
+        DUP2 > IF THEN SWAP END DROP
+    NEXT
+>> >>
+"minimum" STO
+
+@ Maximum of a list
+@ { list } maximum -> max
+<< -> lst <<
+    lst 1 GET
+    2 lst SIZE FOR i
+        lst i GET
+        DUP2 < IF THEN SWAP END DROP
+    NEXT
+>> >>
+"maximum" STO
+
+@ Complete statistics summary
+@ { list } stats -> { count sum mean variance stdev min max }
+<< -> lst <<
+    lst SIZE
+    lst sum
+    lst mean
+    lst variance
+    lst stdev
+    lst minimum
+    lst maximum
+    7 →LIST
+>> >>
+"stats" STO
+
+@ Test with sample data
+{ 2 4 4 4 5 5 7 9 } stats

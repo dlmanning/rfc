@@ -1,0 +1,54 @@
+@ Quicksort implementation
+@
+@ Usage: { 3 1 4 1 5 9 2 6 } quicksort -> { 1 1 2 3 4 5 6 9 }
+
+@ Partition list into (less, equal, greater) given pivot
+@ { list } pivot partition3 -> { less } { equal } { greater }
+<< -> lst piv <<
+    { } { } { }  @ less equal greater
+    1 lst SIZE FOR i
+        lst i GET -> elem <<
+            elem piv <
+            IF THEN
+                @ Add to less (deepest on stack)
+                ROT elem + 3 ROLLD
+            ELSE
+                elem piv ==
+                IF THEN
+                    @ Add to equal (middle)
+                    SWAP elem + SWAP
+                ELSE
+                    @ Add to greater (top)
+                    elem +
+                END
+            END
+        >>
+    NEXT
+>> >>
+"partition3" STO
+
+@ Quicksort: sort a list of numbers
+@ { list } quicksort -> { sorted }
+<< -> lst <<
+    lst SIZE 1 <=
+    IF THEN
+        @ Base case: empty or single element
+        lst
+    ELSE
+        @ Pick pivot (first element)
+        lst 1 GET -> piv <<
+            @ Partition into less, equal, greater
+            lst piv partition3
+            -> less equal greater <<
+                @ Recursively sort and concatenate
+                less quicksort
+                equal +
+                greater quicksort +
+            >>
+        >>
+    END
+>> >>
+"quicksort" STO
+
+@ Test with unsorted list
+{ 3 1 4 1 5 9 2 6 5 3 5 } quicksort

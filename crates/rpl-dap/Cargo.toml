@@ -11,9 +11,7 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-rpl-session = { path = "../rpl-session" }
-rpl-lang = { path = "../rpl-lang" }
-rpl-stdlib = { path = "../rpl-stdlib" }
+rpl = {path = "../rpl"}
 dap = "0.4.1-alpha1"
 serde_json = "1.0"
 log = "0.4"

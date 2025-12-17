@@ -7,21 +7,15 @@
 mod handlers;
 mod session;
 
-use dap::prelude::*;
 use std::io::{self, BufReader, BufWriter, Stdin, Stdout};
 
+use dap::prelude::*;
 pub use session::DebugSession;
-
-use rpl_session::LibraryRegistry;
-use rpl_stdlib::{register_standard_libs, register_standard_operators};
-use rpl_session::OperatorRegistry;
 
 /// DAP Server for stdio communication.
 pub struct DapServer {
     server: Server<Stdin, Stdout>,
     session: Option<DebugSession>,
-    registry: LibraryRegistry,
-    operators: OperatorRegistry,
 }
 
 impl DapServer {
@@ -32,16 +26,9 @@ impl DapServer {
         let input = BufReader::new(stdin);
         let output = BufWriter::new(stdout);
 
-        let mut registry = LibraryRegistry::new();
-        register_standard_libs(&mut registry);
-        let mut operators = OperatorRegistry::new();
-        register_standard_operators(&mut operators);
-
         Self {
             server: Server::new(input, output),
             session: None,
-            registry,
-            operators,
         }
     }
 
@@ -59,12 +46,7 @@ impl DapServer {
                 }
 
                 Command::Launch(args) => {
-                    handlers::handle_launch(
-                        &mut self.server,
-                        &mut self.session,
-                        req,
-                        &args,
-                    )?;
+                    handlers::handle_launch(&mut self.server, &mut self.session, req, &args)?;
                 }
 
                 Command::SetBreakpoints(args) => {
@@ -77,13 +59,7 @@ impl DapServer {
                 }
 
                 Command::ConfigurationDone => {
-                    handlers::handle_configuration_done(
-                        &mut self.server,
-                        &mut self.session,
-                        &self.registry,
-                        &self.operators,
-                        req,
-                    )?;
+                    handlers::handle_configuration_done(&mut self.server, &mut self.session, req)?;
                 }
 
                 Command::Threads => {
@@ -91,12 +67,7 @@ impl DapServer {
                 }
 
                 Command::StackTrace(args) => {
-                    handlers::handle_stack_trace(
-                        &mut self.server,
-                        &self.session,
-                        req,
-                        &args,
-                    )?;
+                    handlers::handle_stack_trace(&mut self.server, &self.session, req, &args)?;
                 }
 
                 Command::Scopes(args) => {
@@ -104,52 +75,27 @@ impl DapServer {
                 }
 
                 Command::Variables(args) => {
-                    handlers::handle_variables(
-                        &mut self.server,
-                        &self.session,
-                        req,
-                        &args,
-                    )?;
+                    handlers::handle_variables(&mut self.server, &self.session, req, &args)?;
                 }
 
                 Command::Continue(_) => {
-                    handlers::handle_continue(
-                        &mut self.server,
-                        &mut self.session,
-                        &self.registry,
-                        &self.operators,
-                        req,
-                    )?;
+                    handlers::handle_continue(&mut self.server, &mut self.session, req)?;
                 }
 
                 Command::Next(_) => {
-                    handlers::handle_next(
-                        &mut self.server,
-                        &mut self.session,
-                        &self.registry,
-                        &self.operators,
-                        req,
-                    )?;
+                    handlers::handle_next(&mut self.server, &mut self.session, req)?;
                 }
 
                 Command::StepIn(_) => {
-                    handlers::handle_step_in(
-                        &mut self.server,
-                        &mut self.session,
-                        &self.registry,
-                        &self.operators,
-                        req,
-                    )?;
+                    handlers::handle_step_in(&mut self.server, &mut self.session, req)?;
                 }
 
                 Command::StepOut(_) => {
-                    handlers::handle_step_out(
-                        &mut self.server,
-                        &mut self.session,
-                        &self.registry,
-                        &self.operators,
-                        req,
-                    )?;
+                    handlers::handle_step_out(&mut self.server, &mut self.session, req)?;
+                }
+
+                Command::Disassemble(args) => {
+                    handlers::handle_disassemble(&mut self.server, &self.session, req, &args)?;
                 }
 
                 Command::Disconnect(_) => {

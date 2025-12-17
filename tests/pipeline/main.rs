@@ -3,14 +3,16 @@
 //! These tests verify the complete source → compile → execute path.
 //! Tests are organized into modules by functionality.
 
-use rpl_lang::Value;
-use rpl_session::Session;
+use rpl::value::Value;
+use rpl::Session;
 
 // Test modules
 mod arithmetic;
+mod binary_int;
 mod comparison;
 mod complex;
 mod directory;
+mod errors;
 mod fixtures;
 mod flow;
 mod libraries;
@@ -36,8 +38,8 @@ pub fn eval_to_reals(code: &str) -> Vec<f64> {
         .iter()
         .map(|v| match v {
             Value::Real(r) => *r,
-            Value::Int(i) => *i as f64,
-            other => panic!("Expected Real or Int, got {:?}", other),
+            Value::Integer(i) => *i as f64,
+            other => panic!("Expected Real or Integer, got {:?}", other),
         })
         .collect()
 }
@@ -105,8 +107,8 @@ pub fn list_to_reals(value: &Value) -> Vec<f64> {
             .iter()
             .map(|v| match v {
                 Value::Real(r) => *r,
-                Value::Int(i) => *i as f64,
-                other => panic!("Expected Real or Int in list, got {:?}", other),
+                Value::Integer(i) => *i as f64,
+                other => panic!("Expected Real or Integer in list, got {:?}", other),
             })
             .collect(),
         other => panic!("Expected List, got {:?}", other),
@@ -124,8 +126,8 @@ pub fn to_string(value: &Value) -> &str {
 /// Helper to extract integer value.
 pub fn to_int(value: &Value) -> i64 {
     match value {
-        Value::Int(i) => *i,
+        Value::Integer(i) => *i,
         Value::Real(r) => *r as i64,
-        other => panic!("Expected Int or Real, got {:?}", other),
+        other => panic!("Expected Integer or Real, got {:?}", other),
     }
 }

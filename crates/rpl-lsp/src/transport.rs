@@ -34,7 +34,10 @@ pub fn read_message<R: Read>(reader: &mut BufReader<R>) -> io::Result<Option<Str
 
         if let Some(value) = header.strip_prefix("Content-Length: ") {
             content_length = Some(value.parse().map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("Invalid Content-Length: {}", e))
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid Content-Length: {}", e),
+                )
             })?);
         }
         // Ignore other headers (like Content-Type)
@@ -63,8 +66,9 @@ pub fn write_message<W: Write>(writer: &mut W, message: &str) -> io::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Cursor;
+
+    use super::*;
 
     #[test]
     fn read_simple_message() {

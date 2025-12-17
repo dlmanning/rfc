@@ -1,13 +1,12 @@
 //! Tests for program literals and local bindings.
 
-use rpl_core::TypeId;
-use rpl_lang::Value;
-use rpl_session::Session;
+use rpl::value::Value;
+use rpl::Session;
 
 use super::assert_stack_eq;
 
 // ============================================================================
-// Programs (:: ... ;)
+// Programs (<< ... >>)
 // ============================================================================
 
 /// Helper to evaluate code and check if a program object is on the stack.
@@ -17,91 +16,58 @@ fn eval_has_program(code: &str) -> bool {
         .eval(code)
         .unwrap_or_else(|e| panic!("eval failed for '{}': {:?}", code, e));
 
-    values.iter().any(|v| match v {
-        Value::Program { .. } => true,
-        Value::Object { type_id, .. } => *type_id == TypeId::PROGRAM,
-        _ => false,
-    })
+    values.iter().any(|v| matches!(v, Value::Program(_)))
 }
 
 #[test]
 fn program_literal_creates_object() {
-    // :: 1 2 + ; should create a program object on the stack
-    assert!(eval_has_program(":: 1 2 + ;"));
+    // << 1 2 + >> should create a program object on the stack
+    assert!(eval_has_program("<< 1 2 + >>"));
 }
 
 #[test]
 fn program_literal_empty() {
-    // :: ; should create an empty program
-    assert!(eval_has_program(":: ;"));
+    // << >> should create an empty program
+    assert!(eval_has_program("<< >>"));
 }
 
 #[test]
 fn program_eval_simple() {
-    // :: 3 4 + ; EVAL should execute the program and leave 7
-    assert_stack_eq(":: 3 4 + ; EVAL", &[7.0]);
+    // << 3 4 + >> EVAL should execute the program and leave 7
+    assert_stack_eq("<< 3 4 + >> EVAL", &[7.0]);
 }
 
 #[test]
 fn program_eval_with_stack() {
     // Push 5, then a program that adds 10, then EVAL
-    // 5 :: 10 + ; EVAL = 5 10 + = 15
-    assert_stack_eq("5 :: 10 + ; EVAL", &[15.0]);
+    // 5 << 10 + >> EVAL = 5 10 + = 15
+    assert_stack_eq("5 << 10 + >> EVAL", &[15.0]);
 }
 
 #[test]
 fn program_eval_nested() {
-    // :: :: 1 2 + ; EVAL ; EVAL = 3
-    assert_stack_eq(":: :: 1 2 + ; EVAL ; EVAL", &[3.0]);
+    // << << 1 2 + >> EVAL >> EVAL = 3
+    assert_stack_eq("<< << 1 2 + >> EVAL >> EVAL", &[3.0]);
 }
 
 #[test]
 fn program_multiple() {
-    // Two programs, EVAL both - simpler version without operators after EVAL
-    // :: 2 ; EVAL :: 3 ; EVAL leaves 2 and 3 on stack
-    assert_stack_eq(":: 2 ; EVAL :: 3 ; EVAL", &[2.0, 3.0]);
+    // Two programs, EVAL both
+    // << 2 >> EVAL << 3 >> EVAL leaves 2 and 3 on stack
+    assert_stack_eq("<< 2 >> EVAL << 3 >> EVAL", &[2.0, 3.0]);
 }
 
 #[test]
 fn program_multiple_with_add() {
-    // Two programs with addition after - uses dynamic dispatch
-    // :: 2 ; :: 3 ; EVAL SWAP EVAL +
+    // Two programs with addition after
+    // << 2 >> << 3 >> EVAL SWAP EVAL +
     // Creates prog1, prog2, evals prog2 -> 3, swap -> prog1 3, evals prog1 -> 2, + -> 5
-    assert_stack_eq(":: 2 ; :: 3 ; EVAL SWAP EVAL +", &[5.0]);
-}
-
-// ============================================================================
-// Programs with chevron syntax (<< ... >>)
-// ============================================================================
-
-#[test]
-fn program_chevron_literal() {
-    // << 1 2 + >> should create a program object
-    assert!(eval_has_program("<< 1 2 + >>"));
+    assert_stack_eq("<< 2 >> << 3 >> EVAL SWAP EVAL +", &[5.0]);
 }
 
 #[test]
-fn program_chevron_eval() {
-    // << 3 4 + >> EVAL should execute and leave 7
-    assert_stack_eq("<< 3 4 + >> EVAL", &[7.0]);
-}
-
-#[test]
-fn program_chevron_nested() {
-    // << << 5 >> EVAL >> EVAL = 5
-    assert_stack_eq("<< << 5 >> EVAL >> EVAL", &[5.0]);
-}
-
-#[test]
-fn program_chevron_mixed_with_colon() {
-    // Can mix chevrons and colons - they're equivalent
-    assert_stack_eq("<< 2 3 + ; EVAL", &[5.0]); // open with <<, close with ;
-    assert_stack_eq(":: 2 3 + >> EVAL", &[5.0]); // open with ::, close with >>
-}
-
-#[test]
-fn program_chevron_stored() {
-    // Store a chevron program and execute it
+fn program_stored() {
+    // Store a program and execute it
     assert_stack_eq("<< DUP * >> \"sq\" STO 5 sq", &[25.0]);
 }
 
@@ -111,37 +77,37 @@ fn program_chevron_stored() {
 
 #[test]
 fn local_binding_simple() {
-    assert_stack_eq("5 → x :: x ;", &[5.0]);
+    assert_stack_eq("5 → x « x »", &[5.0]);
 }
 
 #[test]
 fn local_binding_use_twice() {
     // x + x = 10
-    assert_stack_eq("5 → x :: x x + ;", &[10.0]);
+    assert_stack_eq("5 → x « x x + »", &[10.0]);
 }
 
 #[test]
 fn local_binding_square() {
     // 4² = 16
-    assert_stack_eq("4 → x :: x x * ;", &[16.0]);
+    assert_stack_eq("4 → x « x x * »", &[16.0]);
 }
 
 #[test]
 fn local_binding_multiple_params() {
     // a=3, b=4, a+b=7
-    assert_stack_eq("3 4 → a b :: a b + ;", &[7.0]);
+    assert_stack_eq("3 4 → a b « a b + »", &[7.0]);
 }
 
 #[test]
 fn local_binding_arrow_syntax() {
     // ASCII arrow -> works too
-    assert_stack_eq("5 -> x :: x ;", &[5.0]);
+    assert_stack_eq("5 -> x << x >>", &[5.0]);
 }
 
 #[test]
 fn local_binding_with_computation() {
     // 10/2 + 10*3 = 5 + 30 = 35
-    assert_stack_eq("10 → x :: x 2 / x 3 * + ;", &[35.0]);
+    assert_stack_eq("10 → x « x 2 / x 3 * + »", &[35.0]);
 }
 
 // Programs with local bindings work when stored and recalled.
@@ -149,7 +115,7 @@ fn local_binding_with_computation() {
 #[test]
 fn local_binding_in_stored_program() {
     assert_stack_eq(
-        r#":: -> n :: n 1 + ; ; "add1" STO 5 "add1" RCL EVAL"#,
+        r#"<< -> n << n 1 + >> >> "add1" STO 5 add1"#,
         &[6.0],
     );
 }
@@ -160,7 +126,7 @@ fn local_binding_in_stored_program() {
 #[test]
 fn if_else_in_stored_program() {
     // IF with true condition - should return 100
-    assert_stack_eq(":: IF 1 THEN 100 ELSE 200 END ; EVAL", &[100.0]);
+    assert_stack_eq("<< IF 1 THEN 100 ELSE 200 END >> EVAL", &[100.0]);
     // IF with false condition - should return 200
-    assert_stack_eq(":: IF 0 THEN 100 ELSE 200 END ; EVAL", &[200.0]);
+    assert_stack_eq("<< IF 0 THEN 100 ELSE 200 END >> EVAL", &[200.0]);
 }

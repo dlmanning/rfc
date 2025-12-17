@@ -1,13 +1,17 @@
 //! LSP request handlers.
 //!
-//! Bridges LSP protocol requests to the Session API.
+//! Bridges LSP protocol requests to the rpl Session API.
 
 use std::collections::HashMap;
 
 use lsp_types::*;
-use rpl_session::{
+use rpl::{
     Pos, Session, SourceId, Span,
-    lsp::{CompletionItemKind as RplCompletionKind, SemanticModifier, SemanticTokenType},
+    analysis::Severity,
+    lsp::{
+        CompletionItemKind as RplCompletionKind, DocumentSymbolKind, SemanticModifier,
+        SemanticTokenType,
+    },
 };
 
 /// Server state holding the session and document mappings.
@@ -109,7 +113,7 @@ pub fn handle_completion(
 ) -> Option<CompletionResponse> {
     let uri = params.text_document_position.text_document.uri.to_string();
     let id = *state.documents.get(&uri)?;
-    let source = state.session.get_source(id)?;
+    let source = state.session.sources().get(id)?;
     let pos = lsp_pos_to_offset(&params.text_document_position.position, source.source());
 
     let items = state.session.completions(id, pos);
@@ -149,14 +153,10 @@ pub fn handle_hover(state: &mut ServerState, params: HoverParams) -> Option<Hove
     let id = *state.documents.get(&uri)?;
 
     // Get source text first (need to release borrow before mutable call)
-    let source_text = state.session.get_source(id)?.source().to_string();
+    let source_text = state.session.sources().get(id)?.source().to_string();
     let pos = lsp_pos_to_offset(&params.text_document_position_params.position, &source_text);
 
-    let result = if state.verbose_hover {
-        state.session.hover_verbose(id, pos)?
-    } else {
-        state.session.hover(id, pos)?
-    };
+    let result = state.session.hover(id, pos)?;
 
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -180,7 +180,7 @@ pub fn handle_definition(
     let id = *state.documents.get(&uri)?;
 
     // Get source text first (need to release borrow before mutable call)
-    let source_text = state.session.get_source(id)?.source().to_string();
+    let source_text = state.session.sources().get(id)?.source().to_string();
     let pos = lsp_pos_to_offset(&params.text_document_position_params.position, &source_text);
 
     let result = state.session.definition(id, pos)?;
@@ -204,10 +204,11 @@ pub fn handle_references(
     let id = *state.documents.get(&uri)?;
 
     // Get source text first (need to release borrow before mutable call)
-    let source_text = state.session.get_source(id)?.source().to_string();
+    let source_text = state.session.sources().get(id)?.source().to_string();
     let pos = lsp_pos_to_offset(&params.text_document_position.position, &source_text);
 
-    let result = state.session.references(id, pos)?;
+    let include_declaration = params.context.include_declaration;
+    let result = state.session.references(id, pos, include_declaration)?;
 
     let locations: Vec<Location> = result
         .locations
@@ -230,8 +231,8 @@ pub fn handle_semantic_tokens_full(
     let id = *state.documents.get(&uri)?;
 
     let tokens = state.session.semantic_tokens(id);
-    let source = state.session.get_source(id)?;
-    let encoded = rpl_session::lsp::encode_semantic_tokens(&tokens, source);
+    let source = state.session.sources().get(id)?;
+    let encoded = rpl::lsp::encode_semantic_tokens(&tokens, source);
 
     // Convert flat Vec<u32> into SemanticToken structs (groups of 5)
     let data: Vec<lsp_types::SemanticToken> = encoded
@@ -258,18 +259,18 @@ pub fn handle_document_symbol(
 ) -> Option<DocumentSymbolResponse> {
     let uri = params.text_document.uri.to_string();
     let id = *state.documents.get(&uri)?;
-    let source = state.session.get_source(id)?;
+    let source = state.session.sources().get(id)?;
     let source_text = source.source().to_string();
-    let doc_symbols = state.session.document_symbols(id)?;
+    let doc_symbols = state.session.document_symbols(id);
 
     let lsp_symbols: Vec<lsp_types::DocumentSymbol> = doc_symbols
         .into_iter()
         .map(|s| {
             let kind = match s.kind {
-                rpl_session::lsp::DocumentSymbolKind::Function => SymbolKind::FUNCTION,
-                rpl_session::lsp::DocumentSymbolKind::Variable => SymbolKind::VARIABLE,
-                rpl_session::lsp::DocumentSymbolKind::Local => SymbolKind::VARIABLE,
-                rpl_session::lsp::DocumentSymbolKind::LoopVariable => SymbolKind::VARIABLE,
+                DocumentSymbolKind::Function => SymbolKind::FUNCTION,
+                DocumentSymbolKind::Variable => SymbolKind::VARIABLE,
+                DocumentSymbolKind::Local => SymbolKind::VARIABLE,
+                DocumentSymbolKind::LoopVariable => SymbolKind::VARIABLE,
             };
 
             #[allow(deprecated)] // DocumentSymbol::deprecated is deprecated but required
@@ -295,7 +296,7 @@ pub fn get_diagnostics(state: &mut ServerState, uri: &str) -> Vec<Diagnostic> {
         return Vec::new();
     };
 
-    let Some(source) = state.session.get_source(id) else {
+    let Some(source) = state.session.sources().get(id) else {
         return Vec::new();
     };
 
@@ -305,15 +306,15 @@ pub fn get_diagnostics(state: &mut ServerState, uri: &str) -> Vec<Diagnostic> {
     diagnostics
         .iter()
         .map(|d| Diagnostic {
-            range: span_to_range(d.span(), &source_text),
-            severity: Some(match d.severity() {
-                rpl_session::Severity::Error => DiagnosticSeverity::ERROR,
-                rpl_session::Severity::Warning => DiagnosticSeverity::WARNING,
-                rpl_session::Severity::Note => DiagnosticSeverity::INFORMATION,
+            range: span_to_range(d.span, &source_text),
+            severity: Some(match d.severity {
+                Severity::Error => DiagnosticSeverity::ERROR,
+                Severity::Warning => DiagnosticSeverity::WARNING,
+                Severity::Hint => DiagnosticSeverity::HINT,
             }),
-            code: Some(NumberOrString::String(d.code().to_string())),
+            code: Some(NumberOrString::String(format!("{:?}", d.kind))),
             source: Some("rpl".into()),
-            message: d.message().to_string(),
+            message: d.message.clone(),
             ..Default::default()
         })
         .collect()

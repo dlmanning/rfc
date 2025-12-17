@@ -1,0 +1,15 @@
+[package]
+name = "rpl"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rpl"
+path = "bin/rpl.rs"
+
+[dependencies]
+smallvec = { workspace = true }
+thiserror = { workspace = true }

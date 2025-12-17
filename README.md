@@ -5,10 +5,11 @@ A modern, open-source implementation of the RPL programming language in Rust. RP
 ## Features
 
 - **Complete Language Implementation** - Tokenization, analysis, bytecode compilation, and VM execution
-- **Interactive REPL** - Full-featured terminal UI with split-pane display, syntax highlighting, and command history
+- **Command-Line Tool** - Evaluate files, strings, or stdin with `rpl`
+- **Interactive Calculator** - Full-featured terminal UI with `rpl-calc`
 - **Language Server Protocol (LSP)** - Editor integration with completions, hover, go-to-definition, and semantic highlighting
 - **Debug Adapter Protocol (DAP)** - Full debugging support with breakpoints, stepping, and variable inspection
-- **19 Standard Libraries** - Arithmetic, transcendentals, strings, lists, flow control, blobs, and more
+- **19 Standard Libraries** - Arithmetic, transcendentals, strings, lists, flow control, and more
 - **HP RPL Compatible** - Designed to be compatible with classic HP calculator RPL
 
 ## Quick Start
@@ -19,22 +20,43 @@ A modern, open-source implementation of the RPL programming language in Rust. RP
 cargo build --release
 ```
 
-This builds three binaries:
-- `rpl` - Interactive REPL
+This builds several binaries:
+
+- `rpl` - Command-line evaluator
+- `rpl-calc` - Interactive TUI calculator
 - `rpl-lsp` - Language Server
 - `rpl-dap` - Debug Adapter
 
-### Running the REPL
+### Command-Line Evaluator (`rpl`)
+
+Evaluate RPL code from files, strings, or stdin:
 
 ```bash
-cargo run --release --bin rpl
+# Evaluate a file
+rpl program.rpl
+
+# Evaluate a string
+rpl -e "1 2 + 3 *"
+
+# Read from stdin
+echo "PI 2 / SIN" | rpl
 ```
 
-Or after building:
+### Interactive Calculator (`rpl-calc`)
+
+Full-featured terminal UI with split-pane display:
 
 ```bash
-./target/release/rpl
+rpl-calc
 ```
+
+Features:
+
+- Stack display with live updates
+- Variable browser
+- Command history with persistence
+- Multi-line editor mode (Ctrl-O)
+- Syntax highlighting
 
 ## Language Examples
 
@@ -84,63 +106,29 @@ DROP        @ Remove top item
 
 ```
 crates/
-  rpl-core/      Core types: symbols, spans, diagnostics, bytecode
-  rpl-source/    Source file management and diagnostic rendering
-  rpl-vm/        Virtual machine and value types
-  rpl-lang/      Language pipeline: analysis, compilation, decompilation
-  rpl-stdlib/    19 built-in standard libraries
-  rpl-session/   High-level API for applications
-  rpl-repl/      Interactive terminal REPL (ratatui-based)
+  rpl/           Core library: types, VM, analysis, compilation, standard libraries
+  rpl-tui/       Interactive terminal calculator (ratatui-based)
   rpl-lsp/       Language Server Protocol implementation
   rpl-dap/       Debug Adapter Protocol implementation
+  rpl-plot/      Scalable vector graphics library for plot objects
 
 docs/            Implementation documentation
 editors/vscode/  VS Code extension
 tests/           Integration tests and example programs
 ```
 
-## Standard Libraries
-
-| Library | Description |
-|---------|-------------|
-| ArithmeticLib | Basic arithmetic operators (+, -, *, /, ^, MOD) |
-| BinaryIntLib | Binary integer literals (#1010b, #FFh, #777o) |
-| BinaryOpsLib | Bitwise operations (AND, OR, XOR, SL, SR) |
-| BlobLib | Binary data containers (MKBLOB, BLOBTYPE, BLOBSIZE) |
-| CommentsLib | Comment parsing (@ ...) |
-| ComplexLib | Complex number support ((re,im) literals) |
-| DirectoryLib | Variables and directory management (STO, RCL, PURGE) |
-| FlowControlLib | Control flow (IF/THEN/ELSE, FOR/NEXT, WHILE) |
-| IdentifiersLib | Variable and command name resolution |
-| LibPtrLib | User libraries and library pointers |
-| ListsLib | List operations (HEAD, TAIL, GET, MAP, SORT) |
-| LocalsLib | Local variables (→ x y « ... ») |
-| PlotLib | Plot objects and rendering |
-| ProgramsLib | Program objects and evaluation (« ... ») |
-| RealNumbersLib | Real number literals and parsing |
-| StackLib | Stack manipulation (DUP, SWAP, DROP, ROT, PICK) |
-| StringsLib | String literals and manipulation |
-| SymbolicLib | Symbolic expressions ('name') |
-| TranscendentalsLib | Transcendental functions (SIN, COS, EXP, LN) |
-
-See [rpl-stdlib/README.md](crates/rpl-stdlib/README.md) for the complete command reference and implementation guide.
-
 ## Editor Integration
 
 ### VS Code
 
 A VS Code extension is available in `editors/vscode/` providing:
+
 - Syntax highlighting via semantic tokens
 - Code completions
 - Hover documentation
 - Go-to-definition
 - Find references
 - Integrated debugging
-
-## Documentation
-
-- [RPL Commands Reference](RPL-COMMANDS.md) - Complete command documentation
-- [Standard Library Guide](crates/rpl-stdlib/README.md) - Library reference and implementation guide
 
 ## Architecture
 
@@ -171,11 +159,14 @@ cargo test
 ```
 
 Example programs are available in `tests/programs/`:
+
 - `factorial.rpl` - Recursive factorial
 - `fibonacci.rpl` - Fibonacci sequence
 - `gcd.rpl` - Greatest common divisor
 - `newton_sqrt.rpl` - Newton's method square root
-- `prime_sieve.rpl` - Sieve of Eratosthenes
+- `prime_sieve.rpl` - Primality testing
+- `quicksort.rpl` - Quicksort with list partitioning
+- `statistics.rpl` - Statistical functions (mean, variance, stdev)
 - `symbolic_derivative.rpl` - Symbolic differentiation
 
 ## Requirements

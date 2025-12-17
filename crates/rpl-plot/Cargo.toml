@@ -1,0 +1,11 @@
+[package]
+name = "rpl-plot"
+description = "Plot library for RPL - scalable vector graphics"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rpl = { workspace = true }

@@ -45,13 +45,13 @@ fn fixture_prime_sieve() {
 fn list_sum_function() {
     // Test sum from list_ops.rpl
     let code = "
-        :: -> lst ::
+        << -> lst <<
             0
             lst LIST->
             1 SWAP START
                 +
             NEXT
-        ; ;
+        >> >>
         \"sum\" STO
         { 1 2 3 4 5 } sum
     ";

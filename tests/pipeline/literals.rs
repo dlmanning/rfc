@@ -58,7 +58,7 @@ fn empty_comment() {
 #[test]
 fn comment_in_program() {
     // Comments work inside programs
-    assert_stack_eq(":: 5 @ comment\n3 + ; EVAL", &[8.0]);
+    assert_stack_eq("<< 5 @ comment\n3 + >> EVAL", &[8.0]);
 }
 
 #[test]
