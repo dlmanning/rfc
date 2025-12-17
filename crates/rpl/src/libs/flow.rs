@@ -34,16 +34,16 @@
 //! - IF/THEN/ELSE → `if ... else ... end`
 //! - Loops → `block { loop { ... br_if ... } }`
 
-use crate::core::{Pos, Span};
-
 use crate::{
+    core::{Pos, Span},
     ir::{AtomKind, Branch, LibId, Node, NodeKind},
     libs::{
-        ClaimContext, CommandInfo, ExecuteContext, ExecuteResult, Library, LibraryExecutor,
-        LibraryLowerer, LibraryParser, StackEffect, TokenClaim,
+        ClaimContext, CommandInfo, ExecuteContext, ExecuteResult, Library,
+        StackEffect, TokenClaim,
     },
     lower::{LowerContext, LowerError},
     parse::{ParseContext, ParseError},
+    types::CStack,
     value::Value,
     vm::bytecode::Opcode,
 };
@@ -180,9 +180,7 @@ impl Library for FlowLib {
             CommandInfo::with_effect("ERRM", FLOW_LIB, cmd::ERRM, 0, 1),   // pushes error message
         ]
     }
-}
 
-impl LibraryParser for FlowLib {
     fn claims(&self) -> &[TokenClaim] {
         FLOW_CLAIMS
     }
@@ -204,6 +202,252 @@ impl LibraryParser for FlowLib {
                 expected: None,
                 found: Some(token.to_string()),
             }),
+        }
+    }
+
+    fn lower_composite(
+        &self,
+        id: u16,
+        branches: &[Branch],
+        _span: Span,
+        ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
+        match id {
+            constructs::IF_THEN => {
+                if branches.len() < 2 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "IF/THEN requires condition and body".into(),
+                    });
+                }
+                ctx.lower_all(&branches[0])?;
+                ctx.pop_type();
+                let pre_branch = ctx.types.clone();
+                ctx.output.emit_if();
+                ctx.lower_all(&branches[1])?;
+                ctx.output.emit_end();
+                let then_state = ctx.types.clone();
+                let joined = pre_branch.join(&then_state);
+                ctx.types.replace_with(joined);
+                Ok(())
+            }
+
+            constructs::IF_THEN_ELSE => {
+                if branches.len() < 3 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "IF/THEN/ELSE requires condition and two bodies".into(),
+                    });
+                }
+                ctx.lower_all(&branches[0])?;
+                ctx.pop_type();
+                let pre_branch = ctx.types.clone();
+                ctx.output.emit_if();
+                ctx.lower_all(&branches[1])?;
+                let then_state = ctx.types.clone();
+                ctx.types.replace_with(pre_branch);
+                ctx.output.emit_else();
+                ctx.lower_all(&branches[2])?;
+                let else_state = ctx.types.clone();
+                let joined = then_state.join(&else_state);
+                ctx.types.replace_with(joined);
+                ctx.output.emit_end();
+                Ok(())
+            }
+
+            constructs::FOR_NEXT => self.lower_for_loop(branches, None, ctx),
+            constructs::FOR_STEP => {
+                if branches.len() < 3 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "FOR/STEP requires index, body, and step".into(),
+                    });
+                }
+                self.lower_for_loop(&branches[..2], Some(&branches[2]), ctx)
+            }
+            constructs::START_NEXT => self.lower_start_loop(branches, None, ctx),
+            constructs::START_STEP => {
+                if branches.len() < 2 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "START/STEP requires body and step".into(),
+                    });
+                }
+                self.lower_start_loop(&branches[..1], Some(&branches[1]), ctx)
+            }
+            constructs::DO_UNTIL => {
+                if branches.len() < 2 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "DO/UNTIL requires body and condition".into(),
+                    });
+                }
+                let pre_loop = ctx.types.clone();
+                ctx.output.emit_loop();
+                ctx.lower_all(&branches[0])?;
+                ctx.lower_all(&branches[1])?;
+                ctx.output.emit_i64_eqz();
+                ctx.pop_type();
+                ctx.output.emit_br_if(0);
+                ctx.output.emit_end();
+                let post_loop = ctx.types.clone();
+                let joined = pre_loop.join(&post_loop);
+                ctx.types.replace_with(joined);
+                Ok(())
+            }
+            constructs::WHILE_REPEAT => {
+                if branches.len() < 2 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "WHILE/REPEAT requires condition and body".into(),
+                    });
+                }
+                let pre_loop = ctx.types.clone();
+                ctx.output.emit_block();
+                ctx.output.emit_loop();
+                ctx.lower_all(&branches[0])?;
+                ctx.output.emit_i64_eqz();
+                ctx.pop_type();
+                ctx.output.emit_br_if(1);
+                ctx.lower_all(&branches[1])?;
+                ctx.output.emit_br(0);
+                ctx.output.emit_end();
+                ctx.output.emit_end();
+                let post_loop = ctx.types.clone();
+                let joined = pre_loop.join(&post_loop);
+                ctx.types.replace_with(joined);
+                Ok(())
+            }
+            constructs::CASE => self.lower_case(branches, ctx),
+            constructs::FORUP_NEXT => self.lower_for_loop_directional(branches, None, true, ctx),
+            constructs::FORUP_STEP => {
+                if branches.len() < 3 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "FORUP/STEP requires index, body, and step".into(),
+                    });
+                }
+                self.lower_for_loop_directional(&branches[..2], Some(&branches[2]), true, ctx)
+            }
+            constructs::FORDN_NEXT => self.lower_for_loop_directional(branches, None, false, ctx),
+            constructs::FORDN_STEP => {
+                if branches.len() < 3 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "FORDN/STEP requires index, body, and step".into(),
+                    });
+                }
+                self.lower_for_loop_directional(&branches[..2], Some(&branches[2]), false, ctx)
+            }
+            constructs::IFERR_THEN => {
+                if branches.len() < 2 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "IFERR/THEN requires body and error handler".into(),
+                    });
+                }
+                let pre_try = ctx.types.clone();
+                ctx.output.emit_block();
+                ctx.output.emit_block();
+                ctx.output.emit_try_table_catch_all(1);
+                ctx.lower_all(&branches[0])?;
+                ctx.output.emit_end();
+                let success_state = ctx.types.clone();
+                ctx.output.emit_br(1);
+                ctx.output.emit_end();
+                ctx.types.replace_with(pre_try);
+                ctx.types.mark_unknown_depth();
+                ctx.lower_all(&branches[1])?;
+                let error_state = ctx.types.clone();
+                let joined = success_state.join(&error_state);
+                ctx.types.replace_with(joined);
+                ctx.output.emit_end();
+                Ok(())
+            }
+            constructs::IFERR_THEN_ELSE => {
+                if branches.len() < 3 {
+                    return Err(LowerError {
+                        span: None,
+                        message: "IFERR/THEN/ELSE requires body, error handler, and no-error body"
+                            .into(),
+                    });
+                }
+                let pre_try = ctx.types.clone();
+                ctx.output.emit_block();
+                ctx.output.emit_block();
+                ctx.output.emit_try_table_catch_all(1);
+                ctx.lower_all(&branches[0])?;
+                ctx.output.emit_end();
+                ctx.lower_all(&branches[2])?;
+                let success_state = ctx.types.clone();
+                ctx.output.emit_br(1);
+                ctx.output.emit_end();
+                ctx.types.replace_with(pre_try);
+                ctx.types.mark_unknown_depth();
+                ctx.lower_all(&branches[1])?;
+                let error_state = ctx.types.clone();
+                let joined = success_state.join(&error_state);
+                ctx.types.replace_with(joined);
+                ctx.output.emit_end();
+                Ok(())
+            }
+            _ => Err(LowerError {
+                span: None,
+                message: format!("unknown flow control construct: {}", id),
+            }),
+        }
+    }
+
+    fn lower_command(
+        &self,
+        cmd_id: u16,
+        _span: Span,
+        ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
+        match cmd_id {
+            cmd::DOERR => {
+                ctx.output.emit_throw(0);
+            }
+            cmd::ERRN | cmd::ERRM => {
+                ctx.output.emit_call_lib(FLOW_LIB, cmd_id);
+            }
+            _ => {
+                return Err(LowerError {
+                    span: None,
+                    message: format!("unknown flow command: {}", cmd_id),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
+        match ctx.cmd {
+            cmd::ERRN => {
+                let error_code = ctx.last_error().map(|e| e.code).unwrap_or(0);
+                ctx.push(Value::Integer(error_code))?;
+                Ok(())
+            }
+            cmd::ERRM => {
+                let error_msg = ctx
+                    .last_error()
+                    .map(|e| e.message.clone())
+                    .unwrap_or_default();
+                ctx.push(Value::string(error_msg))?;
+                Ok(())
+            }
+            cmd::DOERR => {
+                Err("DOERR should be handled by bytecode".into())
+            }
+            _ => Err(format!("unknown flow command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
+            cmd::DOERR => StackEffect::fixed(1, &[]),
+            cmd::ERRN | cmd::ERRM => StackEffect::fixed(0, &[None]),
+            _ => StackEffect::Dynamic,
         }
     }
 }
@@ -689,8 +933,7 @@ impl FlowLib {
                 found: Some("end of input".into()),
             })?;
 
-            if token.text.eq_ignore_ascii_case("THEN")
-                || token.text.eq_ignore_ascii_case("THENERR")
+            if token.text.eq_ignore_ascii_case("THEN") || token.text.eq_ignore_ascii_case("THENERR")
             {
                 ctx.advance();
                 break;
@@ -710,17 +953,14 @@ impl FlowLib {
                 found: Some("end of input".into()),
             })?;
 
-            if token.text.eq_ignore_ascii_case("ELSE")
-                || token.text.eq_ignore_ascii_case("ELSEERR")
+            if token.text.eq_ignore_ascii_case("ELSE") || token.text.eq_ignore_ascii_case("ELSEERR")
             {
                 ctx.advance();
                 has_else = true;
                 break;
             }
 
-            if token.text.eq_ignore_ascii_case("END")
-                || token.text.eq_ignore_ascii_case("ENDERR")
-            {
+            if token.text.eq_ignore_ascii_case("END") || token.text.eq_ignore_ascii_case("ENDERR") {
                 ctx.advance();
                 break;
             }
@@ -774,376 +1014,6 @@ impl FlowLib {
     }
 }
 
-impl LibraryLowerer for FlowLib {
-    fn lower_composite(
-        &self,
-        id: u16,
-        branches: &[Branch],
-        _span: Span,
-        ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        match id {
-            constructs::IF_THEN => {
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "IF/THEN requires condition and body".into(),
-                    });
-                }
-                // Lower condition and pop it (consumed by `if`)
-                ctx.lower_all(&branches[0])?;
-                ctx.pop_type(); // condition consumed
-
-                // Save state before branch (in case body doesn't execute)
-                let pre_branch = ctx.types.clone();
-
-                ctx.output.emit_if();
-                ctx.lower_all(&branches[1])?;
-                ctx.output.emit_end();
-
-                // Join with pre-branch state (body may or may not have executed)
-                let then_state = ctx.types.clone();
-                let joined = pre_branch.join(&then_state);
-                ctx.types.replace_with(joined);
-                Ok(())
-            }
-
-            constructs::IF_THEN_ELSE => {
-                if branches.len() < 3 {
-                    return Err(LowerError { span: None,
-                        message: "IF/THEN/ELSE requires condition and two bodies".into(),
-                    });
-                }
-                // Lower condition and pop it (consumed by `if`)
-                ctx.lower_all(&branches[0])?;
-                ctx.pop_type(); // condition consumed
-
-                // Save state before branches
-                let pre_branch = ctx.types.clone();
-
-                ctx.output.emit_if();
-                ctx.lower_all(&branches[1])?;
-
-                // Save then-branch state, restore pre-branch for else
-                let then_state = ctx.types.clone();
-                ctx.types.replace_with(pre_branch);
-
-                ctx.output.emit_else();
-                ctx.lower_all(&branches[2])?;
-
-                // Join then and else states
-                let else_state = ctx.types.clone();
-                let joined = then_state.join(&else_state);
-                ctx.types.replace_with(joined);
-
-                ctx.output.emit_end();
-                Ok(())
-            }
-
-            constructs::FOR_NEXT => {
-                // branches[0] = [index_node], branches[1] = body
-                // Stack has: start end
-                // Loop from start to end, step 1
-                self.lower_for_loop(branches, None, ctx)
-            }
-
-            constructs::FOR_STEP => {
-                // branches[0] = [index_node], branches[1] = body, branches[2] = [step_node]
-                if branches.len() < 3 {
-                    return Err(LowerError { span: None,
-                        message: "FOR/STEP requires index, body, and step".into(),
-                    });
-                }
-                self.lower_for_loop(&branches[..2], Some(&branches[2]), ctx)
-            }
-
-            constructs::START_NEXT => {
-                // branches[0] = body
-                // Stack has: start end
-                self.lower_start_loop(branches, None, ctx)
-            }
-
-            constructs::START_STEP => {
-                // branches[0] = body, branches[1] = [step_node]
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "START/STEP requires body and step".into(),
-                    });
-                }
-                self.lower_start_loop(&branches[..1], Some(&branches[1]), ctx)
-            }
-
-            constructs::DO_UNTIL => {
-                // branches[0] = body, branches[1] = condition
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "DO/UNTIL requires body and condition".into(),
-                    });
-                }
-
-                // Save state before loop (body executes at least once, but may repeat)
-                let pre_loop = ctx.types.clone();
-
-                // loop {
-                //   body
-                //   condition
-                //   i64.eqz  (invert: continue if condition is false/0)
-                //   br_if 0  (back to loop start if condition was false)
-                // }
-                ctx.output.emit_loop();
-                ctx.lower_all(&branches[0])?; // body
-                ctx.lower_all(&branches[1])?; // condition
-                ctx.output.emit_i64_eqz(); // invert
-                ctx.pop_type(); // condition consumed by br_if
-                ctx.output.emit_br_if(0); // continue loop if false
-                ctx.output.emit_end();
-
-                // Join with pre-loop state (loop might execute multiple times)
-                let post_loop = ctx.types.clone();
-                let joined = pre_loop.join(&post_loop);
-                ctx.types.replace_with(joined);
-                Ok(())
-            }
-
-            constructs::WHILE_REPEAT => {
-                // branches[0] = condition, branches[1] = body
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "WHILE/REPEAT requires condition and body".into(),
-                    });
-                }
-
-                // Save state before loop (body might execute 0+ times)
-                let pre_loop = ctx.types.clone();
-
-                // block {
-                //   loop {
-                //     condition
-                //     i64.eqz  (invert)
-                //     br_if 1  (exit block if false)
-                //     body
-                //     br 0     (back to loop)
-                //   }
-                // }
-                ctx.output.emit_block();
-                ctx.output.emit_loop();
-                ctx.lower_all(&branches[0])?; // condition
-                ctx.output.emit_i64_eqz(); // invert: exit if zero
-                ctx.pop_type(); // condition consumed by br_if
-                ctx.output.emit_br_if(1); // exit outer block
-                ctx.lower_all(&branches[1])?; // body
-                ctx.output.emit_br(0); // continue loop
-                ctx.output.emit_end(); // end loop
-                ctx.output.emit_end(); // end block
-
-                // Join with pre-loop state (body might execute 0+ times)
-                let post_loop = ctx.types.clone();
-                let joined = pre_loop.join(&post_loop);
-                ctx.types.replace_with(joined);
-                Ok(())
-            }
-
-            constructs::CASE => {
-                // branches are pairs: [cond1, body1, cond2, body2, ..., default_cond, default_body]
-                // An empty condition indicates default
-                self.lower_case(branches, ctx)
-            }
-
-            constructs::FORUP_NEXT => {
-                // FORUP: ascending only, skip if start > end
-                self.lower_for_loop_directional(branches, None, true, ctx)
-            }
-
-            constructs::FORUP_STEP => {
-                if branches.len() < 3 {
-                    return Err(LowerError { span: None,
-                        message: "FORUP/STEP requires index, body, and step".into(),
-                    });
-                }
-                self.lower_for_loop_directional(&branches[..2], Some(&branches[2]), true, ctx)
-            }
-
-            constructs::FORDN_NEXT => {
-                // FORDN: descending only, skip if start < end
-                self.lower_for_loop_directional(branches, None, false, ctx)
-            }
-
-            constructs::FORDN_STEP => {
-                if branches.len() < 3 {
-                    return Err(LowerError { span: None,
-                        message: "FORDN/STEP requires index, body, and step".into(),
-                    });
-                }
-                self.lower_for_loop_directional(&branches[..2], Some(&branches[2]), false, ctx)
-            }
-
-            constructs::IFERR_THEN => {
-                // branches[0] = body, branches[1] = error-handler
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "IFERR/THEN requires body and error handler".into(),
-                    });
-                }
-
-                // Structure (using catch_all for simple exception handling):
-                // block $outer
-                //   block $handler_target
-                //     try_table (catch_all 1)
-                //       body
-                //     end
-                //     br 1   ; success: skip handler, jump to after $outer
-                //   end
-                //   ; catch_all branches here (nothing on stack)
-                //   error-handler
-                // end
-                //
-                // ERRN/ERRM access the error via VM's last_error field (set by catch handler).
-
-                // Save state before try body
-                let pre_try = ctx.types.clone();
-
-                ctx.output.emit_block(); // $outer
-                ctx.output.emit_block(); // $handler_target
-                ctx.output.emit_try_table_catch_all(1); // catch_all branches to depth 1
-                ctx.lower_all(&branches[0])?; // body
-                ctx.output.emit_end(); // end try_table
-
-                // Save success state
-                let success_state = ctx.types.clone();
-
-                ctx.output.emit_br(1); // success: skip to after $outer
-                ctx.output.emit_end(); // end $handler_target
-
-                // For error handler: restore pre-try state but mark unknown depth
-                // (exception could occur at any point, so stack state is unpredictable)
-                ctx.types.replace_with(pre_try);
-                ctx.types.mark_unknown_depth();
-
-                ctx.lower_all(&branches[1])?; // error handler
-
-                // Join success state with error handler state
-                let error_state = ctx.types.clone();
-                let joined = success_state.join(&error_state);
-                ctx.types.replace_with(joined);
-
-                ctx.output.emit_end(); // end $outer
-                Ok(())
-            }
-
-            constructs::IFERR_THEN_ELSE => {
-                // branches[0] = body, branches[1] = error-handler, branches[2] = no-error-body
-                if branches.len() < 3 {
-                    return Err(LowerError { span: None,
-                        message: "IFERR/THEN/ELSE requires body, error handler, and no-error body"
-                            .into(),
-                    });
-                }
-
-                // Structure (using catch_all for simple exception handling):
-                // block $outer
-                //   block $handler_target
-                //     try_table (catch_all 1)
-                //       body
-                //     end
-                //     no-error-body
-                //     br 1   ; skip handler
-                //   end
-                //   ; catch_all branches here (nothing on stack)
-                //   error-handler
-                // end
-                //
-                // ERRN/ERRM access the error via VM's last_error field (set by catch handler).
-
-                // Save state before try body
-                let pre_try = ctx.types.clone();
-
-                ctx.output.emit_block(); // $outer
-                ctx.output.emit_block(); // $handler_target
-                ctx.output.emit_try_table_catch_all(1);
-                ctx.lower_all(&branches[0])?; // body
-                ctx.output.emit_end(); // end try_table
-                ctx.lower_all(&branches[2])?; // no-error-body (runs on success)
-
-                // Save success state (after try body + no-error-body)
-                let success_state = ctx.types.clone();
-
-                ctx.output.emit_br(1); // skip handler
-                ctx.output.emit_end(); // end $handler_target
-
-                // For error handler: restore pre-try state but mark unknown depth
-                // (exception could occur at any point, so stack state is unpredictable)
-                ctx.types.replace_with(pre_try);
-                ctx.types.mark_unknown_depth();
-
-                ctx.lower_all(&branches[1])?; // error handler
-
-                // Join success state with error handler state
-                let error_state = ctx.types.clone();
-                let joined = success_state.join(&error_state);
-                ctx.types.replace_with(joined);
-
-                ctx.output.emit_end(); // end $outer
-                Ok(())
-            }
-
-            _ => Err(LowerError { span: None,
-                message: format!("unknown flow control construct: {}", id),
-            }),
-        }
-    }
-
-    fn lower_command(
-        &self,
-        cmd_id: u16,
-        _span: Span,
-        ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        match cmd_id {
-            cmd::DOERR => {
-                // DOERR: throw an error (pops error code from stack)
-                // Emit Throw opcode with tag 0 (default RPL error tag)
-                ctx.output.emit_throw(0);
-                Ok(StackEffect::fixed(1, &[]))
-            }
-            cmd::ERRN | cmd::ERRM => {
-                // ERRN/ERRM: need runtime execution to access VM state
-                ctx.output.emit_call_lib(FLOW_LIB, cmd_id);
-                Ok(StackEffect::fixed(0, &[None]))
-            }
-            _ => Err(LowerError { span: None,
-                message: format!("unknown flow command: {}", cmd_id),
-            }),
-        }
-    }
-}
-
-impl LibraryExecutor for FlowLib {
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
-        match ctx.cmd {
-            cmd::ERRN => {
-                // Push last error number (or 0 if no error)
-                let error_code = ctx.last_error().map(|e| e.code).unwrap_or(0);
-                ctx.push(Value::Integer(error_code))?;
-                Ok(())
-            }
-            cmd::ERRM => {
-                // Push last error message (or empty string if no error)
-                let error_msg = ctx
-                    .last_error()
-                    .map(|e| e.message.clone())
-                    .unwrap_or_default();
-                ctx.push(Value::string(error_msg))?;
-                Ok(())
-            }
-            cmd::DOERR => {
-                // DOERR should be handled by bytecode, not runtime execution
-                // This shouldn't be called, but handle gracefully
-                Err("DOERR should be handled by bytecode".into())
-            }
-            _ => Err(format!("unknown flow command: {}", ctx.cmd)),
-        }
-    }
-}
-
 impl FlowLib {
     /// Lower a FOR loop.
     fn lower_for_loop(
@@ -1153,7 +1023,8 @@ impl FlowLib {
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
         if branches.len() < 2 {
-            return Err(LowerError { span: None,
+            return Err(LowerError {
+                span: None,
                 message: "FOR loop requires index and body".into(),
             });
         }
@@ -1166,7 +1037,8 @@ impl FlowLib {
                 ..
             }) => ctx.user_local(*idx as u32),
             _ => {
-                return Err(LowerError { span: None,
+                return Err(LowerError {
+                    span: None,
                     message: "FOR loop missing variable index".into(),
                 });
             }
@@ -1281,7 +1153,8 @@ impl FlowLib {
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
         if branches.len() < 2 {
-            return Err(LowerError { span: None,
+            return Err(LowerError {
+                span: None,
                 message: "FOR loop requires index and body".into(),
             });
         }
@@ -1294,7 +1167,8 @@ impl FlowLib {
                 ..
             }) => ctx.user_local(*idx as u32),
             _ => {
-                return Err(LowerError { span: None,
+                return Err(LowerError {
+                    span: None,
                     message: "FOR loop missing variable index".into(),
                 });
             }
@@ -1401,7 +1275,8 @@ impl FlowLib {
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
         if branches.is_empty() {
-            return Err(LowerError { span: None,
+            return Err(LowerError {
+                span: None,
                 message: "START loop requires body".into(),
             });
         }

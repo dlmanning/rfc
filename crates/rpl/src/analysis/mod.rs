@@ -34,7 +34,7 @@
 //! let registry = Registry::with_core();
 //! let mut interner = Interner::new();
 //! let nodes = parse("42 \"x\" STO x", &registry, &mut interner).unwrap();
-//! let result = analyze(&nodes, &interner);
+//! let result = analyze(&nodes, &registry, &interner);
 //!
 //! // Result contains symbol table, scopes, and diagnostics
 //! assert_eq!(result.symbols.definition_count(), 1);

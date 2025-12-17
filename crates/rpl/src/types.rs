@@ -140,6 +140,29 @@ impl CType {
     }
 }
 
+impl std::fmt::Display for CType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CType::Known(type_id) => {
+                if let Some(name) = type_id.name() {
+                    write!(f, "{}", name)
+                } else {
+                    write!(f, "Type({})", type_id.as_u16())
+                }
+            }
+            CType::OneOf(types) => {
+                let names: Vec<_> = types
+                    .iter()
+                    .map(|t| t.name().unwrap_or("?"))
+                    .collect();
+                write!(f, "{}", names.join(" | "))
+            }
+            CType::Unknown => write!(f, "?"),
+            CType::Never => write!(f, "never"),
+        }
+    }
+}
+
 /// Compile-time stack for type tracking.
 #[derive(Clone)]
 pub struct CStack {

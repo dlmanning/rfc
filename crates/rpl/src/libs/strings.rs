@@ -18,9 +18,11 @@
 use crate::core::Span;
 
 use crate::{
+    core::TypeId,
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
 };
 
@@ -93,9 +95,7 @@ impl Library for StringsLib {
             CommandInfo::with_effect("FROMUTF8", STRINGS_LIB, cmd::FROM_UTF8, 1, 1),
         ]
     }
-}
 
-impl LibraryLowerer for StringsLib {
     fn lower_composite(
         &self,
         _id: u16,
@@ -113,12 +113,13 @@ impl LibraryLowerer for StringsLib {
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        use crate::core::TypeId;
-
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(STRINGS_LIB, cmd);
+        Ok(())
+    }
 
-        Ok(match cmd {
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
             cmd::NUM => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
             cmd::STR => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
             cmd::CHR => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
@@ -136,11 +137,9 @@ impl LibraryLowerer for StringsLib {
             cmd::TO_UTF8 => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
             cmd::FROM_UTF8 => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
             _ => StackEffect::Dynamic,
-        })
+        }
     }
-}
 
-impl LibraryExecutor for StringsLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::NUM => {

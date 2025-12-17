@@ -10,10 +10,15 @@
 use crate::core::Span;
 
 use crate::{
-    ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer},
+    core::TypeId,
+    ir::LibId,
+    libs::{
+        CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect,
+    },
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
+    vm::bytecode::Opcode,
 };
 
 /// Binary operations library ID.
@@ -67,37 +72,20 @@ impl Library for BinaryLib {
             CommandInfo::with_effect("BDIV", BINARY_LIB, cmd::BDIV, 2, 1),
         ]
     }
-}
-
-impl LibraryLowerer for BinaryLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
-            message: "Binary library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<crate::libs::StackEffect, LowerError> {
-        use crate::{libs::StackEffect, vm::bytecode::Opcode};
-        use crate::core::TypeId;
-
+    ) -> Result<(), LowerError> {
         // Check if we can use optimized integer ops
         let tos = ctx.types.top();
         let nos = ctx.types.nos();
         let tos_is_int = tos.is_integer();
         let both_int = tos_is_int && nos.is_integer();
 
-        Ok(match cmd {
+        match cmd {
             // Binary bitwise operations (2 -> 1)
             cmd::BAND => {
                 if both_int {
@@ -105,7 +93,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BOR => {
                 if both_int {
@@ -113,7 +100,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BXOR => {
                 if both_int {
@@ -121,7 +107,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BNOT => {
                 if tos_is_int {
@@ -131,7 +116,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(1, &[Some(TypeId::BINT)])
             }
             cmd::BLSL => {
                 if both_int {
@@ -139,7 +123,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BLSR => {
                 if both_int {
@@ -147,7 +130,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
 
             // Binary arithmetic (2 -> 1)
@@ -157,7 +139,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BSUB => {
                 if both_int {
@@ -165,7 +146,6 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             cmd::BMUL => {
                 if both_int {
@@ -173,23 +153,19 @@ impl LibraryLowerer for BinaryLib {
                 } else {
                     ctx.output.emit_call_lib(BINARY_LIB, cmd);
                 }
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
             // BDIV: always use CallLib (needs division by zero check)
             cmd::BDIV => {
                 ctx.output.emit_call_lib(BINARY_LIB, cmd);
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
             }
 
             _ => {
                 ctx.output.emit_call_lib(BINARY_LIB, cmd);
-                StackEffect::Dynamic
             }
-        })
+        }
+        Ok(())
     }
-}
 
-impl LibraryExecutor for BinaryLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             // Bitwise operations (fallback if called via CallLib)
@@ -207,6 +183,22 @@ impl LibraryExecutor for BinaryLib {
             cmd::BDIV => bdiv_op(ctx),
 
             _ => Err(format!("Unknown binary command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
+            // Binary bitwise operations (2 -> 1)
+            cmd::BAND | cmd::BOR | cmd::BXOR | cmd::BLSL | cmd::BLSR => {
+                StackEffect::fixed(2, &[Some(TypeId::BINT)])
+            }
+            // Unary bitwise (1 -> 1)
+            cmd::BNOT => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
+            // Binary arithmetic (2 -> 1)
+            cmd::BADD | cmd::BSUB | cmd::BMUL | cmd::BDIV => {
+                StackEffect::fixed(2, &[Some(TypeId::BINT)])
+            }
+            _ => StackEffect::Dynamic,
         }
     }
 }

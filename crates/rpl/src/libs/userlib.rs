@@ -12,8 +12,9 @@ use crate::core::Span;
 
 use crate::{
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect},
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::{LibraryCommand, LibraryData, Value},
 };
 
@@ -69,9 +70,7 @@ impl Library for UserLibLib {
             CommandInfo::with_effect("DETACH", USERLIB_LIB, cmd::DETACH, 1, 0),
         ]
     }
-}
 
-impl LibraryLowerer for UserLibLib {
     fn lower_composite(
         &self,
         _id: u16,
@@ -89,9 +88,13 @@ impl LibraryLowerer for UserLibLib {
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(USERLIB_LIB, cmd);
-        Ok(match cmd {
+        Ok(())
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
             cmd::LIBSTO => StackEffect::fixed(3, &[]),
             cmd::LIBRCL => StackEffect::fixed(2, &[None]),
             cmd::LIBDEFRCL => StackEffect::fixed(3, &[None]),
@@ -100,11 +103,9 @@ impl LibraryLowerer for UserLibLib {
             cmd::ATTACH => StackEffect::fixed(1, &[]),
             cmd::DETACH => StackEffect::fixed(1, &[]),
             _ => StackEffect::Dynamic,
-        })
+        }
     }
-}
 
-impl LibraryExecutor for UserLibLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::LIBSTO => {

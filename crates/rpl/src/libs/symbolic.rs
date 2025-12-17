@@ -7,9 +7,12 @@
 use crate::core::Span;
 
 use crate::{
-    ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    ir::LibId,
+    libs::{
+        ExecuteContext, ExecuteResult, Library, StackEffect,
+    },
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
 };
 
@@ -48,39 +51,17 @@ impl Library for SymbolicLib {
             CommandInfo::with_effect("SYMEVAL", SYMBOLIC_LIB, cmd::SYM_EVAL, 1, 1),
         ]
     }
-}
-
-impl LibraryLowerer for SymbolicLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
-            message: "Symbolic library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(SYMBOLIC_LIB, cmd);
-        Ok(match cmd {
-            // Result could be Integer or Real
-            cmd::TO_NUM => StackEffect::fixed(1, &[None]),
-            // Result could be any type
-            cmd::SYM_EVAL => StackEffect::fixed(1, &[None]),
-            _ => StackEffect::Dynamic,
-        })
+        Ok(())
     }
-}
 
-impl LibraryExecutor for SymbolicLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::TO_NUM => {
@@ -143,6 +124,16 @@ impl LibraryExecutor for SymbolicLib {
                 }
             }
             _ => Err(format!("Unknown symbolic command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
+            // Result could be Integer or Real
+            cmd::TO_NUM => StackEffect::fixed(1, &[None]),
+            // Result could be any type
+            cmd::SYM_EVAL => StackEffect::fixed(1, &[None]),
+            _ => StackEffect::Dynamic,
         }
     }
 }

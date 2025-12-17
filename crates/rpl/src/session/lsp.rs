@@ -304,7 +304,7 @@ fn make_definition_hover(def: &Definition) -> HoverResult {
     let mut details = Vec::new();
 
     if let Some(ref ty) = def.value_type {
-        details.push(format!("Type: `{:?}`", ty));
+        details.push(format!("Type: `{}`", ty));
     }
 
     if let Some(arity) = def.arity {
@@ -325,14 +325,33 @@ fn make_definition_hover(def: &Definition) -> HoverResult {
 
 fn hover_command(name: &str, span: Span, registry: &Registry) -> Option<HoverResult> {
     // Look up command in registry
-    if let Some((lib_id, _cmd_id)) = registry.find_command(name) {
+    if let Some((lib_id, cmd_id)) = registry.find_command(name) {
+        let mut parts = Vec::new();
+
         // Get library name
         if let Some(lib_name) = registry.get_library_name(lib_id) {
-            return Some(HoverResult {
-                contents: format!("**{}**\n\nLibrary: {}", name, lib_name),
-                range: span,
-            });
+            parts.push(format!("Library: {}", lib_name));
         }
+
+        // Get stack effect
+        // Use an empty type stack for static effect lookup
+        let types = crate::types::CStack::new();
+        let effect = registry.get_command_effect(lib_id, cmd_id, &types);
+        let notation = effect.to_notation();
+        if notation != "(dynamic)" {
+            parts.push(format!("Effect: `{}`", notation));
+        }
+
+        let details = if parts.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", parts.join("\n\n"))
+        };
+
+        return Some(HoverResult {
+            contents: format!("**{}**{}", name, details),
+            range: span,
+        });
     }
     None
 }

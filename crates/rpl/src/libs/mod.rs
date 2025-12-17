@@ -169,6 +169,90 @@ impl StackEffect {
 
     /// DEPTH: (-- n) produces integer, doesn't consume anything
     pub fn depth() -> Self { Self::fixed(0, &[Some(TypeId::BINT)]) }
+
+    /// Format the stack effect in traditional notation: `(inputs -- outputs)`
+    pub fn to_notation(&self) -> String {
+        match self {
+            Self::Permutation { inputs, pattern } => {
+                // Use letters for the input slots (a, b, c, ...)
+                let input_names: Vec<char> = (0..*inputs)
+                    .map(|i| (b'a' + i) as char)
+                    .collect();
+                let inputs_str: Vec<String> = input_names.iter().map(|c| c.to_string()).collect();
+                let outputs_str: Vec<String> = pattern
+                    .iter()
+                    .map(|&i| input_names.get(i as usize).copied().unwrap_or('?').to_string())
+                    .collect();
+                format!("({} -- {})", inputs_str.join(" "), outputs_str.join(" "))
+            }
+            Self::Fixed { consumes, results } => {
+                // Use letters for inputs, type names for outputs
+                let inputs_str: Vec<String> = (0..*consumes)
+                    .map(|i| ((b'a' + i) as char).to_string())
+                    .collect();
+                let outputs_str: Vec<&str> = results
+                    .iter()
+                    .map(|ty| match ty {
+                        Some(TypeId::BINT) => "int",
+                        Some(TypeId::REAL) => "real",
+                        Some(TypeId::STRING) => "str",
+                        Some(TypeId::LIST) => "list",
+                        Some(TypeId::PROGRAM) => "prog",
+                        Some(TypeId::SYMBOLIC) => "sym",
+                        _ => "?",
+                    })
+                    .collect();
+                format!("({} -- {})", inputs_str.join(" "), outputs_str.join(" "))
+            }
+            Self::Dynamic => "(dynamic)".to_string(),
+        }
+    }
+}
+
+// ============================================================================
+// Effect Computation Helpers
+// ============================================================================
+
+use crate::types::CStack;
+
+/// Compute the stack effect for a binary numeric operation.
+///
+/// This is the single source of truth for determining result types
+/// of binary numeric operations like +, -, *, /, etc.
+///
+/// Rules:
+/// - If both operands are integers → integer result
+/// - If either operand is real (or mixed int/real) → real result
+/// - Otherwise → unknown result type
+pub fn binary_numeric_effect(types: &CStack) -> StackEffect {
+    let (tos, nos) = (types.top(), types.nos());
+    if tos.is_integer() && nos.is_integer() {
+        StackEffect::fixed(2, &[Some(TypeId::BINT)])
+    } else if tos.is_real() || nos.is_real() {
+        StackEffect::fixed(2, &[Some(TypeId::REAL)])
+    } else {
+        StackEffect::fixed(2, &[None])
+    }
+}
+
+/// Compute the stack effect for a unary operation that preserves type.
+///
+/// Used for operations like NEG, ABS, SQ that return the same type
+/// as their input.
+///
+/// Rules:
+/// - If input is integer → integer result
+/// - If input is real → real result
+/// - Otherwise → unknown result type
+pub fn unary_preserving_effect(types: &CStack) -> StackEffect {
+    let tos = types.top();
+    if tos.is_integer() {
+        StackEffect::fixed(1, &[Some(TypeId::BINT)])
+    } else if tos.is_real() {
+        StackEffect::fixed(1, &[Some(TypeId::REAL)])
+    } else {
+        StackEffect::fixed(1, &[None])
+    }
 }
 
 // ============================================================================
@@ -405,79 +489,107 @@ impl<'a> ExecuteContext<'a> {
 pub type ExecuteResult = Result<(), String>;
 
 // ============================================================================
-// Library Traits
+// Library Trait
 // ============================================================================
 
-/// Base trait for all libraries.
+/// Unified trait for RPL libraries.
+///
+/// Libraries can provide any combination of:
+/// - Commands (arithmetic, stack ops, etc.)
+/// - Custom syntax parsing (IF/THEN/ELSE, FOR loops)
+/// - Bytecode lowering
+/// - Runtime execution
+/// - Type analysis
+///
+/// All methods have default implementations, so libraries only override
+/// what they need.
 pub trait Library: Send + Sync {
     /// Get the library ID.
     fn id(&self) -> LibId;
+
     /// Get the library name.
     fn name(&self) -> &'static str;
+
     /// Get the commands provided by this library.
     fn commands(&self) -> Vec<CommandInfo> {
         Vec::new()
     }
-}
 
-/// Trait for libraries that can parse custom syntax.
-///
-/// Libraries claim tokens to handle custom syntax. When the parser
-/// encounters a claimed token, it delegates to the library's parser.
-pub trait LibraryParser: Library {
-    /// Get the token claims for this library.
-    fn claims(&self) -> &[TokenClaim];
+    // ---- Parser methods (override for custom syntax) ----
+
+    /// Get token claims for custom syntax (e.g., "IF", "FOR").
+    ///
+    /// Default: no claims (not a parser).
+    fn claims(&self) -> &[TokenClaim] {
+        &[]
+    }
 
     /// Parse starting from a claimed token.
     ///
     /// Called when the parser encounters a token claimed by this library.
-    /// The token has already been consumed; ctx.peek() returns the next token.
+    /// Default: returns an error (not a parser).
     fn parse(
         &self,
-        token: &str,
-        ctx: &mut crate::parse::ParseContext,
-    ) -> Result<crate::ir::Node, crate::parse::ParseError>;
-}
+        _token: &str,
+        _ctx: &mut crate::parse::ParseContext,
+    ) -> Result<crate::ir::Node, crate::parse::ParseError> {
+        Err(crate::parse::ParseError::new(
+            "library does not support parsing",
+            Span::default(),
+        ))
+    }
 
-/// Trait for libraries that can lower extended composites.
-pub trait LibraryLowerer: Library {
-    /// Lower an extended composite.
+    // ---- Lowerer methods (override for custom bytecode) ----
+
+    /// Lower an extended composite to bytecode.
     ///
-    /// Called when the lowerer encounters `CompositeKind::Extended(lib_id, id)`
-    /// where `lib_id` matches this library's ID.
+    /// Called for `CompositeKind::Extended(lib_id, id)` nodes.
+    /// Default: returns an error (no composites).
     fn lower_composite(
         &self,
-        id: u16,
-        branches: &[Branch],
+        _id: u16,
+        _branches: &[Branch],
         span: Span,
-        ctx: &mut LowerContext,
-    ) -> Result<(), LowerError>;
+        _ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
+        Err(LowerError {
+            message: "library does not support composites".into(),
+            span: Some(span),
+        })
+    }
 
-    /// Lower a command and return its stack effect.
+    /// Lower a command by emitting bytecode.
     ///
-    /// The library emits bytecode via `ctx`, then returns the effect
-    /// that describes how the operation affected the type stack.
-    /// The lowerer applies this effect after the call returns.
-    ///
-    /// Default implementation emits a CallLib instruction and returns Dynamic.
+    /// Default: emits a CallLib instruction.
     fn lower_command(
         &self,
         cmd: u16,
-        span: Span,
+        _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        let _ = span; // Default ignores span
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(self.id(), cmd);
-        Ok(StackEffect::Dynamic)
+        Ok(())
     }
-}
 
-/// Trait for libraries that can execute commands at runtime.
-pub trait LibraryExecutor: Library {
-    /// Execute a command.
+    // ---- Executor methods (override for runtime behavior) ----
+
+    /// Execute a command at runtime.
     ///
-    /// Called when the VM encounters a CallLib instruction for this library.
-    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult;
+    /// Called when the VM encounters a CallLib instruction.
+    /// Default: returns an error (no runtime support).
+    fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
+        Err("library does not support execution".into())
+    }
+
+    // ---- Analyzer methods (override for type tracking) ----
+
+    /// Compute the stack effect for a command.
+    ///
+    /// Used for type inference during compilation and analysis.
+    /// Default: returns Dynamic (unknown effect).
+    fn command_effect(&self, _cmd: u16, _types: &crate::types::CStack) -> StackEffect {
+        StackEffect::Dynamic
+    }
 }
 
 
@@ -503,4 +615,30 @@ mod tests {
         assert_eq!(claim.priority, 100);
     }
 
+    #[test]
+    fn stack_effect_notation_permutation() {
+        assert_eq!(StackEffect::dup().to_notation(), "(a -- a a)");
+        assert_eq!(StackEffect::drop().to_notation(), "(a -- )");
+        assert_eq!(StackEffect::swap().to_notation(), "(a b -- b a)");
+        assert_eq!(StackEffect::rot().to_notation(), "(a b c -- b c a)");
+        assert_eq!(StackEffect::over().to_notation(), "(a b -- a b a)");
+    }
+
+    #[test]
+    fn stack_effect_notation_fixed() {
+        use crate::core::TypeId;
+        // Depth: produces integer, consumes nothing
+        assert_eq!(StackEffect::depth().to_notation(), "( -- int)");
+        // Comparison: consumes 2, produces int
+        let cmp = StackEffect::fixed(2, &[Some(TypeId::BINT)]);
+        assert_eq!(cmp.to_notation(), "(a b -- int)");
+        // Unknown result type
+        let unknown = StackEffect::fixed(1, &[None]);
+        assert_eq!(unknown.to_notation(), "(a -- ?)");
+    }
+
+    #[test]
+    fn stack_effect_notation_dynamic() {
+        assert_eq!(StackEffect::Dynamic.to_notation(), "(dynamic)");
+    }
 }

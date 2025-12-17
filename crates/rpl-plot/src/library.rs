@@ -8,10 +8,12 @@ use std::sync::Arc;
 
 use rpl::{
     TypeId,
-    ir::LibId,
-    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
-    lower::LowerError,
+    ir::{Branch, LibId},
+    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect},
+    lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
+    Span,
 };
 
 use crate::commands::*;
@@ -206,15 +208,13 @@ impl Library for PlotLib {
             CommandInfo::with_effect("RGBA", PLOT_LIB_ID, cmd::RGBA, 4, 1),
         ]
     }
-}
 
-impl LibraryLowerer for PlotLib {
     fn lower_composite(
         &self,
         _id: u16,
-        _branches: &[rpl::ir::Branch],
-        _span: rpl::Span,
-        _ctx: &mut rpl::lower::LowerContext,
+        _branches: &[Branch],
+        _span: Span,
+        _ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
         Err(LowerError {
             message: "Plot library has no composites".into(),
@@ -225,11 +225,15 @@ impl LibraryLowerer for PlotLib {
     fn lower_command(
         &self,
         cmd_id: u16,
-        _span: rpl::Span,
-        ctx: &mut rpl::lower::LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+        _span: Span,
+        ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(PLOT_LIB_ID, cmd_id);
-        Ok(match cmd_id {
+        Ok(())
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
             cmd::BEGINPLOT => StackEffect::fixed(0, &[]),
             cmd::ENDPLOT => StackEffect::fixed(0, &[None]),
             cmd::MOVETO | cmd::LINETO | cmd::PIXEL => StackEffect::fixed(2, &[]),
@@ -245,11 +249,9 @@ impl LibraryLowerer for PlotLib {
             cmd::FONT | cmd::SCALE | cmd::TRANSLATE => StackEffect::fixed(2, &[]),
             cmd::RGBA => StackEffect::fixed(4, &[Some(TypeId::BINT)]),
             _ => StackEffect::Dynamic,
-        })
+        }
     }
-}
 
-impl LibraryExecutor for PlotLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::BEGINPLOT => {
@@ -548,11 +550,5 @@ impl LibraryExecutor for PlotLib {
 
 /// Register the plot library with a session.
 pub fn register_plot_lib(session: &mut rpl::Session) {
-    let registry = session.registry_mut();
-    let lib = PlotLib;
-    for cmd in lib.commands() {
-        registry.register_command(cmd.name, cmd.lib_id, cmd.cmd_id);
-    }
-    registry.register_lowerer(Box::new(PlotLib));
-    registry.register_executor(Box::new(PlotLib));
+    session.registry_mut().add(PlotLib);
 }

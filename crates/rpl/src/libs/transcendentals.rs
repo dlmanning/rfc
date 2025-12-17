@@ -12,10 +12,13 @@
 use crate::core::Span;
 
 use crate::{
+    core::TypeId,
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
+    vm::bytecode::Opcode,
 };
 
 /// Transcendentals library ID (matches rpl-stdlib).
@@ -111,9 +114,7 @@ impl Library for TranscendentalsLib {
             CommandInfo::with_effect("FP", TRANSCENDENTALS_LIB, cmd::FP, 1, 1),
         ]
     }
-}
 
-impl LibraryLowerer for TranscendentalsLib {
     fn lower_composite(
         &self,
         _id: u16,
@@ -131,69 +132,50 @@ impl LibraryLowerer for TranscendentalsLib {
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        use crate::vm::bytecode::Opcode;
-        use crate::core::TypeId;
-
+    ) -> Result<(), LowerError> {
         // Note: While WASM has F64Sqrt as a native opcode, we use the library call
         // for domain checking (negative numbers should error, not return NaN).
-        // In a future optimization pass, we could use F64Sqrt for values known to be non-negative.
-        Ok(match cmd {
+        match cmd {
             cmd::SQRT => {
                 // Use library call for domain checking
                 ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                StackEffect::fixed(1, &[Some(TypeId::REAL)])
             }
             cmd::PI => {
                 // Push pi constant
                 ctx.output.emit_f64_const(std::f64::consts::PI);
-                StackEffect::fixed(0, &[Some(TypeId::REAL)])
             }
             cmd::ATAN2 => {
                 // Binary operation (y x -- result)
                 ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                StackEffect::fixed(2, &[Some(TypeId::REAL)])
             }
             // Rounding operations - use native opcodes for reals
             cmd::CEIL => {
                 let tos = ctx.types.top();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Ceil);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
-                } else if tos.is_integer() {
-                    // Integer is already "ceiled" - no-op
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
-                } else {
+                } else if !tos.is_integer() {
                     ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
                 }
+                // Integer is already "ceiled" - no-op
             }
             cmd::FLOOR => {
                 let tos = ctx.types.top();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Floor);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
-                } else if tos.is_integer() {
-                    // Integer is already "floored" - no-op
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
-                } else {
+                } else if !tos.is_integer() {
                     ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
                 }
+                // Integer is already "floored" - no-op
             }
             cmd::IP => {
                 // Integer part (truncate toward zero)
                 let tos = ctx.types.top();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Trunc);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
-                } else if tos.is_integer() {
-                    // Integer is its own integer part - no-op
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
-                } else {
+                } else if !tos.is_integer() {
                     ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
                 }
+                // Integer is its own integer part - no-op
             }
             cmd::FP => {
                 // Fractional part: x - trunc(x)
@@ -203,22 +185,44 @@ impl LibraryLowerer for TranscendentalsLib {
                     // Drop the integer, push 0
                     ctx.output.emit_opcode(Opcode::Drop);
                     ctx.output.emit_i64_const(0);
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
                 } else {
                     ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
+                }
+            }
+            // All other transcendentals use library call
+            _ => {
+                ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
+            }
+        }
+        Ok(())
+    }
+
+    fn command_effect(&self, cmd: u16, types: &CStack) -> StackEffect {
+        match cmd {
+            cmd::PI => StackEffect::fixed(0, &[Some(TypeId::REAL)]),
+            cmd::ATAN2 => StackEffect::fixed(2, &[Some(TypeId::REAL)]),
+            // Rounding operations preserve integer type
+            cmd::CEIL | cmd::FLOOR | cmd::IP => {
+                let tos = types.top();
+                if tos.is_integer() {
+                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
+                } else {
+                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
+                }
+            }
+            cmd::FP => {
+                let tos = types.top();
+                if tos.is_integer() {
+                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
+                } else {
                     StackEffect::fixed(1, &[Some(TypeId::REAL)])
                 }
             }
             // All other transcendentals are unary (1 -> 1) and produce Real
-            _ => {
-                ctx.output.emit_call_lib(TRANSCENDENTALS_LIB, cmd);
-                StackEffect::fixed(1, &[Some(TypeId::REAL)])
-            }
-        })
+            _ => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
+        }
     }
-}
 
-impl LibraryExecutor for TranscendentalsLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             // Trigonometric

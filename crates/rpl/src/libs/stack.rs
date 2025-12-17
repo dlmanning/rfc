@@ -7,9 +7,10 @@
 use crate::core::Span;
 
 use crate::{
-    ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    ir::LibId,
+    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
     vm::bytecode::Opcode,
 };
@@ -85,44 +86,28 @@ impl Library for StackLib {
             CommandInfo::with_effect("IFTE", STACK_LIB, cmd::IFTE, 3, 1),
         ]
     }
-}
-
-impl LibraryLowerer for StackLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        // Stack library has no composites
-        Err(LowerError { span: None,
-            message: "Stack library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         // Scratch locals 0, 1, 2 for stack manipulation
         let s0 = ctx.scratch(0);
         let s1 = ctx.scratch(1);
         let s2 = ctx.scratch(2);
 
-        Ok(match cmd {
+        // Emit bytecode for the command
+        match cmd {
             cmd::DUP => {
                 // DUP (x -- x x): local.tee s0, local.get s0
                 ctx.output.emit_local_tee(s0);
                 ctx.output.emit_local_get(s0);
-                StackEffect::dup()
             }
             cmd::DROP => {
                 // DROP (x --): native drop
                 ctx.output.emit_opcode(Opcode::Drop);
-                StackEffect::drop()
             }
             cmd::SWAP => {
                 // SWAP (a b -- b a): set s0, set s1, get s0, get s1
@@ -130,7 +115,6 @@ impl LibraryLowerer for StackLib {
                 ctx.output.emit_local_set(s1); // a -> s1
                 ctx.output.emit_local_get(s0); // push b
                 ctx.output.emit_local_get(s1); // push a
-                StackEffect::swap()
             }
             cmd::ROT => {
                 // ROT (a b c -- b c a): set s0(c), set s1(b), set s2(a), get s1, get s0, get s2
@@ -140,7 +124,6 @@ impl LibraryLowerer for StackLib {
                 ctx.output.emit_local_get(s1); // push b
                 ctx.output.emit_local_get(s0); // push c
                 ctx.output.emit_local_get(s2); // push a
-                StackEffect::rot()
             }
             cmd::OVER => {
                 // OVER (a b -- a b a): set s0(b), tee s1(a), get s0, get s1
@@ -148,37 +131,16 @@ impl LibraryLowerer for StackLib {
                 ctx.output.emit_local_tee(s1); // a -> s1 (keeps a on stack)
                 ctx.output.emit_local_get(s0); // push b
                 ctx.output.emit_local_get(s1); // push a
-                StackEffect::over()
-            }
-            cmd::DEPTH => {
-                ctx.output.emit_call_lib(STACK_LIB, cmd);
-                StackEffect::depth()
-            }
-            cmd::PICK => {
-                // PICK: consumes index, produces unknown type
-                ctx.output.emit_call_lib(STACK_LIB, cmd);
-                StackEffect::fixed(1, &[None])
-            }
-            cmd::ROLL => {
-                // ROLL: consumes index, permutes stack unpredictably
-                ctx.output.emit_call_lib(STACK_LIB, cmd);
-                StackEffect::Dynamic
-            }
-            cmd::DUP2 | cmd::DROP2 | cmd::DUPN | cmd::DROPN | cmd::DUPDUP | cmd::NDUPN
-            | cmd::NIP | cmd::UNROT | cmd::PICK3 | cmd::ROLLD | cmd::REVN | cmd::UNPICK
-            | cmd::IFT | cmd::IFTE => {
-                ctx.output.emit_call_lib(STACK_LIB, cmd);
-                StackEffect::Dynamic
             }
             _ => {
+                // All other commands use library call
                 ctx.output.emit_call_lib(STACK_LIB, cmd);
-                StackEffect::Dynamic
             }
-        })
-    }
-}
+        }
 
-impl LibraryExecutor for StackLib {
+        Ok(())
+    }
+
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::DUP => {
@@ -445,6 +407,43 @@ impl LibraryExecutor for StackLib {
                 Ok(())
             }
             _ => Err(format!("Unknown stack command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        // Stack operations use permutations that preserve types.
+        // These match the effects returned by lower_command.
+        match cmd {
+            cmd::DUP => StackEffect::dup(),
+            cmd::DROP => StackEffect::drop(),
+            cmd::SWAP => StackEffect::swap(),
+            cmd::ROT => StackEffect::rot(),
+            cmd::OVER => StackEffect::over(),
+            cmd::DEPTH => StackEffect::depth(),
+            cmd::NIP => StackEffect::nip(),
+            // UNROT (a b c -- c a b) is inverse of ROT
+            cmd::UNROT => StackEffect::permutation(3, &[2, 0, 1]),
+            // DUP2 (a b -- a b a b)
+            cmd::DUP2 => StackEffect::permutation(2, &[0, 1, 0, 1]),
+            // DROP2 (a b --)
+            cmd::DROP2 => StackEffect::permutation(2, &[]),
+            // DUPDUP (a -- a a a)
+            cmd::DUPDUP => StackEffect::permutation(1, &[0, 0, 0]),
+            // PICK3 (a b c -- a b c a)
+            cmd::PICK3 => StackEffect::permutation(3, &[0, 1, 2, 0]),
+            // PICK consumes n, produces unknown type
+            cmd::PICK => StackEffect::fixed(1, &[None]),
+            // ROLL permutes unpredictably
+            cmd::ROLL => StackEffect::Dynamic,
+            // Other dynamic operations
+            cmd::DUPN | cmd::DROPN | cmd::NDUPN | cmd::ROLLD | cmd::REVN | cmd::UNPICK => {
+                StackEffect::Dynamic
+            }
+            // IFT (obj flag -- obj | nothing) - dynamic
+            cmd::IFT => StackEffect::Dynamic,
+            // IFTE (true false flag -- result) - 3 in, 1 out but type unknown
+            cmd::IFTE => StackEffect::fixed(3, &[None]),
+            _ => StackEffect::Dynamic,
         }
     }
 }

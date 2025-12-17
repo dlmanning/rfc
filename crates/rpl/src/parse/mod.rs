@@ -627,9 +627,9 @@ fn parse_one(ctx: &mut ParseContext) -> Result<Node, ParseError> {
 
     // Check for token claims (library-defined syntax like IF, FOR, etc.)
     if let Some(claim) = ctx.registry.find_claim(&token.text, ClaimContext::Any)
-        && let Some(parser) = ctx.registry.get_parser(claim.lib_id)
+        && let Some(library) = ctx.registry.get(claim.lib_id)
     {
-        return parser.parse(&token.text, ctx);
+        return library.parse(&token.text, ctx);
     }
 
     // Try to find as command

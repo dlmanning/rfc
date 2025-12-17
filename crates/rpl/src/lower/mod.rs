@@ -613,46 +613,51 @@ impl<'a> LowerContext<'a> {
     }
 
     /// Emit a binary numeric operation, choosing optimal opcode based on operand types.
-    /// Returns the stack effect to be applied by the caller.
     ///
-    /// - If both operands are integers: emits int_op, returns Integer result
-    /// - If both are reals: emits real_op, returns Real result
-    /// - If mixed: coerces to real, emits real_op, returns Real result
-    /// - Otherwise: emits CallLib, returns Unknown result
+    /// Uses `binary_numeric_effect` as single source of truth for type computation:
+    /// - If both operands are integers: emits int_op
+    /// - If either is real (or mixed): coerces and emits real_op
+    /// - Otherwise: emits CallLib
     pub fn emit_binary_numeric(
         &mut self,
         int_op: Opcode,
         real_op: Opcode,
         lib: u16,
         cmd: u16,
-    ) -> StackEffect {
-        let (tos, nos) = (self.types.top(), self.types.nos());
-        let both_int = tos.is_integer() && nos.is_integer();
-        let both_real = tos.is_real() && nos.is_real();
+    ) {
+        // Use shared effect computation as single source of truth
+        let effect = crate::libs::binary_numeric_effect(&self.types);
 
-        let coerced = self.coerce_to_real_if_mixed();
-
-        if both_int {
-            self.output.emit_opcode(int_op);
-            StackEffect::fixed(2, &[Some(TypeId::BINT)])
-        } else if both_real || coerced {
-            self.output.emit_opcode(real_op);
-            StackEffect::fixed(2, &[Some(TypeId::REAL)])
-        } else {
-            self.output.emit_call_lib(lib, cmd);
-            StackEffect::fixed(2, &[None])
+        // Emit bytecode based on the computed effect
+        match &effect {
+            StackEffect::Fixed { results, .. }
+                if results.first() == Some(&Some(TypeId::BINT)) =>
+            {
+                // Both integers - use integer opcode
+                self.output.emit_opcode(int_op);
+            }
+            StackEffect::Fixed { results, .. }
+                if results.first() == Some(&Some(TypeId::REAL)) =>
+            {
+                // At least one real - coerce if needed and use real opcode
+                self.coerce_to_real_if_mixed();
+                self.output.emit_opcode(real_op);
+            }
+            _ => {
+                // Unknown types - use library call
+                self.output.emit_call_lib(lib, cmd);
+            }
         }
     }
 
     /// Emit a binary comparison operation, choosing optimal opcode based on operand types.
-    /// Always returns Integer result (0 or 1).
     pub fn emit_binary_comparison(
         &mut self,
         int_op: Opcode,
         real_op: Opcode,
         lib: u16,
         cmd: u16,
-    ) -> StackEffect {
+    ) {
         let (tos, nos) = (self.types.top(), self.types.nos());
         let both_int = tos.is_integer() && nos.is_integer();
         let both_real = tos.is_real() && nos.is_real();
@@ -666,35 +671,41 @@ impl<'a> LowerContext<'a> {
         } else {
             self.output.emit_call_lib(lib, cmd);
         }
-
-        // Comparisons always produce integer
-        StackEffect::fixed(2, &[Some(TypeId::BINT)])
     }
 
     /// Emit a unary numeric operation.
-    /// Returns the stack effect to be applied by the caller.
+    ///
+    /// Uses `unary_preserving_effect` as single source of truth for type computation.
+    /// The `int_op` is optional - if `None`, uses CallLib for integers.
     pub fn emit_unary_numeric(
         &mut self,
         int_op: Option<Opcode>,
         real_op: Opcode,
         lib: u16,
         cmd: u16,
-    ) -> StackEffect {
-        let tos = self.types.top();
+    ) {
+        // Use shared effect computation as single source of truth
+        let effect = crate::libs::unary_preserving_effect(&self.types);
 
-        if tos.is_real() {
-            self.output.emit_opcode(real_op);
-            StackEffect::fixed(1, &[Some(TypeId::REAL)])
-        } else if tos.is_integer() {
-            if let Some(op) = int_op {
-                self.output.emit_opcode(op);
-            } else {
+        // Emit bytecode based on the computed effect
+        match &effect {
+            StackEffect::Fixed { results, .. }
+                if results.first() == Some(&Some(TypeId::REAL)) =>
+            {
+                self.output.emit_opcode(real_op);
+            }
+            StackEffect::Fixed { results, .. }
+                if results.first() == Some(&Some(TypeId::BINT)) =>
+            {
+                if let Some(op) = int_op {
+                    self.output.emit_opcode(op);
+                } else {
+                    self.output.emit_call_lib(lib, cmd);
+                }
+            }
+            _ => {
                 self.output.emit_call_lib(lib, cmd);
             }
-            StackEffect::fixed(1, &[Some(TypeId::BINT)])
-        } else {
-            self.output.emit_call_lib(lib, cmd);
-            StackEffect::fixed(1, &[None])
         }
     }
 
@@ -841,11 +852,14 @@ impl<'a> LowerContext<'a> {
 
     /// Lower a command by dispatching to the library lowerer.
     ///
-    /// The library emits bytecode and returns the stack effect,
-    /// which is then applied to the type stack.
+    /// The library emits bytecode, then we query the effect from the
+    /// analyzer (single source of truth) and apply it to the type stack.
     pub fn lower_command(&mut self, lib: u16, cmd: u16) -> Result<(), LowerError> {
-        if let Some(lowerer) = self.registry.get_lowerer(lib) {
-            let effect = lowerer.lower_command(cmd, crate::core::Span::default(), self)?;
+        if let Some(library) = self.registry.get(lib) {
+            // Emit bytecode
+            library.lower_command(cmd, crate::core::Span::default(), self)?;
+            // Query effect from analyzer - single source of truth
+            let effect = self.registry.get_command_effect(lib, cmd, &self.types);
             self.types.apply_effect(&effect);
             Ok(())
         } else {
@@ -895,11 +909,11 @@ impl<'a> LowerContext<'a> {
             }
             CompositeKind::Extended(lib, id) => {
                 // Dispatch to library lowerer
-                if let Some(lowerer) = self.registry.get_lowerer(lib) {
-                    lowerer.lower_composite(id, branches, span, self)?;
+                if let Some(library) = self.registry.get(lib) {
+                    library.lower_composite(id, branches, span, self)?;
                 } else {
                     return Err(LowerError {
-                        message: format!("no lowerer registered for library {}", lib),
+                        message: format!("no library registered with id {}", lib),
                         span: None,
                     });
                 }

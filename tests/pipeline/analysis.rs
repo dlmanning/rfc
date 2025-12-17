@@ -345,6 +345,227 @@ fn semantic_tokens_quicksort_fixture() {
     }
 }
 
+// ============================================================================
+// Hover Tests
+// ============================================================================
+
+#[test]
+fn hover_on_variable_definition() {
+    let mut session = Session::new();
+    let source_id = session.set_source("test.rpl", "42 \"x\" STO");
+
+    // Position on "x" (the name being defined) - offset 4 is inside the string
+    let pos = rpl::core::Pos::new(4);
+    let hover = session.hover(source_id, pos);
+
+    assert!(hover.is_some(), "Should have hover for definition");
+    let hover = hover.unwrap();
+    assert!(hover.contents.contains("x"), "Should mention variable name");
+    assert!(
+        hover.contents.contains("global") || hover.contents.contains("variable"),
+        "Should indicate it's a variable"
+    );
+}
+
+#[test]
+fn hover_on_variable_reference() {
+    let mut session = Session::new();
+    let source_id = session.set_source("test.rpl", "42 \"x\" STO x");
+
+    // Position on the reference to x at the end (offset 11)
+    let pos = rpl::core::Pos::new(11);
+    let hover = session.hover(source_id, pos);
+
+    assert!(hover.is_some(), "Should have hover for reference");
+    let hover = hover.unwrap();
+    assert!(hover.contents.contains("x"), "Should mention variable name");
+}
+
+#[test]
+fn hover_shows_inferred_type() {
+    let mut session = Session::new();
+    let source_id = session.set_source("test.rpl", "42 \"x\" STO");
+
+    // Analyze to get type info
+    let _ = session.analyze(source_id);
+
+    // Position on "x" definition
+    let pos = rpl::core::Pos::new(4);
+    let hover = session.hover(source_id, pos);
+
+    assert!(hover.is_some(), "Should have hover");
+    let hover = hover.unwrap();
+    // The type should be inferred as integer from the 42 literal
+    assert!(
+        hover.contents.contains("Int"),
+        "Should show integer type, got: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn hover_shows_function_arity() {
+    let mut session = Session::new();
+    let source_id = session.set_source("test.rpl", "<< -> a b << a b + >> >> \"add\" STO");
+
+    let _ = session.analyze(source_id);
+
+    // Position on "add" definition
+    let pos = rpl::core::Pos::new(28); // inside "add"
+    let hover = session.hover(source_id, pos);
+
+    assert!(hover.is_some(), "Should have hover for function");
+    let hover = hover.unwrap();
+    assert!(
+        hover.contents.contains("function"),
+        "Should be labeled as function, got: {}",
+        hover.contents
+    );
+    assert!(
+        hover.contents.contains("Arity: 2"),
+        "Should show arity 2, got: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn local_parameters_have_inferred_types() {
+    // When we bind locals with `->`, the types should be inferred from what's on the stack
+    let code = "1 2 -> a b << a b + >>";
+    let result = analyze(code);
+
+    // Find the local definitions
+    let a_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "a")
+        .expect("Should find definition for 'a'");
+    let b_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "b")
+        .expect("Should find definition for 'b'");
+
+    // Both should have Integer type inferred from the literals
+    assert!(
+        a_def.value_type.is_some(),
+        "Parameter 'a' should have an inferred type"
+    );
+    assert!(
+        b_def.value_type.is_some(),
+        "Parameter 'b' should have an inferred type"
+    );
+
+    // Check the types are integers
+    let a_type = a_def.value_type.as_ref().unwrap();
+    let b_type = b_def.value_type.as_ref().unwrap();
+
+    assert!(
+        a_type.is_integer(),
+        "Parameter 'a' should be Integer, got {:?}",
+        a_type
+    );
+    assert!(
+        b_type.is_integer(),
+        "Parameter 'b' should be Integer, got {:?}",
+        b_type
+    );
+}
+
+#[test]
+fn local_parameters_have_mixed_types() {
+    // Test with mixed types on the stack
+    let code = "1 2.5 -> a b << a b + >>";
+    let result = analyze(code);
+
+    let a_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "a")
+        .expect("Should find definition for 'a'");
+    let b_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "b")
+        .expect("Should find definition for 'b'");
+
+    // 'a' binds the deeper item (1 = Integer)
+    // 'b' binds TOS (2.5 = Real)
+    let a_type = a_def.value_type.as_ref().expect("'a' should have type");
+    let b_type = b_def.value_type.as_ref().expect("'b' should have type");
+
+    assert!(
+        a_type.is_integer(),
+        "Parameter 'a' should be Integer, got {:?}",
+        a_type
+    );
+    assert!(
+        b_type.is_real(),
+        "Parameter 'b' should be Real, got {:?}",
+        b_type
+    );
+}
+
+#[test]
+fn hover_shows_local_parameter_type() {
+    let mut session = Session::new();
+    // Use << >> instead of → for more reliable parsing
+    let source_id = session.set_source("test.rpl", "1 2 -> a b << a b + >>");
+
+    let _ = session.analyze(source_id);
+
+    // Position on 'a' definition (offset 7, inside "a")
+    let pos = rpl::core::Pos::new(7);
+    let hover = session.hover(source_id, pos);
+
+    assert!(hover.is_some(), "Should have hover for local parameter");
+    let hover = hover.unwrap();
+    assert!(
+        hover.contents.contains("Int"),
+        "Should show Int type for parameter 'a', got: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn local_parameters_after_user_word_are_unknown() {
+    // When calling a user-defined word, the stack effect is unknown,
+    // so parameters bound after should be Unknown, not incorrectly typed.
+    //
+    // This tests a scenario like quicksort's:
+    //   lst piv partition3
+    //   -> less equal greater << ... >>
+    //
+    // Previously, 'equal' was incorrectly getting a String type from
+    // unrelated stack state.
+
+    // Define a word then call it and bind its results
+    let code = r#"
+<< 1 2 3 >> "myword" STO
+<< myword -> x y z << x y z >> >>
+"#;
+
+    let result = analyze(code);
+
+    // Find the 'y' parameter (should be Unknown, not incorrectly typed)
+    let y_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "y")
+        .expect("Should find 'y' definition");
+
+    // After calling 'myword', stack is unknown, so 'y' should have Unknown type
+    // (or None if value_type is not set)
+    if let Some(ref ty) = y_def.value_type {
+        // The type should be Unknown (not a specific wrong type like String)
+        assert!(
+            ty.is_unknown(),
+            "Parameter 'y' should be Unknown after user word call, got {:?}",
+            ty
+        );
+    }
+}
+
 #[test]
 fn semantic_tokens_multiline() {
     use rpl::session::lsp::{encode_semantic_tokens, SemanticToken};

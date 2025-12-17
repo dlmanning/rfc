@@ -14,9 +14,11 @@ use std::cmp::Ordering;
 use crate::core::Span;
 
 use crate::{
-    ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    core::TypeId,
+    ir::LibId,
+    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
 };
 
@@ -93,47 +95,29 @@ impl Library for ArithLib {
             CommandInfo::with_effect("SQ", ARITH_LIB, cmd::SQ, 1, 1),
         ]
     }
-}
-
-impl LibraryLowerer for ArithLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError {
-            message: "Arithmetic library has no composites".into(),
-            span: None,
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         use crate::vm::bytecode::Opcode;
-        use crate::core::TypeId;
 
-        Ok(match cmd {
+        // Emit bytecode based on command - effect is determined by command_effect
+        match cmd {
             cmd::ADD => ctx.emit_binary_numeric(Opcode::I64Add, Opcode::F64Add, ARITH_LIB, cmd),
             cmd::SUB => ctx.emit_binary_numeric(Opcode::I64Sub, Opcode::F64Sub, ARITH_LIB, cmd),
             cmd::MUL => ctx.emit_binary_numeric(Opcode::I64Mul, Opcode::F64Mul, ARITH_LIB, cmd),
             cmd::DIV => ctx.emit_binary_numeric(Opcode::I64DivS, Opcode::F64Div, ARITH_LIB, cmd),
             cmd::NEG => ctx.emit_unary_numeric(None, Opcode::F64Neg, ARITH_LIB, cmd),
             cmd::ABS => {
-                // For reals, use native F64Abs
-                // For integers, we need to use library call (no i64.abs in WASM)
+                // For reals, use native F64Abs; for others, use library call
                 let tos = ctx.types.top();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Abs);
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
                 } else {
                     ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                    StackEffect::fixed(1, &[None])
                 }
             }
             cmd::EQ => ctx.emit_binary_comparison(Opcode::I64Eq, Opcode::F64Eq, ARITH_LIB, cmd),
@@ -142,45 +126,15 @@ impl LibraryLowerer for ArithLib {
             cmd::LE => ctx.emit_binary_comparison(Opcode::I64LeS, Opcode::F64Le, ARITH_LIB, cmd),
             cmd::GT => ctx.emit_binary_comparison(Opcode::I64GtS, Opcode::F64Gt, ARITH_LIB, cmd),
             cmd::GE => ctx.emit_binary_comparison(Opcode::I64GeS, Opcode::F64Ge, ARITH_LIB, cmd),
-            cmd::INV => {
-                // 1/x - always produces real
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(1, &[Some(TypeId::REAL)])
-            }
-            cmd::MOD => {
-                // Modulo - type depends on inputs
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(2, &[None])
-            }
-            cmd::POW => {
-                // Power - always produces real
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(2, &[Some(TypeId::REAL)])
-            }
-            cmd::MIN | cmd::MAX => {
-                // Min/Max - type depends on inputs
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(2, &[None])
-            }
-            cmd::SIGN => {
-                // Sign - always integer (-1, 0, or 1)
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(1, &[Some(TypeId::BINT)])
-            }
-            cmd::SQ => {
-                // Square - type depends on input
-                ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::fixed(1, &[None])
-            }
             _ => {
+                // All other commands use library call
                 ctx.output.emit_call_lib(ARITH_LIB, cmd);
-                StackEffect::Dynamic
             }
-        })
-    }
-}
+        }
 
-impl LibraryExecutor for ArithLib {
+        Ok(())
+    }
+
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::ADD => add_op(ctx),
@@ -203,6 +157,37 @@ impl LibraryExecutor for ArithLib {
             cmd::SIGN => sign_op(ctx),
             cmd::SQ => unary_numeric_op(ctx, |a| a * a, |a| a * a),
             _ => Err(format!("Unknown arith command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, types: &CStack) -> StackEffect {
+        // Use shared effect computation helpers from libs/mod.rs
+        use super::{binary_numeric_effect, unary_preserving_effect};
+
+        match cmd {
+            // Binary numeric: int+int→int, otherwise→real
+            cmd::ADD | cmd::SUB | cmd::MUL | cmd::DIV => {
+                binary_numeric_effect(types)
+            }
+            // Comparisons always produce integer (0 or 1)
+            cmd::EQ | cmd::NE | cmd::LT | cmd::LE | cmd::GT | cmd::GE => {
+                StackEffect::fixed(2, &[Some(TypeId::BINT)])
+            }
+            // Unary ops that preserve type
+            cmd::NEG | cmd::ABS | cmd::SQ => {
+                unary_preserving_effect(types)
+            }
+            // INV always produces real
+            cmd::INV => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
+            // MOD preserves numeric type
+            cmd::MOD => binary_numeric_effect(types),
+            // POW always produces real
+            cmd::POW => StackEffect::fixed(2, &[Some(TypeId::REAL)]),
+            // MIN/MAX preserve type
+            cmd::MIN | cmd::MAX => binary_numeric_effect(types),
+            // SIGN always returns integer (-1, 0, 1)
+            cmd::SIGN => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
+            _ => StackEffect::Dynamic,
         }
     }
 }

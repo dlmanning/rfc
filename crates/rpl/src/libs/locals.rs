@@ -30,7 +30,7 @@ use crate::core::{Pos, Span};
 
 use crate::{
     ir::{Branch, LibId, Node},
-    libs::{ClaimContext, Library, LibraryLowerer, LibraryParser, TokenClaim},
+    libs::{ClaimContext, Library, TokenClaim},
     lower::{LowerContext, LowerError},
     parse::{ParseContext, ParseError},
 };
@@ -74,9 +74,7 @@ impl Library for LocalsLib {
     fn name(&self) -> &'static str {
         "locals"
     }
-}
 
-impl LibraryParser for LocalsLib {
     fn claims(&self) -> &[TokenClaim] {
         LOCALS_CLAIMS
     }
@@ -89,6 +87,94 @@ impl LibraryParser for LocalsLib {
                 span: Span::new(Pos::new(0), Pos::new(0)),
                 expected: None,
                 found: Some(token.to_string()),
+            }),
+        }
+    }
+
+    fn lower_composite(
+        &self,
+        id: u16,
+        branches: &[Branch],
+        _span: Span,
+        ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
+        match id {
+            constructs::LOCAL_BINDING => {
+                // branches[0] = local indices, branches[1] = body, branches[2] = local names
+                if branches.len() < 2 {
+                    return Err(LowerError { span: None,
+                        message: "local binding requires indices and body".into(),
+                    });
+                }
+
+                // Get local indices from branches[0]
+                let indices: Vec<usize> = branches[0]
+                    .iter()
+                    .filter_map(|node| {
+                        if let crate::ir::NodeKind::Atom(crate::ir::AtomKind::Integer(n)) =
+                            &node.kind
+                        {
+                            Some(*n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Get local names from branches[2] if present
+                let names: Vec<String> = if branches.len() > 2 {
+                    branches[2]
+                        .iter()
+                        .filter_map(|node| {
+                            if let crate::ir::NodeKind::Atom(crate::ir::AtomKind::String(s)) =
+                                &node.kind
+                            {
+                                Some(s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                // Build name→actual_index pairs for PushLocalScope
+                // We need to map parsed indices to actual indices
+                let mut names_and_indices: Vec<(String, u32)> = Vec::new();
+                for (i, &idx) in indices.iter().enumerate() {
+                    let actual_idx = ctx.user_local(idx as u32);
+                    if i < names.len() {
+                        names_and_indices.push((names[i].clone(), actual_idx));
+                    }
+                }
+
+                // Emit PushLocalScope if we have names
+                if !names_and_indices.is_empty() {
+                    ctx.output.emit_push_local_scope(&names_and_indices);
+                }
+
+                // Pop values from stack into locals (reverse order - TOS goes to last name)
+                // For → a b c :: ... the stack has [... a_val b_val c_val]
+                // c gets TOS (c_val), b gets NOS (b_val), a gets 3rd (a_val)
+                // NOTE: We already computed actual indices above, reuse them
+                for &idx in indices.iter().rev() {
+                    let actual_idx = ctx.user_local(idx as u32);
+                    ctx.emit_local_set(actual_idx);
+                }
+
+                // Lower the body
+                ctx.lower_all(&branches[1])?;
+
+                // Emit PopLocalScope if we pushed one
+                if !names_and_indices.is_empty() {
+                    ctx.output.emit_pop_local_scope();
+                }
+
+                Ok(())
+            }
+            _ => Err(LowerError { span: None,
+                message: format!("unknown locals construct: {}", id),
             }),
         }
     }
@@ -188,96 +274,6 @@ impl LocalsLib {
             vec![index_nodes, body, name_nodes],
             full_span,
         ))
-    }
-}
-
-impl LibraryLowerer for LocalsLib {
-    fn lower_composite(
-        &self,
-        id: u16,
-        branches: &[Branch],
-        _span: Span,
-        ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        match id {
-            constructs::LOCAL_BINDING => {
-                // branches[0] = local indices, branches[1] = body, branches[2] = local names
-                if branches.len() < 2 {
-                    return Err(LowerError { span: None,
-                        message: "local binding requires indices and body".into(),
-                    });
-                }
-
-                // Get local indices from branches[0]
-                let indices: Vec<usize> = branches[0]
-                    .iter()
-                    .filter_map(|node| {
-                        if let crate::ir::NodeKind::Atom(crate::ir::AtomKind::Integer(n)) =
-                            &node.kind
-                        {
-                            Some(*n as usize)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Get local names from branches[2] if present
-                let names: Vec<String> = if branches.len() > 2 {
-                    branches[2]
-                        .iter()
-                        .filter_map(|node| {
-                            if let crate::ir::NodeKind::Atom(crate::ir::AtomKind::String(s)) =
-                                &node.kind
-                            {
-                                Some(s.to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-
-                // Build name→actual_index pairs for PushLocalScope
-                // We need to map parsed indices to actual indices
-                let mut names_and_indices: Vec<(String, u32)> = Vec::new();
-                for (i, &idx) in indices.iter().enumerate() {
-                    let actual_idx = ctx.user_local(idx as u32);
-                    if i < names.len() {
-                        names_and_indices.push((names[i].clone(), actual_idx));
-                    }
-                }
-
-                // Emit PushLocalScope if we have names
-                if !names_and_indices.is_empty() {
-                    ctx.output.emit_push_local_scope(&names_and_indices);
-                }
-
-                // Pop values from stack into locals (reverse order - TOS goes to last name)
-                // For → a b c :: ... the stack has [... a_val b_val c_val]
-                // c gets TOS (c_val), b gets NOS (b_val), a gets 3rd (a_val)
-                // NOTE: We already computed actual indices above, reuse them
-                for &idx in indices.iter().rev() {
-                    let actual_idx = ctx.user_local(idx as u32);
-                    ctx.emit_local_set(actual_idx);
-                }
-
-                // Lower the body
-                ctx.lower_all(&branches[1])?;
-
-                // Emit PopLocalScope if we pushed one
-                if !names_and_indices.is_empty() {
-                    ctx.output.emit_pop_local_scope();
-                }
-
-                Ok(())
-            }
-            _ => Err(LowerError { span: None,
-                message: format!("unknown locals construct: {}", id),
-            }),
-        }
     }
 }
 

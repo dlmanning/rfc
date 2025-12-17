@@ -110,7 +110,7 @@ impl IncrementalAnalysis {
     pub fn new(source: &str, registry: &Registry, interner: &mut Interner) -> Self {
         let nodes = parse(source, registry, interner).unwrap_or_default();
 
-        let result = super::analyze(&nodes, interner);
+        let result = super::analyze(&nodes, registry, interner);
         let scope_cache = build_scope_cache(&result);
 
         Self {
@@ -289,7 +289,7 @@ impl IncrementalAnalysis {
     fn full_update(&mut self, registry: &Registry, interner: &mut Interner) {
         self.nodes = parse(&self.source, registry, interner).unwrap_or_default();
 
-        self.result = super::analyze(&self.nodes, interner);
+        self.result = super::analyze(&self.nodes, registry, interner);
         self.scope_cache = build_scope_cache(&self.result);
     }
 

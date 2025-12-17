@@ -5,8 +5,6 @@
 
 use std::collections::HashMap;
 
-use crate::core::{Interner, Span, Symbol};
-
 use super::{
     result::{AnalysisResult, Diagnostic},
     scopes::{Scope, ScopeId, ScopeKind, ScopeTree},
@@ -14,12 +12,15 @@ use super::{
     visitor::{Visitor, walk_nodes},
 };
 use crate::{
+    core::{Interner, Span, Symbol},
     ir::{AtomKind, Branch, CompositeKind, LibId, Node, NodeKind},
     libs::{
+        StackEffect,
         directory::{DIRECTORY_LIB, cmd as dir_cmd},
         flow::{FLOW_LIB, constructs as flow_constructs},
         locals::{LOCALS_LIB, constructs as local_constructs},
     },
+    registry::Registry,
     symbolic::SymExpr,
     types::{CStack, CType},
 };
@@ -28,14 +29,15 @@ use crate::{
 ///
 /// This function walks the IR tree and produces an analysis result
 /// containing the symbol table, scope tree, and any diagnostics.
-pub fn analyze(nodes: &[Node], interner: &Interner) -> AnalysisResult {
-    let mut analyzer = Analyzer::new(interner);
+pub fn analyze(nodes: &[Node], registry: &Registry, interner: &Interner) -> AnalysisResult {
+    let mut analyzer = Analyzer::new(registry, interner);
     analyzer.analyze(nodes);
     analyzer.into_result()
 }
 
 /// The main analyzer.
 struct Analyzer<'a> {
+    registry: &'a Registry,
     interner: &'a Interner,
     symbols: SymbolTable,
     scopes: ScopeTree,
@@ -56,11 +58,15 @@ struct Analyzer<'a> {
     /// Stack of local index -> DefinitionId mappings for each scope.
     /// Used to mark local references (LocalRef) as referenced.
     local_index_to_def: Vec<HashMap<usize, DefinitionId>>,
+    /// Saved type stacks for program scopes.
+    /// When entering a program, we save the outer stack and start fresh.
+    saved_type_stacks: Vec<CStack>,
 }
 
 impl<'a> Analyzer<'a> {
-    fn new(interner: &'a Interner) -> Self {
+    fn new(registry: &'a Registry, interner: &'a Interner) -> Self {
         Self {
+            registry,
             interner,
             symbols: SymbolTable::new(),
             scopes: ScopeTree::new(),
@@ -71,6 +77,7 @@ impl<'a> Analyzer<'a> {
             type_stack: CStack::new(),
             pending_arity: None,
             local_index_to_def: vec![HashMap::new()], // Root scope
+            saved_type_stacks: Vec::new(),
         }
     }
 
@@ -325,16 +332,22 @@ impl<'a> Analyzer<'a> {
         } else {
             // Other commands clear the pending string
             self.pending_name = None;
-            // Mark stack as unknown since we don't have command signature info here.
-            // The lowerer has full registry access for proper stack effects.
-            self.type_stack.mark_unknown_depth();
+            // Look up the command's stack effect from the registry
+            let effect = self.registry.get_command_effect(lib, cmd, &self.type_stack);
+            self.type_stack.apply_effect(&effect);
         }
     }
 
     /// Handle a symbol (unresolved identifier).
+    ///
+    /// This is typically a global word call. Since we don't know the stack
+    /// effect of user-defined words, we mark the stack as having unknown depth.
     fn handle_symbol(&mut self, sym: Symbol, span: Span) {
         let name = self.interner.resolve(sym).to_string();
         self.add_reference(name, span, ReferenceKind::Read);
+
+        // User-defined words have unknown stack effects, so mark stack as dynamic
+        self.type_stack.apply_effect(&StackEffect::Dynamic);
     }
 
     /// Handle a local variable reference.
@@ -342,13 +355,14 @@ impl<'a> Analyzer<'a> {
         // Look up the definition by local index in all enclosing scopes
         for scope_map in self.local_index_to_def.iter().rev() {
             if let Some(&def_id) = scope_map.get(&index) {
-                // Get the name first to avoid borrow issues
-                let name = self
+                // Get the name and type first to avoid borrow issues
+                let (name, value_type) = self
                     .symbols
                     .get_definition(def_id)
-                    .map(|d| d.name.clone());
+                    .map(|d| (d.name.clone(), d.value_type.clone()))
+                    .unwrap_or_default();
 
-                if let Some(name) = name {
+                if !name.is_empty() {
                     // Mark the definition as referenced
                     if let Some(def) = self.symbols.get_definition_mut(def_id) {
                         def.referenced = true;
@@ -358,9 +372,18 @@ impl<'a> Analyzer<'a> {
                     // Resolve the reference immediately
                     self.symbols.resolve_reference(ref_id, def_id);
                 }
+
+                // Push the variable's type onto the stack
+                if let Some(ty) = value_type {
+                    self.type_stack.push(ty);
+                } else {
+                    self.type_stack.push(CType::Unknown);
+                }
                 return;
             }
         }
+        // If not found, push unknown type
+        self.type_stack.push(CType::Unknown);
     }
 
     /// Handle a local binding.
@@ -401,31 +424,64 @@ impl<'a> Analyzer<'a> {
             })
             .unwrap_or_default();
 
-        // Get local names from branches[2] (String nodes) with their indices
-        if branches.len() >= 3 {
-            for (i, node) in branches[2].iter().enumerate() {
-                if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
-                    let def_id =
-                        self.add_definition(name.to_string(), node.span, DefinitionKind::Local);
-                    // Map local index to definition for LocalRef resolution
-                    if let Some(&idx) = indices.get(i) {
-                        if let Some(map) = self.local_index_to_def.last_mut() {
-                            map.insert(idx, def_id);
-                        }
+        // Collect parameter names in order
+        let param_names: Vec<(String, Span, Option<usize>)> = if branches.len() >= 3 {
+            branches[2]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, node)| {
+                    if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
+                        Some((name.to_string(), node.span, indices.get(i).copied()))
+                    } else {
+                        None
                     }
-                }
-            }
+                })
+                .collect()
+        } else if branches.len() >= 2 {
+            branches[0]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, node)| {
+                    if let NodeKind::Atom(AtomKind::Symbol(sym)) = &node.kind {
+                        let name = self.interner.resolve(*sym).to_string();
+                        Some((name, node.span, Some(i)))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Infer types from stack for each parameter
+        // Parameters bind in order: first param binds deepest, last param binds TOS
+        // So we collect types from stack in reverse order
+        let param_count = param_names.len();
+        let mut param_types: Vec<CType> = Vec::with_capacity(param_count);
+        for i in 0..param_count {
+            // Get type at position (param_count - 1 - i) from top of stack
+            // i=0 -> deepest param (param_count-1 from top)
+            // i=param_count-1 -> TOS (0 from top)
+            let stack_pos = param_count - 1 - i;
+            let ty = self.type_stack.at(stack_pos);
+            param_types.push(ty);
         }
-        // Fallback: try branches[0] for Symbol nodes (older format)
-        else if branches.len() >= 2 {
-            for (i, node) in branches[0].iter().enumerate() {
-                if let NodeKind::Atom(AtomKind::Symbol(sym)) = &node.kind {
-                    let name = self.interner.resolve(*sym).to_string();
-                    let def_id = self.add_definition(name, node.span, DefinitionKind::Local);
-                    if let Some(map) = self.local_index_to_def.last_mut() {
-                        map.insert(i, def_id);
-                    }
-                }
+
+        // Pop the consumed types from the stack
+        for _ in 0..param_count {
+            self.type_stack.pop();
+        }
+
+        // Add definitions with inferred types
+        for (i, (name, span, idx)) in param_names.into_iter().enumerate() {
+            let ty = param_types.get(i).cloned();
+            let def_id = self.add_definition_with_type(name, span, DefinitionKind::Local, ty);
+            // Map local index to definition for LocalRef resolution
+            if let Some(idx) = idx
+                && let Some(map) = self.local_index_to_def.last_mut()
+            {
+                map.insert(idx, def_id);
             }
         }
     }
@@ -451,16 +507,13 @@ impl<'a> Analyzer<'a> {
         let name_branch_idx = if is_step_variant { 3 } else { 2 };
 
         // Get local index from branches[0]
-        let local_index = branches
-            .first()
-            .and_then(|b| b.first())
-            .and_then(|node| {
-                if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
-                    Some(*n as usize)
-                } else {
-                    None
-                }
-            });
+        let local_index = branches.first().and_then(|b| b.first()).and_then(|node| {
+            if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        });
 
         // Get name from branches[2] or branches[3] (String node)
         if let Some(name_branch) = branches.get(name_branch_idx) {
@@ -470,10 +523,10 @@ impl<'a> Analyzer<'a> {
                     let def_id =
                         self.add_definition(name.to_string(), node.span, DefinitionKind::LoopVar);
                     // Map local index to definition for LocalRef resolution
-                    if let Some(idx) = local_index {
-                        if let Some(map) = self.local_index_to_def.last_mut() {
-                            map.insert(idx, def_id);
-                        }
+                    if let Some(idx) = local_index
+                        && let Some(map) = self.local_index_to_def.last_mut()
+                    {
+                        map.insert(idx, def_id);
                     }
                     break;
                 }
@@ -517,10 +570,19 @@ impl Visitor for Analyzer<'_> {
 
     fn visit_program(&mut self, _body: &Branch, node: &Node) {
         self.enter_scope(ScopeKind::Program, node.span);
+        // Save current type stack and start fresh for the program body.
+        // This prevents the body's type changes from polluting the outer scope.
+        let saved = std::mem::take(&mut self.type_stack);
+        self.saved_type_stacks.push(saved);
     }
 
     fn visit_program_post(&mut self, _body: &Branch, _node: &Node) {
         self.exit_scope();
+        // Restore the outer type stack and push Program type.
+        // The body's internal type changes are discarded.
+        if let Some(saved) = self.saved_type_stacks.pop() {
+            self.type_stack = saved;
+        }
         // A program literal pushes a program value onto the stack
         self.type_stack.push(CType::program());
     }
@@ -585,19 +647,22 @@ impl Visitor for Analyzer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::Pos;
-
     use super::*;
-    use crate::ir::Node;
+    use crate::{core::Pos, ir::Node};
 
     fn make_span(start: u32, end: u32) -> Span {
         Span::new(Pos::new(start), Pos::new(end))
     }
 
+    fn make_registry() -> Registry {
+        Registry::with_core()
+    }
+
     #[test]
     fn analyze_empty() {
+        let registry = make_registry();
         let interner = Interner::new();
-        let result = analyze(&[], &interner);
+        let result = analyze(&[], &registry, &interner);
 
         assert_eq!(result.definition_count(), 0);
         assert_eq!(result.reference_count(), 0);
@@ -606,6 +671,7 @@ mod tests {
 
     #[test]
     fn analyze_sto_pattern() {
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 42 "x" STO
@@ -615,7 +681,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(7, 10)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         // Should have one definition for "x"
         assert_eq!(result.definition_count(), 1);
@@ -626,6 +692,7 @@ mod tests {
 
     #[test]
     fn analyze_rcl_pattern() {
+        let registry = make_registry();
         let mut interner = Interner::new();
         let sym = interner.intern("x");
 
@@ -637,7 +704,7 @@ mod tests {
             Node::symbol(sym, make_span(11, 12)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         // Should have one definition and one reference
         assert_eq!(result.definition_count(), 1);
@@ -646,13 +713,14 @@ mod tests {
 
     #[test]
     fn analyze_undefined_variable() {
+        let registry = make_registry();
         let mut interner = Interner::new();
         let sym = interner.intern("undefined");
 
         // Just reference an undefined variable
         let nodes = vec![Node::symbol(sym, make_span(0, 9))];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         assert!(result.has_errors());
         assert_eq!(result.errors().count(), 1);
@@ -662,6 +730,7 @@ mod tests {
 
     #[test]
     fn analyze_program_scope() {
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: « 42 "x" STO »
@@ -674,7 +743,7 @@ mod tests {
             make_span(0, 14),
         );
 
-        let result = analyze(&[program], &interner);
+        let result = analyze(&[program], &registry, &interner);
 
         // Should have 2 scopes (root + program)
         assert_eq!(result.scopes.len(), 2);
@@ -682,6 +751,7 @@ mod tests {
 
     #[test]
     fn analyze_value_type_integer() {
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 42 "x" STO
@@ -691,7 +761,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(7, 10)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "x");
@@ -707,6 +777,7 @@ mod tests {
 
     #[test]
     fn analyze_value_type_real() {
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 3.14 "pi" STO
@@ -716,7 +787,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(10, 13)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "pi");
@@ -734,6 +805,7 @@ mod tests {
     fn analyze_value_type_string() {
         use crate::core::TypeId;
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: "hello" "greeting" STO
@@ -743,7 +815,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(19, 22)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "greeting");
@@ -757,6 +829,7 @@ mod tests {
     fn analyze_value_type_program() {
         use crate::core::TypeId;
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: « 1 + » "inc" STO
@@ -772,7 +845,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(13, 16)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "inc");
@@ -786,6 +859,7 @@ mod tests {
     fn analyze_value_type_list() {
         use crate::core::TypeId;
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: { 1 2 3 } "nums" STO
@@ -802,7 +876,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(17, 20)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "nums");
@@ -816,6 +890,7 @@ mod tests {
     fn analyze_quoted_symbol_sto() {
         use crate::symbolic::SymExpr;
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 42 'x STO (using quoted symbol syntax)
@@ -825,7 +900,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(7, 10)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         // Should have one definition for "x"
         assert_eq!(result.definition_count(), 1);
@@ -841,6 +916,7 @@ mod tests {
     fn analyze_quoted_symbol_rcl() {
         use crate::symbolic::SymExpr;
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 42 'x STO 'x RCL (store then recall with quoted symbol)
@@ -852,7 +928,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::RCL, make_span(15, 18)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         // Should have one definition and two references (write + read)
         assert_eq!(result.definition_count(), 1);
@@ -864,6 +940,7 @@ mod tests {
     fn analyze_complex_symbolic_not_name() {
         use crate::symbolic::{BinOp, SymExpr};
 
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 42 'x+1 STO - complex symbolic should NOT be treated as name
@@ -876,7 +953,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(9, 12)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         // Should have NO definitions - 'x+1' is not a valid name
         assert_eq!(result.definition_count(), 0);
@@ -884,10 +961,9 @@ mod tests {
 
     #[test]
     fn analyze_value_type_symbolic() {
-        use crate::core::TypeId;
+        use crate::{core::TypeId, symbolic::SymExpr};
 
-        use crate::symbolic::SymExpr;
-
+        let registry = make_registry();
         let interner = Interner::new();
 
         // Simulate: 'X "expr" STO - storing a symbolic expression
@@ -897,7 +973,7 @@ mod tests {
             Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(11, 14)),
         ];
 
-        let result = analyze(&nodes, &interner);
+        let result = analyze(&nodes, &registry, &interner);
 
         let def = result.symbols.definitions().next().unwrap();
         assert_eq!(def.name, "expr");

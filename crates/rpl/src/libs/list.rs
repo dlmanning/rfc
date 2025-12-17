@@ -10,12 +10,14 @@
 //! - TAIL: Get all but first element
 //! - REVLIST: Reverse list
 
-use crate::core::Span;
-
 use crate::{
-    ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    core::{Span, TypeId},
+    ir::LibId,
+    libs::{
+        ExecuteContext, ExecuteResult, Library, StackEffect,
+    },
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
 };
 
@@ -80,42 +82,28 @@ impl Library for ListLib {
             CommandInfo::with_effect("REVLIST", LIST_LIB, cmd::REVLIST, 1, 1),
         ]
     }
-}
-
-impl LibraryLowerer for ListLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
-            message: "List library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        use crate::core::TypeId;
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(LIST_LIB, cmd);
-        Ok(match cmd {
+        Ok(())
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
             cmd::SIZE => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            cmd::GET => StackEffect::fixed(2, &[None]),   // list + index -> element
-            cmd::HEAD => StackEffect::fixed(1, &[None]),  // list -> element
+            cmd::GET => StackEffect::fixed(2, &[None]), // list + index -> element
+            cmd::HEAD => StackEffect::fixed(1, &[None]), // list -> element
             cmd::PUT => StackEffect::fixed(3, &[Some(TypeId::LIST)]),
             cmd::TAIL | cmd::REVLIST => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
             cmd::TO_LIST | cmd::LIST_TO => StackEffect::Dynamic,
             _ => StackEffect::Dynamic,
-        })
+        }
     }
-}
-
-impl LibraryExecutor for ListLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::TO_LIST => {
@@ -155,7 +143,12 @@ impl LibraryExecutor for ListLib {
                 let n = match &list {
                     Value::List(items) => items.len(),
                     Value::String(s) => s.len(),
-                    _ => return Err(format!("SIZE: expected list or string, got {}", list.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "SIZE: expected list or string, got {}",
+                            list.type_name()
+                        ));
+                    }
                 };
                 ctx.push(Value::Integer(n as i64))?;
                 Ok(())
@@ -175,7 +168,11 @@ impl LibraryExecutor for ListLib {
                 };
                 // 1-based indexing (HP style)
                 if index < 1 || index as usize > items.len() {
-                    return Err(format!("GET: index {} out of range (1..{})", index, items.len()));
+                    return Err(format!(
+                        "GET: index {} out of range (1..{})",
+                        index,
+                        items.len()
+                    ));
                 }
                 ctx.push(items[(index - 1) as usize].clone())?;
                 Ok(())
@@ -197,7 +194,11 @@ impl LibraryExecutor for ListLib {
                 };
                 // 1-based indexing (HP style)
                 if index < 1 || index as usize > items.len() {
-                    return Err(format!("PUT: index {} out of range (1..{})", index, items.len()));
+                    return Err(format!(
+                        "PUT: index {} out of range (1..{})",
+                        index,
+                        items.len()
+                    ));
                 }
                 let mut new_items: Vec<Value> = items.iter().cloned().collect();
                 new_items[(index - 1) as usize] = new_item;
@@ -223,7 +224,12 @@ impl LibraryExecutor for ListLib {
                         let first: String = s.chars().next().unwrap().to_string();
                         ctx.push(Value::string(first))?;
                     }
-                    _ => return Err(format!("HEAD: expected list or string, got {}", val.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "HEAD: expected list or string, got {}",
+                            val.type_name()
+                        ));
+                    }
                 }
                 Ok(())
             }
@@ -247,7 +253,12 @@ impl LibraryExecutor for ListLib {
                         let rest: String = s.chars().skip(1).collect();
                         ctx.push(Value::string(rest))?;
                     }
-                    _ => return Err(format!("TAIL: expected list or string, got {}", val.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "TAIL: expected list or string, got {}",
+                            val.type_name()
+                        ));
+                    }
                 }
                 Ok(())
             }

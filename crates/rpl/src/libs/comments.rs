@@ -11,9 +11,13 @@
 use crate::core::Span;
 
 use crate::{
-    ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect},
+    core::TypeId,
+    ir::LibId,
+    libs::{
+        ExecuteContext, ExecuteResult, Library, StackEffect,
+    },
     lower::{LowerContext, LowerError},
+    types::CStack,
     value::Value,
 };
 
@@ -46,39 +50,17 @@ impl Library for CommentsLib {
             CommandInfo::with_effect("STRIPCOMMENTS", COMMENTS_LIB, cmd::STRIPCOMMENTS, 1, 1),
         ]
     }
-}
-
-impl LibraryLowerer for CommentsLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
-            message: "Comments library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
-        use crate::core::TypeId;
-
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(COMMENTS_LIB, cmd);
-
-        Ok(match cmd {
-            cmd::STRIPCOMMENTS => StackEffect::fixed(1, &[Some(TypeId::PROGRAM)]),
-            _ => StackEffect::Dynamic,
-        })
+        Ok(())
     }
-}
 
-impl LibraryExecutor for CommentsLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::STRIPCOMMENTS => {
@@ -97,6 +79,13 @@ impl LibraryExecutor for CommentsLib {
                 }
             }
             _ => Err(format!("Unknown comments command: {}", ctx.cmd)),
+        }
+    }
+
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
+            cmd::STRIPCOMMENTS => StackEffect::fixed(1, &[Some(TypeId::PROGRAM)]),
+            _ => StackEffect::Dynamic,
         }
     }
 }

@@ -22,13 +22,13 @@
 use crate::core::{Span, TypeId};
 
 use crate::{
-    ir::{Branch, LibId},
+    ir::LibId,
     libs::{
-        CommandInfo, ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer,
-        StackEffect,
+        CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect,
     },
     lower::{LowerContext, LowerError},
     serialize::{pack_directory, packinfo, unpack_directory_checked},
+    types::CStack,
     value::Value,
 };
 
@@ -94,30 +94,19 @@ impl Library for DirectoryLib {
             CommandInfo::with_effect("PACKINFO", DIRECTORY_LIB, cmd::PACKINFO, 1, 1),
         ]
     }
-}
-
-impl LibraryLowerer for DirectoryLib {
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
-            message: "Directory library has no composites".into(),
-        })
-    }
 
     fn lower_command(
         &self,
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(DIRECTORY_LIB, cmd);
+        Ok(())
+    }
 
-        Ok(match cmd {
+    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
+        match cmd {
             // Variable operations
             cmd::STO => StackEffect::fixed(2, &[]),
             cmd::RCL => StackEffect::fixed(1, &[None]),
@@ -136,29 +125,9 @@ impl LibraryLowerer for DirectoryLib {
             cmd::PACKDIR | cmd::UNPACKDIR => StackEffect::Dynamic,
             cmd::PACKINFO => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
             _ => StackEffect::Dynamic,
-        })
-    }
-}
-
-/// Extract a variable name from a value.
-///
-/// Supports both string names (`"x"`) and quoted symbol names (`'x'`).
-fn extract_name(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.to_string()),
-        Value::Symbolic(expr) => {
-            // If it's just a variable name (like 'x'), extract it
-            if let crate::symbolic::SymExpr::Var(name) = expr.as_ref() {
-                Some(name.to_string())
-            } else {
-                None
-            }
         }
-        _ => None,
     }
-}
 
-impl LibraryExecutor for DirectoryLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::STO => {
@@ -444,6 +413,24 @@ impl LibraryExecutor for DirectoryLib {
 
             _ => Err(format!("Unknown directory command: {}", ctx.cmd)),
         }
+    }
+}
+
+/// Extract a variable name from a value.
+///
+/// Supports both string names (`"x"`) and quoted symbol names (`'x'`).
+fn extract_name(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.to_string()),
+        Value::Symbolic(expr) => {
+            // If it's just a variable name (like 'x'), extract it
+            if let crate::symbolic::SymExpr::Var(name) = expr.as_ref() {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 

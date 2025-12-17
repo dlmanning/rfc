@@ -4,7 +4,7 @@
 //! - EVAL - execute a program from the stack
 
 use crate::ir::{Branch, LibId};
-use crate::libs::{ExecuteContext, ExecuteResult, Library, LibraryExecutor, LibraryLowerer, StackEffect};
+use crate::libs::{ExecuteContext, ExecuteResult, Library};
 use crate::lower::{LowerContext, LowerError};
 use crate::core::Span;
 
@@ -36,9 +36,7 @@ impl Library for ProgLib {
             CommandInfo::new("EVAL", PROG_LIB, cmd::EVAL),
         ]
     }
-}
 
-impl LibraryLowerer for ProgLib {
     fn lower_composite(
         &self,
         _id: u16,
@@ -56,14 +54,12 @@ impl LibraryLowerer for ProgLib {
         cmd: u16,
         _span: Span,
         ctx: &mut LowerContext,
-    ) -> Result<StackEffect, LowerError> {
+    ) -> Result<(), LowerError> {
         // EVAL has dynamic effects - we don't know what the program will do
         ctx.output.emit_call_lib(PROG_LIB, cmd);
-        Ok(StackEffect::Dynamic)
+        Ok(())
     }
-}
 
-impl LibraryExecutor for ProgLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::EVAL => {

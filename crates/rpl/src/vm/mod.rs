@@ -494,12 +494,12 @@ impl Vm {
             return self.eval_program(registry, debug);
         }
 
-        let executor = registry
-            .get_executor(lib_id)
+        let library = registry
+            .get(lib_id)
             .ok_or(VmError::UnknownLibrary(lib_id))?;
         let last_error = self.last_error.clone();
         let mut ctx = ExecuteContext::new(&mut self.stack, &mut self.directory, cmd_id, last_error);
-        executor.execute(&mut ctx).map_err(VmError::TypeError)?;
+        library.execute(&mut ctx).map_err(VmError::TypeError)?;
         Ok(Flow::Continue)
     }
 
