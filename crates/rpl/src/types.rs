@@ -373,7 +373,9 @@ impl CStack {
                 }
             }
             StackEffect::Dynamic => {
-                // Dynamic effects make the stack depth unknown
+                // Dynamic effects make the stack depth unknown and invalidate
+                // all type information (user words can do anything to the stack)
+                self.slots.clear();
                 self.mark_unknown_depth();
             }
         }

@@ -24,9 +24,12 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    /// Create a new server state with core libraries only.
+    /// Create a new server state with standard library registered.
     pub fn new() -> Self {
-        Self::with_session(Session::new())
+        let mut session = Session::new();
+        rpl_stdlib::register_interfaces(session.registry_mut());
+        rpl_stdlib::register_impls(session.registry_mut());
+        Self::with_session(session)
     }
 
     /// Create a server state with a pre-configured session.

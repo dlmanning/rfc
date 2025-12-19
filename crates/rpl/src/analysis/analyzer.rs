@@ -233,90 +233,72 @@ impl<'a> Analyzer<'a> {
     /// Handle a command, checking for binding effects.
     ///
     /// Uses the registry to determine if a command has a binding effect (Define, Read,
-    /// Delete, Modify) rather than hardcoding library IDs.
+    /// Delete, Modify) and applies the stack effect from the registry.
     fn handle_command(&mut self, lib: LibId, cmd: u16, _span: Span) {
         // Check if this command has a binding effect
-        if let Some(binding_effect) = self.registry.get_binding_effect(lib, cmd) {
-            match binding_effect {
-                BindingKind::Define => {
-                    // Define creates a new definition
-                    // Stack: [..., value, "name"]
-                    self.type_stack.pop(); // Pop string (consumed as name)
-                    let value_type = self.type_stack.pop(); // Pop value being stored
+        let binding_effect = self.registry.get_binding_effect(lib, cmd);
 
-                    if let Some((name, name_span)) = self.pending_name.take() {
-                        // Create definition with inferred type and optional arity
-                        let arity = self.pending_arity.take();
-                        let inferred_type =
-                            if value_type.is_known() || matches!(value_type, CType::OneOf(_)) {
-                                Some(value_type)
-                            } else {
-                                None
-                            };
+        // For Define, we need to get the value type before applying the effect
+        let value_type = if matches!(binding_effect, Some(BindingKind::Define)) {
+            // Stack is [..., value, name] - at(1) gets the value type (0=top=name, 1=value)
+            Some(self.type_stack.at(1))
+        } else {
+            None
+        };
 
-                        let def = match (inferred_type, arity) {
-                            (Some(ty), Some(ar)) => Definition::with_type_and_arity(
-                                name.clone(),
-                                name_span,
-                                DefinitionKind::Global,
-                                self.current_scope,
-                                ty,
-                                ar,
-                            ),
-                            (Some(ty), None) => Definition::with_type(
-                                name.clone(),
-                                name_span,
-                                DefinitionKind::Global,
-                                self.current_scope,
-                                ty,
-                            ),
-                            _ => Definition::new(
-                                name.clone(),
-                                name_span,
-                                DefinitionKind::Global,
-                                self.current_scope,
-                            ),
-                        };
+        // Apply the stack effect from the registry (single source of truth)
+        let effect = self.registry.get_command_effect(lib, cmd, &self.type_stack);
+        self.type_stack.apply_effect(&effect);
 
-                        self.symbols.add_definition(def);
-                        // Also add a write reference at the name's location
-                        self.add_reference(name, name_span, ReferenceKind::Write);
-                    }
+        // Handle binding semantics (symbol tracking)
+        if let Some(binding_kind) = binding_effect {
+            let ref_kind = match binding_kind {
+                BindingKind::Define => ReferenceKind::Write,
+                BindingKind::Read => ReferenceKind::Read,
+                BindingKind::Delete => ReferenceKind::Delete,
+                BindingKind::Modify => ReferenceKind::Increment,
+            };
+
+            if let Some((name, name_span)) = self.pending_name.take() {
+                if matches!(binding_kind, BindingKind::Define) {
+                    // Create definition with inferred type and optional arity
+                    let arity = self.pending_arity.take();
+                    let inferred_type = value_type.filter(|ty| {
+                        ty.is_known() || matches!(ty, CType::OneOf(_))
+                    });
+
+                    let def = match (inferred_type, arity) {
+                        (Some(ty), Some(ar)) => Definition::with_type_and_arity(
+                            name.clone(),
+                            name_span,
+                            DefinitionKind::Global,
+                            self.current_scope,
+                            ty,
+                            ar,
+                        ),
+                        (Some(ty), None) => Definition::with_type(
+                            name.clone(),
+                            name_span,
+                            DefinitionKind::Global,
+                            self.current_scope,
+                            ty,
+                        ),
+                        _ => Definition::new(
+                            name.clone(),
+                            name_span,
+                            DefinitionKind::Global,
+                            self.current_scope,
+                        ),
+                    };
+
+                    self.symbols.add_definition(def);
                 }
-                BindingKind::Read => {
-                    // Read is a read reference
-                    // Pop the string (name), push unknown (value type depends on what's stored)
-                    self.type_stack.pop();
-                    self.type_stack.push(CType::Unknown);
 
-                    if let Some((name, name_span)) = self.pending_name.take() {
-                        self.add_reference(name, name_span, ReferenceKind::Read);
-                    }
-                }
-                BindingKind::Delete => {
-                    // Delete is a delete reference
-                    self.type_stack.pop(); // Pop name
-
-                    if let Some((name, name_span)) = self.pending_name.take() {
-                        self.add_reference(name, name_span, ReferenceKind::Delete);
-                    }
-                }
-                BindingKind::Modify => {
-                    // Modify is an in-place modification (like INCR/DECR)
-                    self.type_stack.pop(); // Pop name
-
-                    if let Some((name, name_span)) = self.pending_name.take() {
-                        // Use Increment as the reference kind for modifications
-                        // (both INCR and DECR are modifications)
-                        self.add_reference(name, name_span, ReferenceKind::Increment);
-                    }
-                }
+                self.add_reference(name, name_span, ref_kind);
             }
         } else {
-            // No binding effect - apply regular stack effect
+            // No binding effect - clear pending name
             self.pending_name = None;
-            let effect = self.registry.get_command_effect(lib, cmd, &self.type_stack);
-            self.type_stack.apply_effect(&effect);
         }
     }
 
