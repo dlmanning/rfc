@@ -377,17 +377,28 @@ pub fn line_edit_to_span_edit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::Registry;
+    use crate::interface::BindingKind;
     use crate::ir::LibId;
-    use crate::libs::{DIRECTORY_LIB, dir_cmd, CommandInfo, StackEffect};
+    use crate::libs::{CommandInfo, StackEffect};
+    use crate::registry::Registry;
 
-    /// Minimal DirectoryInterface for testing STO pattern recognition.
+    // Test constants matching directory lib
+    const DIRECTORY_LIB: LibId = 28;
+    mod dir_cmd {
+        pub const STO: u16 = 0;
+        pub const RCL: u16 = 1;
+    }
+
+    /// Mock directory interface that implements binding_effect for tests.
     struct MockDirectoryInterface;
 
     impl crate::libs::LibraryInterface for MockDirectoryInterface {
-        fn id(&self) -> LibId { DIRECTORY_LIB }
-        fn name(&self) -> &'static str { "Directory" }
-
+        fn id(&self) -> LibId {
+            DIRECTORY_LIB
+        }
+        fn name(&self) -> &'static str {
+            "Directory"
+        }
         fn commands(&self) -> Vec<CommandInfo> {
             vec![
                 CommandInfo {
@@ -403,6 +414,13 @@ mod tests {
                     effect: StackEffect::fixed(1, &[None]),
                 },
             ]
+        }
+        fn binding_effect(&self, cmd: u16) -> Option<BindingKind> {
+            match cmd {
+                0 => Some(BindingKind::Define), // STO
+                1 => Some(BindingKind::Read),   // RCL
+                _ => None,
+            }
         }
     }
 

@@ -155,6 +155,20 @@ impl Registry {
             .unwrap_or(StackEffect::Dynamic)
     }
 
+    /// Get the binding effect for a command, if any.
+    ///
+    /// Returns the binding effect (Define, Read, Delete, Modify) for commands
+    /// that create, read, or modify global definitions.
+    pub fn get_binding_effect(
+        &self,
+        lib_id: LibId,
+        cmd_id: u16,
+    ) -> Option<crate::interface::BindingKind> {
+        self.interfaces
+            .get(&lib_id)
+            .and_then(|lib| lib.binding_effect(cmd_id))
+    }
+
     /// Find a claim for a token in the given context.
     pub fn find_claim(&self, token: &str, context: ClaimContext) -> Option<&TokenClaim> {
         let token_upper = token.to_uppercase();

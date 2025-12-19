@@ -9,6 +9,7 @@
 //!
 //! The standard library implementations are in the `rpl-stdlib` crate.
 
+use crate::interface::BindingKind;
 use crate::ir::{Branch, LibId};
 
 // ============================================================================
@@ -540,6 +541,15 @@ pub trait LibraryInterface: Send + Sync {
     /// Returns empty vec if the construct has no bindings or is unknown.
     fn binding_branches(&self, _construct_id: u16, _num_branches: usize) -> Vec<usize> {
         Vec::new()
+    }
+
+    /// Get the binding effect for a command, if any.
+    ///
+    /// Returns the binding effect (Define, Read, Delete, Modify) for commands
+    /// that create, read, or modify global definitions. Used by the analyzer
+    /// to track variable definitions and references without hardcoding library IDs.
+    fn binding_effect(&self, _cmd: u16) -> Option<BindingKind> {
+        None
     }
 }
 

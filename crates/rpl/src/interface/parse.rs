@@ -185,6 +185,25 @@ fn parse_types(s: &str) -> Result<Vec<Type>, String> {
 
 /// Parse a single type token.
 fn parse_single_type(s: &str) -> Result<Type, String> {
+    // Check for binding effect prefixes: $, @, ~, !
+    let first = s.chars().next().unwrap_or(' ');
+    let binding_kind = match first {
+        '$' => Some(BindingKind::Define),
+        '@' => Some(BindingKind::Read),
+        '~' => Some(BindingKind::Delete),
+        '!' => Some(BindingKind::Modify),
+        _ => None,
+    };
+
+    if let Some(kind) = binding_kind {
+        let inner = &s[1..];
+        if inner.is_empty() {
+            return Err(format!("binding prefix '{}' requires a type", first));
+        }
+        let inner_type = parse_single_type(inner)?;
+        return Ok(Type::Binding(kind, Box::new(inner_type)));
+    }
+
     // Concrete type
     if let Some(ct) = ConcreteType::parse(s) {
         return Ok(Type::Concrete(ct));

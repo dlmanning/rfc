@@ -10,6 +10,25 @@ pub struct Library {
     pub declarations: Vec<Declaration>,
 }
 
+/// Binding effect for commands that create/read/modify global definitions.
+///
+/// Used to annotate input types that represent variable names:
+/// - `$Sym` = defines a binding (STO)
+/// - `@Sym` = reads a binding (RCL)
+/// - `~Sym` = deletes a binding (PURGE)
+/// - `!Sym` = modifies a binding (INCR, DECR)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingKind {
+    /// Creates a new definition ($Type).
+    Define,
+    /// Reads an existing definition (@Type).
+    Read,
+    /// Deletes a definition (~Type).
+    Delete,
+    /// Modifies a definition in place (!Type).
+    Modify,
+}
+
 /// A single declaration: `id: inputs -> pattern -> outputs`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
@@ -36,6 +55,8 @@ pub enum Type {
     Numeric(char, char),
     /// Union: a | b.
     Union(Box<Type>, Box<Type>),
+    /// A type with a binding effect annotation ($Type, @Type, ~Type, !Type).
+    Binding(BindingKind, Box<Type>),
 }
 
 /// Concrete types.
@@ -120,6 +141,15 @@ impl std::fmt::Display for Type {
             Type::Dynamic => write!(f, "..."),
             Type::Numeric(a, b) => write!(f, "Numeric {} {}", a, b),
             Type::Union(a, b) => write!(f, "{} | {}", a, b),
+            Type::Binding(kind, inner) => {
+                let prefix = match kind {
+                    BindingKind::Define => '$',
+                    BindingKind::Read => '@',
+                    BindingKind::Delete => '~',
+                    BindingKind::Modify => '!',
+                };
+                write!(f, "{}{}", prefix, inner)
+            }
         }
     }
 }

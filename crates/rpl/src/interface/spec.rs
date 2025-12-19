@@ -7,8 +7,8 @@
 //! - Clean separation of data and behavior
 
 use super::{
-    parse, ConcreteType, Declaration, Library, ParseError as InterfaceParseError, PatternElement,
-    Type,
+    parse, BindingKind, ConcreteType, Declaration, Library, ParseError as InterfaceParseError,
+    PatternElement, Type,
 };
 use crate::{
     core::{Pos, Span, TypeId},
@@ -39,6 +39,8 @@ pub struct CommandSpec {
     pub inputs: Vec<Type>,
     pub outputs: Vec<Type>,
     pub effect_kind: EffectKind,
+    /// Binding effect for commands that create/read/modify global definitions.
+    pub binding_effect: Option<BindingKind>,
 }
 
 /// A syntax declaration with compiled parser.
@@ -742,6 +744,17 @@ fn compute_binding_indices(pattern: &[SlotPattern], num_branches: usize) -> Vec<
 // Effect Inference
 // ============================================================================
 
+/// Extract binding effect from input types.
+/// Looks for binding-annotated types ($Sym, @Sym, ~Sym, !Sym) in inputs.
+fn extract_binding_effect(inputs: &[Type]) -> Option<BindingKind> {
+    for typ in inputs {
+        if let Type::Binding(kind, _) = typ {
+            return Some(*kind);
+        }
+    }
+    None
+}
+
 fn infer_effect_kind(decl: &Declaration) -> EffectKind {
     // Dynamic if any input/output is dynamic
     if has_dynamic(&decl.inputs) || has_dynamic(&decl.outputs) {
@@ -852,6 +865,7 @@ impl InterfaceSpec {
                     inputs: decl.inputs.clone(),
                     outputs: decl.outputs.clone(),
                     effect_kind: infer_effect_kind(decl),
+                    binding_effect: extract_binding_effect(&decl.inputs),
                 });
             } else if let Some(token) = decl.pattern.names.first() {
                 // Syntax construct - use explicit ID from declaration
@@ -894,6 +908,7 @@ impl InterfaceSpec {
                     inputs: decl.inputs.clone(),
                     outputs: decl.outputs.clone(),
                     effect_kind: infer_effect_kind(decl),
+                    binding_effect: extract_binding_effect(&decl.inputs),
                 });
             } else if let Some(token) = decl.pattern.names.first() {
                 // Syntax construct - use explicit ID from declaration
@@ -980,6 +995,13 @@ impl InterfaceSpec {
             .collect()
     }
 
+    /// Get the binding effect for a command, if any.
+    pub fn get_binding_effect(&self, cmd_id: u16) -> Option<BindingKind> {
+        self.commands
+            .iter()
+            .find(|cmd| cmd.cmd_id == cmd_id)
+            .and_then(|cmd| cmd.binding_effect)
+    }
 }
 
 // ============================================================================
@@ -1061,6 +1083,10 @@ impl LibraryInterface for InterfaceSpec {
 
         // Compute binding indices from the pattern
         compute_binding_indices(&pattern, num_branches)
+    }
+
+    fn binding_effect(&self, cmd: u16) -> Option<BindingKind> {
+        self.get_binding_effect(cmd)
     }
 }
 

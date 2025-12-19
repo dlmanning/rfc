@@ -1,13 +1,14 @@
 library Directory 28
 
 -- Variable storage
-0: a Sym -> STO ->
-1: Sym -> RCL -> a
-2: Sym -> PURGE ->
+-- $Sym = defines, @Sym = reads, ~Sym = deletes, !Sym = modifies
+0: a $Sym -> STO ->
+1: @Sym -> RCL -> a
+2: ~Sym -> PURGE ->
 3: -> VARS -> List
 4: -> CLVAR ->
-5: Sym -> INCR -> a
-6: Sym -> DECR -> a
+5: !Sym -> INCR -> a
+6: !Sym -> DECR -> a
 7: Sym Sym -> RENAME ->
 
 -- Directory navigation

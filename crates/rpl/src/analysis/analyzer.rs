@@ -13,8 +13,9 @@ use super::{
 };
 use crate::{
     core::{Interner, Span, Symbol},
+    interface::BindingKind,
     ir::{AtomKind, Branch, CompositeKind, LibId, Node, NodeKind},
-    libs::{StackEffect, DIRECTORY_LIB, dir_cmd},
+    libs::StackEffect,
     registry::Registry,
     symbolic::SymExpr,
     types::{CStack, CType},
@@ -229,14 +230,17 @@ impl<'a> Analyzer<'a> {
             .push(CType::Known(crate::core::TypeId::SYMBOLIC));
     }
 
-    /// Handle a command, checking for STO/RCL patterns.
+    /// Handle a command, checking for binding effects.
+    ///
+    /// Uses the registry to determine if a command has a binding effect (Define, Read,
+    /// Delete, Modify) rather than hardcoding library IDs.
     fn handle_command(&mut self, lib: LibId, cmd: u16, _span: Span) {
-        if lib == DIRECTORY_LIB {
-            match cmd {
-                dir_cmd::STO => {
-                    // STO creates a definition
+        // Check if this command has a binding effect
+        if let Some(binding_effect) = self.registry.get_binding_effect(lib, cmd) {
+            match binding_effect {
+                BindingKind::Define => {
+                    // Define creates a new definition
                     // Stack: [..., value, "name"]
-                    // Pop the string (name), then get the value's type
                     self.type_stack.pop(); // Pop string (consumed as name)
                     let value_type = self.type_stack.pop(); // Pop value being stored
 
@@ -279,8 +283,8 @@ impl<'a> Analyzer<'a> {
                         self.add_reference(name, name_span, ReferenceKind::Write);
                     }
                 }
-                dir_cmd::RCL => {
-                    // RCL is a read reference
+                BindingKind::Read => {
+                    // Read is a read reference
                     // Pop the string (name), push unknown (value type depends on what's stored)
                     self.type_stack.pop();
                     self.type_stack.push(CType::Unknown);
@@ -289,40 +293,28 @@ impl<'a> Analyzer<'a> {
                         self.add_reference(name, name_span, ReferenceKind::Read);
                     }
                 }
-                dir_cmd::PURGE => {
-                    // PURGE is a delete reference
+                BindingKind::Delete => {
+                    // Delete is a delete reference
                     self.type_stack.pop(); // Pop name
 
                     if let Some((name, name_span)) = self.pending_name.take() {
                         self.add_reference(name, name_span, ReferenceKind::Delete);
                     }
                 }
-                dir_cmd::INCR => {
-                    // INCR is a modify reference
+                BindingKind::Modify => {
+                    // Modify is an in-place modification (like INCR/DECR)
                     self.type_stack.pop(); // Pop name
 
                     if let Some((name, name_span)) = self.pending_name.take() {
+                        // Use Increment as the reference kind for modifications
+                        // (both INCR and DECR are modifications)
                         self.add_reference(name, name_span, ReferenceKind::Increment);
                     }
                 }
-                dir_cmd::DECR => {
-                    // DECR is a modify reference
-                    self.type_stack.pop(); // Pop name
-
-                    if let Some((name, name_span)) = self.pending_name.take() {
-                        self.add_reference(name, name_span, ReferenceKind::Decrement);
-                    }
-                }
-                _ => {
-                    self.pending_name = None;
-                    // Other directory commands have various effects - mark unknown for now
-                    self.type_stack.mark_unknown_depth();
-                }
             }
         } else {
-            // Other commands clear the pending string
+            // No binding effect - apply regular stack effect
             self.pending_name = None;
-            // Look up the command's stack effect from the registry
             let effect = self.registry.get_command_effect(lib, cmd, &self.type_stack);
             self.type_stack.apply_effect(&effect);
         }
@@ -561,14 +553,67 @@ impl Visitor for Analyzer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::Pos, ir::Node};
+    use crate::{
+        core::Pos,
+        interface::BindingKind,
+        ir::{LibId, Node},
+        libs::{CommandInfo, StackEffect},
+    };
+
+    // Test constants matching directory lib
+    const TEST_DIRECTORY_LIB: LibId = 28;
+    mod test_dir_cmd {
+        pub const STO: u16 = 0;
+        pub const RCL: u16 = 1;
+    }
+
+    // Use these in tests
+    use TEST_DIRECTORY_LIB as DIRECTORY_LIB;
+    use test_dir_cmd as dir_cmd;
+
+    /// Mock directory interface that implements binding_effect for tests.
+    struct MockDirectoryInterface;
+
+    impl crate::libs::LibraryInterface for MockDirectoryInterface {
+        fn id(&self) -> LibId {
+            DIRECTORY_LIB
+        }
+        fn name(&self) -> &'static str {
+            "Directory"
+        }
+        fn commands(&self) -> Vec<CommandInfo> {
+            vec![
+                CommandInfo {
+                    name: "STO",
+                    lib_id: DIRECTORY_LIB,
+                    cmd_id: dir_cmd::STO,
+                    effect: StackEffect::fixed(2, &[]),
+                },
+                CommandInfo {
+                    name: "RCL",
+                    lib_id: DIRECTORY_LIB,
+                    cmd_id: dir_cmd::RCL,
+                    effect: StackEffect::fixed(1, &[None]),
+                },
+            ]
+        }
+        fn binding_effect(&self, cmd: u16) -> Option<BindingKind> {
+            match cmd {
+                0 => Some(BindingKind::Define), // STO
+                1 => Some(BindingKind::Read),   // RCL
+                _ => None,
+            }
+        }
+    }
 
     fn make_span(start: u32, end: u32) -> Span {
         Span::new(Pos::new(start), Pos::new(end))
     }
 
     fn make_registry() -> Registry {
-        Registry::new()
+        let mut registry = Registry::new();
+        registry.add_interface(MockDirectoryInterface);
+        registry
     }
 
     #[test]
