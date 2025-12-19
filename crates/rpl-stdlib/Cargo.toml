@@ -6,5 +6,9 @@ edition.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "rpl"
+path = "bin/rpl.rs"
+
 [dependencies]
 rpl = { workspace = true }

@@ -11,8 +11,6 @@ use std::{
     process::ExitCode,
 };
 
-use rpl::Session;
-
 const USAGE: &str = "\
 Usage: rpl [OPTIONS] [FILE]
 
@@ -62,8 +60,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Action::Eval(source)) => {
-            let mut session = Session::new();
-            match session.eval(&source) {
+            match rpl_stdlib::eval(&source) {
                 Ok(stack) => {
                     for value in &stack {
                         println!("{value}");
