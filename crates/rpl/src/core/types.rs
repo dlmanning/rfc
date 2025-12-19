@@ -32,21 +32,23 @@ impl TypeId {
     }
 
     /// Get the name of a well-known type, or None for unknown types.
+    ///
+    /// Names are lowercase to match `Value::type_name()` for consistent error messages.
     pub fn name(self) -> Option<&'static str> {
         match self {
-            Self::PROGRAM => Some("Program"),
-            Self::REAL => Some("Real"),
-            Self::BINT => Some("Int"),
-            Self::COMMENT => Some("Comment"),
-            Self::STRING => Some("String"),
-            Self::COMPLEX => Some("Complex"),
-            Self::SYMBOLIC => Some("Symbolic"),
-            Self::LIST => Some("List"),
-            Self::RENDER_STATUS => Some("RenderStatus"),
-            Self::LIBRARY => Some("Library"),
-            Self::LIBPTR => Some("LibPtr"),
-            Self::BLOB => Some("Blob"),
-            Self::PACKDIR => Some("PackDir"),
+            Self::BINT => Some("integer"),
+            Self::REAL => Some("real"),
+            Self::STRING => Some("string"),
+            Self::LIST => Some("list"),
+            Self::PROGRAM => Some("program"),
+            Self::SYMBOLIC => Some("symbolic"),
+            Self::LIBRARY => Some("library"),
+            Self::BLOB => Some("bytes"),
+            Self::COMMENT => Some("comment"),
+            Self::COMPLEX => Some("complex"),
+            Self::LIBPTR => Some("libptr"),
+            Self::PACKDIR => Some("packdir"),
+            Self::RENDER_STATUS => Some("render_status"),
             _ => None,
         }
     }

@@ -397,7 +397,7 @@ fn hover_shows_inferred_type() {
     let hover = hover.unwrap();
     // The type should be inferred as integer from the 42 literal
     assert!(
-        hover.contents.contains("Int"),
+        hover.contents.contains("integer"),
         "Should show integer type, got: {}",
         hover.contents
     );
@@ -521,8 +521,8 @@ fn hover_shows_local_parameter_type() {
     assert!(hover.is_some(), "Should have hover for local parameter");
     let hover = hover.unwrap();
     assert!(
-        hover.contents.contains("Int"),
-        "Should show Int type for parameter 'a', got: {}",
+        hover.contents.contains("integer"),
+        "Should show integer type for parameter 'a', got: {}",
         hover.contents
     );
 }
@@ -620,3 +620,4 @@ fn semantic_tokens_multiline() {
     assert_eq!(encoded[8], 6, "Second token type should be 6 (Variable)");
     assert_eq!(encoded[9], 0, "Second token modifiers should be 0");
 }
+
