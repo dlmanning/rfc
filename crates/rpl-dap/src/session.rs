@@ -7,7 +7,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use rpl::{
     CompiledProgram, DebugState, ExecuteOutcome, Pos, ReturnEntry, SourceFile, debug_helpers,
-    registry::Registry, vm::Vm,
+    registry::{InterfaceRegistry, LowererRegistry, ExecutorRegistry}, vm::Vm,
 };
 
 /// A debug session manages the state of debugging a single RPL program.
@@ -27,8 +27,14 @@ pub struct DebugSession {
     /// Path to the source file.
     pub source_path: PathBuf,
 
-    /// The registry for libraries and operators.
-    pub registry: Registry,
+    /// Interface registry (for parsing and analysis).
+    pub interfaces: InterfaceRegistry,
+
+    /// Lowerer registry (for compilation).
+    pub lowerers: LowererRegistry,
+
+    /// Executor registry (for runtime).
+    pub executors: ExecutorRegistry,
 
     /// Mapping from DAP breakpoint IDs to bytecode PCs.
     breakpoint_map: HashMap<i64, usize>,
@@ -41,38 +47,37 @@ pub struct DebugSession {
 }
 
 impl DebugSession {
-    /// Create a registry with stdlib.
-    fn stdlib_registry() -> Registry {
-        let mut registry = Registry::new();
-        rpl_stdlib::register_interfaces(&mut registry);
-        rpl_stdlib::register_impls(&mut registry);
-        registry
+    /// Create registries with stdlib.
+    fn stdlib_registries() -> (InterfaceRegistry, LowererRegistry, ExecutorRegistry) {
+        rpl_stdlib::stdlib_registries()
     }
 
     /// Create a new debug session with standard libraries.
     pub fn new(program: CompiledProgram, source: SourceFile, source_path: PathBuf) -> Self {
-        Self::with_registry(Self::stdlib_registry(), program, source, source_path)
+        let (interfaces, lowerers, executors) = Self::stdlib_registries();
+        Self::with_registries(interfaces, lowerers, executors, program, source, source_path)
     }
 
-    /// Create a new debug session with a pre-configured registry.
+    /// Create a new debug session with pre-configured registries.
     ///
     /// Use this to add application-specific libraries:
     ///
     /// ```ignore
-    /// let mut registry = Registry::new();
-    /// rpl_stdlib::register_interfaces(&mut registry);
-    /// rpl_stdlib::register_impls(&mut registry);
-    /// registry.add_interface(MyCustomLib);
-    /// registry.add_impl(MyCustomLib);
-    /// let session = DebugSession::with_registry(registry, program, source, path);
+    /// let (mut interfaces, mut lowerers, mut executors) = rpl_stdlib::stdlib_registries();
+    /// interfaces.add(MyCustomLib::interface());
+    /// lowerers.add(MyCustomLib);
+    /// executors.add(MyCustomLib);
+    /// let session = DebugSession::with_registries(interfaces, lowerers, executors, program, source, path);
     /// ```
-    pub fn with_registry(
-        registry: Registry,
+    pub fn with_registries(
+        interfaces: InterfaceRegistry,
+        lowerers: LowererRegistry,
+        executors: ExecutorRegistry,
         program: CompiledProgram,
         source: SourceFile,
         source_path: PathBuf,
     ) -> Self {
-        Self::with_vm_and_registry(Vm::new(), registry, program, source, source_path)
+        Self::with_vm_and_registries(Vm::new(), interfaces, lowerers, executors, program, source, source_path)
     }
 
     /// Create a new debug session with an existing VM.
@@ -82,13 +87,16 @@ impl DebugSession {
         source: SourceFile,
         source_path: PathBuf,
     ) -> Self {
-        Self::with_vm_and_registry(vm, Self::stdlib_registry(), program, source, source_path)
+        let (interfaces, lowerers, executors) = Self::stdlib_registries();
+        Self::with_vm_and_registries(vm, interfaces, lowerers, executors, program, source, source_path)
     }
 
-    /// Create a new debug session with an existing VM and registry.
-    pub fn with_vm_and_registry(
+    /// Create a new debug session with an existing VM and registries.
+    pub fn with_vm_and_registries(
         vm: Vm,
-        registry: Registry,
+        interfaces: InterfaceRegistry,
+        lowerers: LowererRegistry,
+        executors: ExecutorRegistry,
         program: CompiledProgram,
         source: SourceFile,
         source_path: PathBuf,
@@ -102,7 +110,9 @@ impl DebugSession {
             debug,
             source,
             source_path,
-            registry,
+            interfaces,
+            lowerers,
+            executors,
             breakpoint_map: HashMap::new(),
             next_breakpoint_id: 1,
             started: false,
@@ -163,7 +173,7 @@ impl DebugSession {
     pub fn run(&mut self) -> Result<ExecuteOutcome, rpl::vm::VmError> {
         self.started = true;
         self.vm
-            .execute_debug(&self.program, &self.registry, &mut self.debug)
+            .execute_debug(&self.program, &self.executors, &mut self.debug)
     }
 
     /// Continue execution.
@@ -259,8 +269,9 @@ mod tests {
         let source_file =
             SourceFile::new(SourceId::new(0), "test.rpl".to_string(), source.to_string());
         let mut rpl_session = Session::new();
-        rpl_stdlib::register_interfaces(rpl_session.registry_mut());
-        rpl_stdlib::register_impls(rpl_session.registry_mut());
+        rpl_stdlib::register_interfaces(rpl_session.interfaces_mut());
+        rpl_stdlib::register_lowerers(rpl_session.lowerers_mut());
+        rpl_stdlib::register_executors(rpl_session.executors_mut());
         let program = rpl_session.compile(source).expect("Failed to compile");
         DebugSession::new(program, source_file, PathBuf::from("test.rpl"))
     }

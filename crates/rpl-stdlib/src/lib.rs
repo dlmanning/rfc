@@ -55,15 +55,21 @@ pub use symbolic::SYMBOLIC_LIB;
 pub use transcendentals::TRANSCENDENTALS_LIB;
 pub use userlib::USERLIB_LIB;
 
-use rpl::registry::Registry;
+use rpl::registry::{InterfaceRegistry, LowererRegistry, ExecutorRegistry};
 use rpl::value::Value;
 
-/// Create a registry with standard libraries.
-pub fn stdlib_registry() -> Registry {
-    let mut registry = Registry::new();
-    register_interfaces(&mut registry);
-    register_impls(&mut registry);
-    registry
+/// Create registries with standard libraries.
+///
+/// Returns a tuple of (InterfaceRegistry, LowererRegistry, ExecutorRegistry)
+/// with all standard library components registered.
+pub fn stdlib_registries() -> (InterfaceRegistry, LowererRegistry, ExecutorRegistry) {
+    let mut interfaces = InterfaceRegistry::new();
+    let mut lowerers = LowererRegistry::new();
+    let mut executors = ExecutorRegistry::new();
+    register_interfaces(&mut interfaces);
+    register_lowerers(&mut lowerers);
+    register_executors(&mut executors);
+    (interfaces, lowerers, executors)
 }
 
 /// Evaluate RPL source code with standard library.
@@ -75,44 +81,63 @@ pub fn stdlib_registry() -> Registry {
 /// assert_eq!(result, vec![rpl::value::Value::integer(3)]);
 /// ```
 pub fn eval(source: &str) -> Result<Vec<Value>, String> {
-    let registry = stdlib_registry();
-    rpl::eval_with_registry(source, &registry)
+    let (interfaces, lowerers, executors) = stdlib_registries();
+    rpl::eval_with_registries(source, &interfaces, &lowerers, &executors)
 }
 
 /// Register all standard library interfaces (for parsing, analysis).
 ///
 /// This registers cloned InterfaceSpecs from each library module.
-pub fn register_interfaces(registry: &mut Registry) {
-    registry.add_interface(stack::interface().clone());
-    registry.add_interface(arith::interface().clone());
-    registry.add_interface(symbolic::interface().clone());
-    registry.add_interface(list::interface().clone());
-    registry.add_interface(transcendentals::interface().clone());
-    registry.add_interface(strings::interface().clone());
-    registry.add_interface(comments::interface().clone());
-    registry.add_interface(directory::interface().clone());
-    registry.add_interface(userlib::interface().clone());
-    registry.add_interface(binary::interface().clone());
-    registry.add_interface(flow::interface().clone());
-    registry.add_interface(prog::interface().clone());
-    registry.add_interface(locals::interface().clone());
+pub fn register_interfaces(registry: &mut InterfaceRegistry) {
+    registry.add(stack::interface().clone());
+    registry.add(arith::interface().clone());
+    registry.add(symbolic::interface().clone());
+    registry.add(list::interface().clone());
+    registry.add(transcendentals::interface().clone());
+    registry.add(strings::interface().clone());
+    registry.add(comments::interface().clone());
+    registry.add(directory::interface().clone());
+    registry.add(userlib::interface().clone());
+    registry.add(binary::interface().clone());
+    registry.add(flow::interface().clone());
+    registry.add(prog::interface().clone());
+    registry.add(locals::interface().clone());
 }
 
-/// Register all standard library implementations (for lowering, execution).
+/// Register all standard library lowerers (for compilation).
 ///
-/// This registers the XxxLib implementation structs.
-pub fn register_impls(registry: &mut Registry) {
-    registry.add_impl(StackLib);
-    registry.add_impl(ArithLib);
-    registry.add_impl(SymbolicLib);
-    registry.add_impl(ListLib);
-    registry.add_impl(TranscendentalsLib);
-    registry.add_impl(StringsLib);
-    registry.add_impl(CommentsLib);
-    registry.add_impl(DirectoryLib);
-    registry.add_impl(UserLibLib);
-    registry.add_impl(BinaryLib);
-    registry.add_impl(FlowLib);
-    registry.add_impl(ProgLib);
-    registry.add_impl(LocalsLib);
+/// This registers the XxxLib implementation structs for lowering.
+pub fn register_lowerers(registry: &mut LowererRegistry) {
+    registry.add(StackLib);
+    registry.add(ArithLib);
+    registry.add(SymbolicLib);
+    registry.add(ListLib);
+    registry.add(TranscendentalsLib);
+    registry.add(StringsLib);
+    registry.add(CommentsLib);
+    registry.add(DirectoryLib);
+    registry.add(UserLibLib);
+    registry.add(BinaryLib);
+    registry.add(FlowLib);
+    registry.add(ProgLib);
+    registry.add(LocalsLib);
+}
+
+/// Register all standard library executors (for runtime).
+///
+/// This registers the XxxLib implementation structs for execution.
+pub fn register_executors(registry: &mut ExecutorRegistry) {
+    registry.add(StackLib);
+    registry.add(ArithLib);
+    registry.add(SymbolicLib);
+    registry.add(ListLib);
+    registry.add(TranscendentalsLib);
+    registry.add(StringsLib);
+    registry.add(CommentsLib);
+    registry.add(DirectoryLib);
+    registry.add(UserLibLib);
+    registry.add(BinaryLib);
+    registry.add(FlowLib);
+    registry.add(ProgLib);
+    registry.add(LocalsLib);
 }

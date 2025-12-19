@@ -14,7 +14,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::{AtomKind, Branch, LibId, Node, NodeKind},
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
     vm::bytecode::Opcode,
@@ -67,7 +67,7 @@ pub mod constructs {
 #[derive(Clone, Copy)]
 pub struct FlowLib;
 
-impl LibraryImpl for FlowLib {
+impl LibraryLowerer for FlowLib {
     fn id(&self) -> LibId {
         FLOW_LIB
     }
@@ -256,6 +256,12 @@ impl LibraryImpl for FlowLib {
             }
         }
         Ok(())
+    }
+}
+
+impl LibraryExecutor for FlowLib {
+    fn id(&self) -> LibId {
+        FLOW_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

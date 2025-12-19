@@ -31,7 +31,7 @@ use super::result::AnalysisResult;
 use super::scopes::ScopeId;
 use crate::ir::Node;
 use crate::parse::parse;
-use crate::registry::Registry;
+use crate::registry::InterfaceRegistry;
 
 /// A text edit to apply to source code.
 ///
@@ -107,7 +107,7 @@ pub struct IncrementalAnalysis {
 
 impl IncrementalAnalysis {
     /// Create a new incremental analysis state from source.
-    pub fn new(source: &str, registry: &Registry, interner: &mut Interner) -> Self {
+    pub fn new(source: &str, registry: &InterfaceRegistry, interner: &mut Interner) -> Self {
         let nodes = parse(source, registry, interner).unwrap_or_default();
 
         let result = super::analyze(&nodes, registry, interner);
@@ -148,7 +148,7 @@ impl IncrementalAnalysis {
     pub fn apply_edit(
         &mut self,
         edit: SpanEdit,
-        registry: &Registry,
+        registry: &InterfaceRegistry,
         interner: &mut Interner,
     ) {
         // 1. Update source text
@@ -179,7 +179,7 @@ impl IncrementalAnalysis {
     pub fn apply_edits(
         &mut self,
         mut edits: Vec<SpanEdit>,
-        registry: &Registry,
+        registry: &InterfaceRegistry,
         interner: &mut Interner,
     ) {
         if edits.is_empty() {
@@ -266,7 +266,7 @@ impl IncrementalAnalysis {
         &mut self,
         _edit: &SpanEdit,
         _stable_scope: Option<ScopeId>,
-        registry: &Registry,
+        registry: &InterfaceRegistry,
         interner: &mut Interner,
     ) {
         // For the initial implementation, fall back to full update.
@@ -286,7 +286,7 @@ impl IncrementalAnalysis {
     }
 
     /// Perform a full re-parse and re-analyze.
-    fn full_update(&mut self, registry: &Registry, interner: &mut Interner) {
+    fn full_update(&mut self, registry: &InterfaceRegistry, interner: &mut Interner) {
         self.nodes = parse(&self.source, registry, interner).unwrap_or_default();
 
         self.result = super::analyze(&self.nodes, registry, interner);
@@ -380,7 +380,7 @@ mod tests {
     use crate::interface::BindingKind;
     use crate::ir::LibId;
     use crate::libs::{CommandInfo, StackEffect};
-    use crate::registry::Registry;
+    use crate::registry::InterfaceRegistry;
 
     // Test constants matching directory lib
     const DIRECTORY_LIB: LibId = 28;
@@ -424,9 +424,9 @@ mod tests {
         }
     }
 
-    fn make_registry() -> Registry {
-        let mut reg = Registry::new();
-        reg.add_interface(MockDirectoryInterface);
+    fn make_registry() -> InterfaceRegistry {
+        let mut reg = InterfaceRegistry::new();
+        reg.add(MockDirectoryInterface);
         reg
     }
 

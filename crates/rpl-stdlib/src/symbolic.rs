@@ -11,7 +11,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -40,7 +40,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct SymbolicLib;
 
-impl LibraryImpl for SymbolicLib {
+impl LibraryLowerer for SymbolicLib {
     fn id(&self) -> LibId {
         SYMBOLIC_LIB
     }
@@ -53,6 +53,12 @@ impl LibraryImpl for SymbolicLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(SYMBOLIC_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for SymbolicLib {
+    fn id(&self) -> LibId {
+        SYMBOLIC_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

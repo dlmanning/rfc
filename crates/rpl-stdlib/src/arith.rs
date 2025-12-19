@@ -15,7 +15,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -59,7 +59,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct ArithLib;
 
-impl LibraryImpl for ArithLib {
+impl LibraryLowerer for ArithLib {
     fn id(&self) -> LibId {
         ARITH_LIB
     }
@@ -101,6 +101,12 @@ impl LibraryImpl for ArithLib {
         }
 
         Ok(())
+    }
+}
+
+impl LibraryExecutor for ArithLib {
+    fn id(&self) -> LibId {
+        ARITH_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

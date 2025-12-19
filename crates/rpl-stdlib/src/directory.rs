@@ -26,7 +26,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     serialize::{pack_directory, packinfo, unpack_directory_checked},
     value::Value,
@@ -71,7 +71,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct DirectoryLib;
 
-impl LibraryImpl for DirectoryLib {
+impl LibraryLowerer for DirectoryLib {
     fn id(&self) -> LibId {
         DIRECTORY_LIB
     }
@@ -84,6 +84,12 @@ impl LibraryImpl for DirectoryLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(DIRECTORY_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for DirectoryLib {
+    fn id(&self) -> LibId {
+        DIRECTORY_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

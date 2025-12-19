@@ -36,7 +36,7 @@ use std::collections::HashMap;
 
 use crate::core::{Interner, Pos, Span, Symbol};
 
-use crate::{ir::Node, libs::ClaimContext, registry::Registry};
+use crate::{ir::Node, libs::ClaimContext, registry::InterfaceRegistry};
 
 /// Comment type based on @ prefix count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -392,7 +392,7 @@ struct Scope {
 pub struct ParseContext<'a> {
     tokens: Vec<Token>,
     position: usize,
-    pub registry: &'a Registry,
+    pub registry: &'a InterfaceRegistry,
     pub interner: &'a mut Interner,
     /// Stack of scopes for local variable tracking.
     scopes: Vec<Scope>,
@@ -406,7 +406,7 @@ pub struct ParseContext<'a> {
 
 impl<'a> ParseContext<'a> {
     /// Create a new parse context.
-    pub fn new(source: &str, registry: &'a Registry, interner: &'a mut Interner) -> Self {
+    pub fn new(source: &str, registry: &'a InterfaceRegistry, interner: &'a mut Interner) -> Self {
         let (tokens, source_map) = tokenize_with_source_map(source);
         Self {
             tokens,
@@ -544,7 +544,7 @@ impl<'a> ParseContext<'a> {
 /// Returns `ParseError` if the source contains invalid syntax.
 pub fn parse(
     source: &str,
-    registry: &Registry,
+    registry: &InterfaceRegistry,
     interner: &mut Interner,
 ) -> Result<Vec<Node>, ParseError> {
     parse_with_source_map(source, registry, interner).map(|(nodes, _)| nodes)
@@ -557,7 +557,7 @@ pub fn parse(
 /// Returns `ParseError` if the source contains invalid syntax.
 pub fn parse_with_source_map(
     source: &str,
-    registry: &Registry,
+    registry: &InterfaceRegistry,
     interner: &mut Interner,
 ) -> Result<(Vec<Node>, SourceMap), ParseError> {
     let mut ctx = ParseContext::new(source, registry, interner);
@@ -632,7 +632,7 @@ fn parse_one(ctx: &mut ParseContext) -> Result<Node, ParseError> {
 
     // Check for token claims (library-defined syntax like IF, FOR, etc.)
     if let Some(claim) = ctx.registry.find_claim(&token.text, ClaimContext::Any)
-        && let Some(library) = ctx.registry.get_interface(claim.lib_id)
+        && let Some(library) = ctx.registry.get(claim.lib_id)
     {
         return library.parse(&token.text, ctx);
     }
@@ -908,7 +908,7 @@ mod tests {
 
     #[test]
     fn parse_integers() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("1 2 42", &reg, &mut interner).unwrap();
 
@@ -931,7 +931,7 @@ mod tests {
 
     #[test]
     fn parse_hex() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("0xFF 0x10", &reg, &mut interner).unwrap();
 
@@ -948,7 +948,7 @@ mod tests {
 
     #[test]
     fn parse_hp_binary_hex() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("#FF #10 #FFh", &reg, &mut interner).unwrap();
 
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn parse_hp_binary_formats() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         // Binary, octal, decimal
         let nodes = parse("#1010b #377o #255d", &reg, &mut interner).unwrap();
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn parse_hp_single_hex_digit() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         // Single hex digit A = 10
         let nodes = parse("#A", &reg, &mut interner).unwrap();
@@ -1004,7 +1004,7 @@ mod tests {
 
     #[test]
     fn parse_hp_double_hex_ab() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("#AB", &reg, &mut interner).unwrap();
         assert_eq!(nodes.len(), 1);
@@ -1016,7 +1016,7 @@ mod tests {
 
     #[test]
     fn parse_program_chevrons() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< 1 2 + >>", &reg, &mut interner).unwrap();
 
@@ -1032,7 +1032,7 @@ mod tests {
 
     #[test]
     fn parse_program_guillemets() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("« 1 + »", &reg, &mut interner).unwrap();
 
@@ -1048,7 +1048,7 @@ mod tests {
 
     #[test]
     fn parse_list() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ 1 2 3 }", &reg, &mut interner).unwrap();
 
@@ -1064,7 +1064,7 @@ mod tests {
 
     #[test]
     fn parse_nested_lists() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ { 1 } { 2 3 } }", &reg, &mut interner).unwrap();
 
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn parse_program_with_list() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< { 1 2 } >>", &reg, &mut interner).unwrap();
 
@@ -1098,7 +1098,7 @@ mod tests {
 
     #[test]
     fn parse_span_tracking() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ 1 2 }", &reg, &mut interner).unwrap();
 
@@ -1109,7 +1109,7 @@ mod tests {
 
     #[test]
     fn parse_unterminated_program() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let result = parse("<< 1 2", &reg, &mut interner);
 
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[test]
     fn parse_unterminated_list() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let result = parse("{ 1 2", &reg, &mut interner);
 
@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn parse_empty_program() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< >>", &reg, &mut interner).unwrap();
 
@@ -1144,7 +1144,7 @@ mod tests {
 
     #[test]
     fn parse_list_with_program() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ << 42 >> }", &reg, &mut interner).unwrap();
 
@@ -1165,7 +1165,7 @@ mod tests {
 
     #[test]
     fn parse_empty_list() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ }", &reg, &mut interner).unwrap();
 
@@ -1277,7 +1277,7 @@ mod tests {
 
     #[test]
     fn parse_with_source_map_returns_comments() {
-        let reg = Registry::new();
+        let reg = InterfaceRegistry::new();
         let mut interner = Interner::new();
         let (nodes, source_map) =
             parse_with_source_map("1 @ comment\n2 +", &reg, &mut interner).unwrap();

@@ -102,16 +102,17 @@ pub fn verify_breakpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{lower::lower, parse::parse, registry::Registry};
+    use crate::{lower::lower, parse::parse, registry::{InterfaceRegistry, LowererRegistry}};
     use crate::core::Interner;
     use crate::source::SourceId;
 
     fn compile_source(source: &str) -> (CompiledProgram, SourceFile) {
-        let registry = Registry::new();
+        let interfaces = InterfaceRegistry::new();
+        let lowerers = LowererRegistry::new();
         let mut interner = Interner::new();
 
-        let nodes = parse(source, &registry, &mut interner).unwrap();
-        let program = lower(&nodes, &registry, &interner).unwrap();
+        let nodes = parse(source, &interfaces, &mut interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         let source_file = SourceFile::new(SourceId::new(0), "test.rpl".into(), source.into());
 

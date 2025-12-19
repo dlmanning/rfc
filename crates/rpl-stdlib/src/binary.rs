@@ -14,7 +14,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
     vm::bytecode::Opcode,
@@ -50,7 +50,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct BinaryLib;
 
-impl LibraryImpl for BinaryLib {
+impl LibraryLowerer for BinaryLib {
     fn id(&self) -> LibId {
         BINARY_LIB
     }
@@ -146,6 +146,12 @@ impl LibraryImpl for BinaryLib {
             }
         }
         Ok(())
+    }
+}
+
+impl LibraryExecutor for BinaryLib {
+    fn id(&self) -> LibId {
+        BINARY_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

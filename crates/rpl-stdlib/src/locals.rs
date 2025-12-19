@@ -33,7 +33,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::{AtomKind, Branch, LibId, NodeKind},
-    libs::LibraryImpl,
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
 };
 
@@ -62,7 +62,7 @@ pub mod constructs {
 #[derive(Clone, Copy)]
 pub struct LocalsLib;
 
-impl LibraryImpl for LocalsLib {
+impl LibraryLowerer for LocalsLib {
     fn id(&self) -> LibId {
         LOCALS_LIB
     }
@@ -152,6 +152,18 @@ impl LibraryImpl for LocalsLib {
                 message: format!("unknown locals construct: {}", construct_id),
             }),
         }
+    }
+}
+
+impl LibraryExecutor for LocalsLib {
+    fn id(&self) -> LibId {
+        LOCALS_LIB
+    }
+
+    fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
+        // LocalsLib is compile-time only; all local binding is done during lowering.
+        // No commands need runtime execution.
+        Err("LocalsLib has no executable commands".into())
     }
 }
 

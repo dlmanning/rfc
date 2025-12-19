@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use rpl::{
     interface::InterfaceSpec,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
     Span,
@@ -167,7 +167,7 @@ mod cmd {
     pub const RGBA: u16 = 24;
 }
 
-impl LibraryImpl for PlotLib {
+impl LibraryLowerer for PlotLib {
     fn id(&self) -> LibId {
         PLOT_LIB_ID
     }
@@ -180,6 +180,12 @@ impl LibraryImpl for PlotLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(PLOT_LIB_ID, cmd_id);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for PlotLib {
+    fn id(&self) -> LibId {
+        PLOT_LIB_ID
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -464,8 +470,9 @@ impl LibraryImpl for PlotLib {
 
 /// Register the plot library with a session.
 pub fn register_plot_lib(session: &mut rpl::Session) {
-    session.registry_mut().add_interface(interface().clone());
-    session.registry_mut().add_impl(PlotLib);
+    session.interfaces_mut().add(interface().clone());
+    session.lowerers_mut().add(PlotLib);
+    session.executors_mut().add(PlotLib);
 }
 
 #[cfg(test)]

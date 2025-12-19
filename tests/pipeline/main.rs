@@ -9,8 +9,9 @@ use rpl::Session;
 /// Create a session with the standard library registered.
 pub fn session_with_stdlib() -> Session {
     let mut session = Session::new();
-    rpl_stdlib::register_interfaces(session.registry_mut());
-    rpl_stdlib::register_impls(session.registry_mut());
+    rpl_stdlib::register_interfaces(session.interfaces_mut());
+    rpl_stdlib::register_lowerers(session.lowerers_mut());
+    rpl_stdlib::register_executors(session.executors_mut());
     session
 }
 

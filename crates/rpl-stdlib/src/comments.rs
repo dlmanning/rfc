@@ -15,7 +15,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -41,7 +41,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct CommentsLib;
 
-impl LibraryImpl for CommentsLib {
+impl LibraryLowerer for CommentsLib {
     fn id(&self) -> LibId {
         COMMENTS_LIB
     }
@@ -54,6 +54,12 @@ impl LibraryImpl for CommentsLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(COMMENTS_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for CommentsLib {
+    fn id(&self) -> LibId {
+        COMMENTS_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

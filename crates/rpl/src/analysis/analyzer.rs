@@ -16,7 +16,7 @@ use crate::{
     interface::BindingKind,
     ir::{AtomKind, Branch, CompositeKind, LibId, Node, NodeKind},
     libs::StackEffect,
-    registry::Registry,
+    registry::InterfaceRegistry,
     symbolic::SymExpr,
     types::{CStack, CType},
 };
@@ -25,7 +25,7 @@ use crate::{
 ///
 /// This function walks the IR tree and produces an analysis result
 /// containing the symbol table, scope tree, and any diagnostics.
-pub fn analyze(nodes: &[Node], registry: &Registry, interner: &Interner) -> AnalysisResult {
+pub fn analyze(nodes: &[Node], registry: &InterfaceRegistry, interner: &Interner) -> AnalysisResult {
     let mut analyzer = Analyzer::new(registry, interner);
     analyzer.analyze(nodes);
     analyzer.into_result()
@@ -33,7 +33,7 @@ pub fn analyze(nodes: &[Node], registry: &Registry, interner: &Interner) -> Anal
 
 /// The main analyzer.
 struct Analyzer<'a> {
-    registry: &'a Registry,
+    registry: &'a InterfaceRegistry,
     interner: &'a Interner,
     symbols: SymbolTable,
     scopes: ScopeTree,
@@ -60,7 +60,7 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn new(registry: &'a Registry, interner: &'a Interner) -> Self {
+    fn new(registry: &'a InterfaceRegistry, interner: &'a Interner) -> Self {
         Self {
             registry,
             interner,
@@ -540,6 +540,7 @@ mod tests {
         interface::BindingKind,
         ir::{LibId, Node},
         libs::{CommandInfo, StackEffect},
+        registry::InterfaceRegistry,
     };
 
     // Test constants matching directory lib
@@ -592,9 +593,9 @@ mod tests {
         Span::new(Pos::new(start), Pos::new(end))
     }
 
-    fn make_registry() -> Registry {
-        let mut registry = Registry::new();
-        registry.add_interface(MockDirectoryInterface);
+    fn make_registry() -> InterfaceRegistry {
+        let mut registry = InterfaceRegistry::new();
+        registry.add(MockDirectoryInterface);
         registry
     }
 

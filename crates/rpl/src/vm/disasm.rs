@@ -588,15 +588,16 @@ mod tests {
 
     // === Integration tests with compiled programs ===
 
-    use crate::{parse::parse, lower::lower, registry::Registry};
+    use crate::{parse::parse, lower::lower, registry::{InterfaceRegistry, LowererRegistry}};
     use crate::core::Interner;
 
     /// Compile source code and return the bytecode.
     fn compile(source: &str) -> Vec<u8> {
-        let registry = Registry::new();
+        let interfaces = InterfaceRegistry::new();
+        let lowerers = LowererRegistry::new();
         let mut interner = Interner::new();
-        let nodes = parse(source, &registry, &mut interner).expect("parse failed");
-        let program = lower(&nodes, &registry, &interner).expect("lower failed");
+        let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).expect("lower failed");
         program.code
     }
 

@@ -35,7 +35,7 @@ use crate::core::{Interner, Span, TypeId};
 use crate::{
     ir::{AtomKind, CompositeKind, Node, NodeKind},
     libs::StackEffect,
-    registry::Registry,
+    registry::{InterfaceRegistry, LowererRegistry},
     types::{CStack, CType},
     vm::bytecode::{CatchKind, Opcode, write_leb128_i64, write_leb128_u32, write_u16},
 };
@@ -593,7 +593,8 @@ pub const SCRATCH_LOCAL_COUNT: u32 = 3;
 /// Lower context.
 pub struct LowerContext<'a> {
     pub output: BytecodeBuffer,
-    registry: &'a Registry,
+    interfaces: &'a InterfaceRegistry,
+    lowerers: &'a LowererRegistry,
     interner: &'a Interner,
     /// Type stack for tracking types during lowering.
     pub types: CStack,
@@ -613,7 +614,11 @@ use std::collections::HashMap;
 impl<'a> LowerContext<'a> {
     /// Create a new lower context.
     /// Pre-allocates scratch locals for stack operations.
-    pub fn new(registry: &'a Registry, interner: &'a Interner) -> Self {
+    pub fn new(
+        interfaces: &'a InterfaceRegistry,
+        lowerers: &'a LowererRegistry,
+        interner: &'a Interner,
+    ) -> Self {
         // Pre-allocate scratch locals as Unknown type
         let mut local_types = Vec::new();
         for _ in 0..SCRATCH_LOCAL_COUNT {
@@ -621,7 +626,8 @@ impl<'a> LowerContext<'a> {
         }
         Self {
             output: BytecodeBuffer::new(),
-            registry,
+            interfaces,
+            lowerers,
             interner,
             types: CStack::new(),
             // Reserve first 3 locals for scratch (stack ops)
@@ -975,11 +981,11 @@ impl<'a> LowerContext<'a> {
     /// The library emits bytecode, then we query the effect from the
     /// analyzer (single source of truth) and apply it to the type stack.
     pub fn lower_command(&mut self, lib: u16, cmd: u16) -> Result<(), LowerError> {
-        if let Some(library) = self.registry.get_impl(lib) {
+        if let Some(library) = self.lowerers.get(lib) {
             // Emit bytecode
             library.lower_command(cmd, crate::core::Span::default(), self)?;
             // Query effect from analyzer - single source of truth
-            let effect = self.registry.get_command_effect(lib, cmd, &self.types);
+            let effect = self.interfaces.get_command_effect(lib, cmd, &self.types);
             self.types.apply_effect(&effect);
             Ok(())
         } else {
@@ -1001,7 +1007,7 @@ impl<'a> LowerContext<'a> {
             CompositeKind::Program => {
                 // Compile the program body to separate bytecode with its own string table
                 if let Some(body) = branches.first() {
-                    let nested_program = lower_to_program(body, self.registry, self.interner)?;
+                    let nested_program = lower_to_program(body, self.interfaces, self.lowerers, self.interner)?;
                     self.output.emit_make_program(&nested_program);
                 } else {
                     self.output.emit_make_program(&CompiledProgram::new());
@@ -1029,7 +1035,7 @@ impl<'a> LowerContext<'a> {
             }
             CompositeKind::Extended(lib, construct_id) => {
                 // Dispatch to library lowerer
-                if let Some(library) = self.registry.get_impl(*lib) {
+                if let Some(library) = self.lowerers.get(*lib) {
                     library.lower_composite(*construct_id, branches, span, self)?;
                 } else {
                     return Err(LowerError {
@@ -1058,10 +1064,11 @@ impl<'a> LowerContext<'a> {
 /// Lower IR nodes to a compiled program with debug info.
 pub fn lower(
     nodes: &[Node],
-    registry: &Registry,
+    interfaces: &InterfaceRegistry,
+    lowerers: &LowererRegistry,
     interner: &Interner,
 ) -> Result<CompiledProgram, LowerError> {
-    let mut ctx = LowerContext::new(registry, interner);
+    let mut ctx = LowerContext::new(interfaces, lowerers, interner);
     ctx.lower_all(nodes)?;
     Ok(ctx.finish())
 }
@@ -1069,10 +1076,11 @@ pub fn lower(
 /// Lower IR nodes to bytecode and string table (for nested programs).
 pub fn lower_to_program(
     nodes: &[Node],
-    registry: &Registry,
+    interfaces: &InterfaceRegistry,
+    lowerers: &LowererRegistry,
     interner: &Interner,
 ) -> Result<CompiledProgram, LowerError> {
-    let mut ctx = LowerContext::new(registry, interner);
+    let mut ctx = LowerContext::new(interfaces, lowerers, interner);
     ctx.lower_all(nodes)?;
     Ok(ctx.finish())
 }
@@ -1113,9 +1121,10 @@ mod tests {
     }
 
     /// Minimal ArithImpl for testing type-directed lowering.
+    #[derive(Clone)]
     struct MockArithImpl;
 
-    impl crate::libs::LibraryImpl for MockArithImpl {
+    impl crate::libs::LibraryLowerer for MockArithImpl {
         fn id(&self) -> LibId { ARITH_LIB }
 
         fn lower_command(
@@ -1136,11 +1145,17 @@ mod tests {
         }
     }
 
-    fn test_registry() -> Registry {
-        let mut reg = Registry::new();
-        reg.add_interface(MockArithInterface);
-        reg.add_impl(MockArithImpl);
-        reg
+    impl crate::libs::LibraryExecutor for MockArithImpl {
+        fn id(&self) -> LibId { ARITH_LIB }
+        // Not needed for lowering tests
+    }
+
+    fn test_registries() -> (InterfaceRegistry, LowererRegistry) {
+        let mut interfaces = InterfaceRegistry::new();
+        interfaces.add(MockArithInterface);
+        let mut lowerers = LowererRegistry::new();
+        lowerers.add(MockArithImpl);
+        (interfaces, lowerers)
     }
 
     fn test_interner() -> Interner {
@@ -1149,10 +1164,10 @@ mod tests {
 
     #[test]
     fn lower_integer() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::integer(42, dummy_span())];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should be: I64Const 42
         assert_eq!(program.code[0], Opcode::I64Const.as_byte());
@@ -1160,10 +1175,10 @@ mod tests {
 
     #[test]
     fn lower_command() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::command(0, 10, dummy_span())]; // ADD
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should be: CallLib 0 10
         assert_eq!(program.code[0], Opcode::CallLib.as_byte());
@@ -1171,14 +1186,14 @@ mod tests {
 
     #[test]
     fn lower_sequence() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![
             Node::integer(1, dummy_span()),
             Node::integer(2, dummy_span()),
             Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // With type inference, integer + integer emits I64Add directly
         // Should be: I64Const 1, I64Const 2, I64Add
@@ -1189,7 +1204,7 @@ mod tests {
 
     #[test]
     fn lower_list() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::list(
             vec![
@@ -1199,7 +1214,7 @@ mod tests {
             ],
             dummy_span(),
         )];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should have: I64Const 1, I64Const 2, I64Const 3, MakeList 3
         assert!(program.code.len() > 6);
@@ -1210,10 +1225,10 @@ mod tests {
 
     #[test]
     fn lower_empty_list() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::list(vec![], dummy_span())];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should be: MakeList 0
         assert_eq!(program.code[0], Opcode::MakeList.as_byte());
@@ -1222,7 +1237,7 @@ mod tests {
 
     #[test]
     fn lower_program() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::program(
             vec![
@@ -1231,7 +1246,7 @@ mod tests {
             ],
             dummy_span(),
         )];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should be: MakeProgram <len> <bytecode>
         assert_eq!(program.code[0], Opcode::MakeProgram.as_byte());
@@ -1239,10 +1254,10 @@ mod tests {
 
     #[test]
     fn lower_empty_program() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![Node::program(vec![], dummy_span())];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should be: MakeProgram 0
         assert_eq!(program.code[0], Opcode::MakeProgram.as_byte());
@@ -1253,14 +1268,14 @@ mod tests {
 
     #[test]
     fn typed_integer_add() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![
             Node::integer(1, dummy_span()),
             Node::integer(2, dummy_span()),
             Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should emit I64Add for integer+integer
         assert!(program.code.contains(&Opcode::I64Add.as_byte()));
@@ -1269,14 +1284,14 @@ mod tests {
 
     #[test]
     fn typed_real_add() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![
             Node::real(1.5, dummy_span()),
             Node::real(2.5, dummy_span()),
             Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should emit F64Add for real+real
         assert!(program.code.contains(&Opcode::F64Add.as_byte()));
@@ -1284,14 +1299,14 @@ mod tests {
 
     #[test]
     fn typed_integer_compare() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![
             Node::integer(5, dummy_span()),
             Node::integer(3, dummy_span()),
             Node::command(ARITH_LIB, arith_cmd::GT, dummy_span()),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should emit I64GtS for integer comparison
         assert!(program.code.contains(&Opcode::I64GtS.as_byte()));
@@ -1299,7 +1314,7 @@ mod tests {
 
     #[test]
     fn typed_integer_mul_chain() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let nodes = vec![
             Node::integer(2, dummy_span()),
@@ -1308,7 +1323,7 @@ mod tests {
             Node::integer(4, dummy_span()),
             Node::command(ARITH_LIB, arith_cmd::MUL, dummy_span()),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Both MULs use I64Mul since emit_mul tracks result type based on inputs
         let mul_count = program
@@ -1321,7 +1336,7 @@ mod tests {
 
     #[test]
     fn span_tracking() {
-        let reg = test_registry();
+        let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
         let span1 = Span::new(Pos::new(0), Pos::new(2));
         let span2 = Span::new(Pos::new(3), Pos::new(5));
@@ -1329,7 +1344,7 @@ mod tests {
             Node::integer(1, span1),
             Node::integer(2, span2),
         ];
-        let program = lower(&nodes, &reg, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
 
         // Should have recorded both spans
         assert!(!program.spans.is_empty());

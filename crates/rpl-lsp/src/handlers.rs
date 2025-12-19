@@ -1,12 +1,12 @@
 //! LSP request handlers.
 //!
-//! Bridges LSP protocol requests to the rpl Session API.
+//! Bridges LSP protocol requests to the rpl AnalysisSession API.
 
 use std::collections::HashMap;
 
 use lsp_types::*;
 use rpl::{
-    Pos, Session, SourceId, Span,
+    AnalysisSession, Pos, SourceId, Span,
     analysis::Severity,
     lsp::{
         CompletionItemKind as RplCompletionKind, DocumentSymbolKind, SemanticModifier,
@@ -14,9 +14,12 @@ use rpl::{
     },
 };
 
-/// Server state holding the session and document mappings.
+/// Server state holding the analysis session and document mappings.
+///
+/// Uses [`AnalysisSession`] rather than full [`Session`] since the LSP
+/// only needs parsing and analysis - not compilation or execution.
 pub struct ServerState {
-    pub session: Session,
+    pub session: AnalysisSession,
     /// Maps URI strings to SourceIds
     pub documents: HashMap<String, SourceId>,
     /// Enable verbose hover with debug info
@@ -24,24 +27,23 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    /// Create a new server state with standard library registered.
+    /// Create a new server state with standard library interfaces registered.
     pub fn new() -> Self {
-        let mut session = Session::new();
-        rpl_stdlib::register_interfaces(session.registry_mut());
-        rpl_stdlib::register_impls(session.registry_mut());
+        let mut session = AnalysisSession::new();
+        rpl_stdlib::register_interfaces(session.interfaces_mut());
         Self::with_session(session)
     }
 
-    /// Create a server state with a pre-configured session.
+    /// Create a server state with a pre-configured analysis session.
     ///
-    /// Use this to add application-specific libraries:
+    /// Use this to add application-specific library interfaces:
     ///
     /// ```ignore
-    /// let mut session = Session::new();
-    /// session.registry_mut().add(MyCustomLib);
+    /// let mut session = AnalysisSession::new();
+    /// session.interfaces_mut().add(MyCustomLib::interface());
     /// let state = ServerState::with_session(session);
     /// ```
-    pub fn with_session(session: Session) -> Self {
+    pub fn with_session(session: AnalysisSession) -> Self {
         Self {
             session,
             documents: HashMap::new(),

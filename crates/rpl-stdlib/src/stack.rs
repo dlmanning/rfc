@@ -11,7 +11,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
     vm::bytecode::Opcode,
@@ -60,7 +60,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct StackLib;
 
-impl LibraryImpl for StackLib {
+impl LibraryLowerer for StackLib {
     fn id(&self) -> LibId {
         STACK_LIB
     }
@@ -117,6 +117,12 @@ impl LibraryImpl for StackLib {
         }
 
         Ok(())
+    }
+}
+
+impl LibraryExecutor for StackLib {
+    fn id(&self) -> LibId {
+        STACK_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

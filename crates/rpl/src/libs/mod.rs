@@ -553,15 +553,17 @@ pub trait LibraryInterface: Send + Sync {
     }
 }
 
-/// Implementation trait: provides lowering and execution behavior.
+/// Lowering trait: compiles commands and composites to bytecode.
 ///
-/// This trait describes the "how" of a library - how commands are compiled and executed.
-/// Separate from `LibraryInterface` which describes metadata for analysis.
-pub trait LibraryImpl: Send + Sync {
+/// Implement this for libraries that need custom lowering behavior.
+/// Libraries that only use default lowering (emit CallLib) don't need this.
+pub trait LibraryLowerer: Send + Sync {
     /// Get the library ID.
     fn id(&self) -> LibId;
 
     /// Lower a command by emitting bytecode.
+    ///
+    /// Default implementation emits a CallLib instruction for runtime execution.
     fn lower_command(
         &self,
         cmd: u16,
@@ -587,6 +589,15 @@ pub trait LibraryImpl: Send + Sync {
             span: Some(span),
         })
     }
+}
+
+/// Executor trait: executes commands at runtime.
+///
+/// Implement this for libraries that need runtime execution.
+/// Libraries that are entirely compile-time (like FlowLib) don't need this.
+pub trait LibraryExecutor: Send + Sync {
+    /// Get the library ID.
+    fn id(&self) -> LibId;
 
     /// Execute a command at runtime.
     ///
@@ -595,6 +606,17 @@ pub trait LibraryImpl: Send + Sync {
         Err("library does not support execution".into())
     }
 }
+
+/// Combined trait for libraries that need both lowering and execution.
+///
+/// This is a convenience trait for the common case where a library
+/// provides both custom lowering and runtime execution. Any type
+/// implementing both `LibraryLowerer` and `LibraryExecutor` automatically
+/// implements `LibraryImpl`.
+pub trait LibraryImpl: LibraryLowerer + LibraryExecutor {}
+
+// Blanket impl: any type implementing both traits gets LibraryImpl
+impl<T: LibraryLowerer + LibraryExecutor> LibraryImpl for T {}
 
 
 #[cfg(test)]

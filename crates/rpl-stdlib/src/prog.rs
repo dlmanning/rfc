@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use rpl::core::Span;
 use rpl::interface::InterfaceSpec;
 use rpl::ir::{Branch, LibId};
-use rpl::libs::{ExecuteContext, ExecuteResult, LibraryImpl};
+use rpl::libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer};
 use rpl::lower::{LowerContext, LowerError};
 
 /// Interface declaration for the Program library.
@@ -32,7 +32,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct ProgLib;
 
-impl LibraryImpl for ProgLib {
+impl LibraryLowerer for ProgLib {
     fn id(&self) -> LibId {
         PROG_LIB
     }
@@ -58,6 +58,12 @@ impl LibraryImpl for ProgLib {
         // EVAL has dynamic effects - we don't know what the program will do
         ctx.output.emit_call_lib(PROG_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for ProgLib {
+    fn id(&self) -> LibId {
+        PROG_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

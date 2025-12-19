@@ -1097,7 +1097,7 @@ impl LibraryInterface for InterfaceSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::Interner, interface::parse, ir::NodeKind, parse::ParseContext, registry::Registry};
+    use crate::{core::Interner, interface::parse, ir::NodeKind, parse::ParseContext, registry::InterfaceRegistry};
 
     #[test]
     fn test_from_ast_simple() {
@@ -1298,9 +1298,9 @@ library Novel 100
         assert_eq!(unless.id, 50);
 
         let code = "1 0 == DO 42 END";
-        let registry = Registry::new();
+        let interfaces = InterfaceRegistry::new();
         let mut interner = Interner::new();
-        let mut ctx = ParseContext::new(code, &registry, &mut interner);
+        let mut ctx = ParseContext::new(code, &interfaces, &mut interner);
 
         let node = rt.parse("UNLESS", &mut ctx).unwrap();
 
@@ -1334,9 +1334,9 @@ library Novel 101
         assert_eq!(repeat.id, 60);
 
         let code = "i 10 TIMES i 2 * DONE";
-        let registry = Registry::new();
+        let interfaces = InterfaceRegistry::new();
         let mut interner = Interner::new();
-        let mut ctx = ParseContext::new(code, &registry, &mut interner);
+        let mut ctx = ParseContext::new(code, &interfaces, &mut interner);
 
         let node = rt.parse("REPEAT", &mut ctx).unwrap();
 
@@ -1367,9 +1367,9 @@ library Novel 102
         let rt = InterfaceSpec::from_ast(&ast);
 
         let code = "1 WHEN 2 OTHERWISE 3 END";
-        let registry = Registry::new();
+        let interfaces = InterfaceRegistry::new();
         let mut interner = Interner::new();
-        let mut ctx = ParseContext::new(code, &registry, &mut interner);
+        let mut ctx = ParseContext::new(code, &interfaces, &mut interner);
 
         let node = rt.parse("COND", &mut ctx).unwrap();
 

@@ -1,11 +1,10 @@
 //! High-level session API for RPL2.
 //!
-//! This module provides the [`Session`] struct, which is the main entry point for:
-//! - Managing source files
-//! - Parsing and analyzing code
-//! - Compiling to bytecode
-//! - Executing programs
-//! - LSP functionality (completions, hover, go-to-definition, etc.)
+//! This module provides three main types for different use cases:
+//!
+//! - [`AnalysisSession`]: For LSP/IDE - parsing and analysis only
+//! - [`Runtime`]: For executing pre-compiled bytecode
+//! - [`Session`]: Full pipeline for REPL/debugger (composes the above)
 //!
 //! # Quick Start
 //!
@@ -20,6 +19,26 @@
 //!     Err(e) => eprintln!("Error: {}", e),
 //! }
 //! ```
+//!
+//! # For LSP/IDE (analysis only)
+//!
+//! ```
+//! use rpl::AnalysisSession;
+//!
+//! let mut session = AnalysisSession::new();
+//! let id = session.set_source("test.rpl", "1 2 +");
+//! let completions = session.completions(id, rpl::Pos::new(0));
+//! ```
+//!
+//! # For Runtime (execution only)
+//!
+//! ```ignore
+//! use rpl::Runtime;
+//!
+//! let mut runtime = Runtime::new();
+//! // Register executors...
+//! runtime.execute(&compiled_program)?;
+//! ```
 
 pub mod debug;
 pub mod lsp;
@@ -32,11 +51,11 @@ use crate::source::{SourceCache, SourceFile, SourceId};
 use crate::analysis::{
     AnalysisResult, Diagnostic, IncrementalAnalysis, Severity, SpanEdit,
 };
-use crate::lower::lower;
+use crate::lower::{lower, CompiledProgram};
 use crate::parse::parse;
-use crate::registry::Registry;
+use crate::registry::{InterfaceRegistry, LowererRegistry, ExecutorRegistry};
 use crate::value::Value;
-use crate::vm::Vm;
+use crate::vm::{Vm, DebugState, ExecuteOutcome, VmError};
 
 /// Session configuration options.
 #[derive(Clone, Debug)]
@@ -76,51 +95,167 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-/// Unified session for RPL2 compilation and execution.
+// ============================================================================
+// Runtime - for executing pre-compiled bytecode
+// ============================================================================
+
+/// Runtime for executing pre-compiled RPL bytecode.
 ///
-/// Session provides a high-level API for:
-/// - Managing source files
-/// - Parsing and analyzing code
-/// - Compiling to bytecode
-/// - Executing programs
-/// - LSP functionality (completions, hover, etc.)
-pub struct Session {
-    sources: SourceCache,
-    registry: Registry,
-    interner: Interner,
-    /// Incremental analysis state per source file.
-    analysis_cache: HashMap<SourceId, IncrementalAnalysis>,
+/// Use this when you have already-compiled bytecode and just need to execute it.
+/// This is useful for:
+/// - Running compiled `.rplc` binaries
+/// - Embedding RPL execution without compilation overhead
+/// - Scenarios where parsing/lowering is done separately
+///
+/// # Example
+///
+/// ```ignore
+/// use rpl::Runtime;
+///
+/// let mut runtime = Runtime::new();
+/// rpl_stdlib::register_executors(runtime.executors_mut());
+///
+/// // Load and execute pre-compiled program
+/// let program = load_compiled_program("program.rplc")?;
+/// runtime.execute(&program)?;
+/// println!("Result: {:?}", runtime.stack_contents());
+/// ```
+pub struct Runtime {
+    executors: ExecutorRegistry,
     vm: Vm,
-    #[allow(dead_code)]
-    config: SessionConfig,
 }
 
-impl Session {
-    /// Create a new session with default configuration.
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Runtime {
+    /// Create a new runtime with empty executor registry.
     pub fn new() -> Self {
-        Self::with_config(SessionConfig::default())
+        Self {
+            executors: ExecutorRegistry::new(),
+            vm: Vm::new(),
+        }
     }
 
-    /// Create a new session with custom configuration.
+    /// Execute a compiled program.
     ///
-    /// The registry starts empty. To use standard library commands, register
-    /// them using `rpl_stdlib`:
+    /// Resets the VM before execution. For REPL-style execution that
+    /// preserves stack state, use `execute_continue()`.
+    pub fn execute(&mut self, program: &CompiledProgram) -> Result<(), VmError> {
+        self.vm.reset();
+        self.vm.execute(&program.code, &self.executors, &program.rodata)
+    }
+
+    /// Execute a compiled program without resetting the VM.
     ///
-    /// ```ignore
-    /// use rpl::Session;
+    /// Preserves existing stack contents across executions.
+    pub fn execute_continue(&mut self, program: &CompiledProgram) -> Result<(), VmError> {
+        self.vm.execute(&program.code, &self.executors, &program.rodata)
+    }
+
+    /// Execute a compiled program with debugging support.
     ///
-    /// let mut session = Session::new();
-    /// rpl_stdlib::register_interfaces(session.registry_mut());
-    /// rpl_stdlib::register_impls(session.registry_mut());
-    /// ```
-    pub fn with_config(config: SessionConfig) -> Self {
+    /// Returns `ExecuteOutcome` to indicate if execution completed or paused
+    /// at a breakpoint/step.
+    pub fn execute_debug(
+        &mut self,
+        program: &CompiledProgram,
+        debug: &mut DebugState,
+    ) -> Result<ExecuteOutcome, VmError> {
+        self.vm.execute_debug(program, &self.executors, debug)
+    }
+
+    /// Reset the VM state.
+    pub fn reset(&mut self) {
+        self.vm.reset();
+    }
+
+    /// Get the current stack contents.
+    pub fn stack_contents(&self) -> &[Value] {
+        self.vm.stack_contents()
+    }
+
+    /// Get the current call depth (for step-over/step-out).
+    pub fn call_depth(&self) -> usize {
+        self.vm.call_depth()
+    }
+
+    /// Get the current PC (program counter).
+    pub fn current_pc(&self) -> usize {
+        self.vm.pc
+    }
+
+    /// Get the VM state.
+    pub fn vm(&self) -> &Vm {
+        &self.vm
+    }
+
+    /// Get mutable access to the VM.
+    pub fn vm_mut(&mut self) -> &mut Vm {
+        &mut self.vm
+    }
+
+    /// Get the executor registry.
+    pub fn executors(&self) -> &ExecutorRegistry {
+        &self.executors
+    }
+
+    /// Get mutable access to the executor registry.
+    ///
+    /// Use this to register library executors.
+    pub fn executors_mut(&mut self) -> &mut ExecutorRegistry {
+        &mut self.executors
+    }
+}
+
+// ============================================================================
+// AnalysisSession - for LSP/IDE analysis
+// ============================================================================
+
+/// Session for parsing and analyzing RPL code without execution.
+///
+/// Use this for LSP servers, IDEs, and other tools that need to understand
+/// code structure without running it. This provides:
+/// - Source file management
+/// - Parsing and analysis
+/// - Completions, hover, go-to-definition, etc.
+///
+/// # Example
+///
+/// ```
+/// use rpl::AnalysisSession;
+///
+/// let mut session = AnalysisSession::new();
+/// // Register interfaces for command recognition
+/// // rpl_stdlib::register_interfaces(session.interfaces_mut());
+///
+/// let id = session.set_source("test.rpl", "1 2 +");
+/// let diags = session.diagnostics(id);
+/// ```
+pub struct AnalysisSession {
+    sources: SourceCache,
+    interfaces: InterfaceRegistry,
+    interner: Interner,
+    analysis_cache: HashMap<SourceId, IncrementalAnalysis>,
+}
+
+impl Default for AnalysisSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnalysisSession {
+    /// Create a new analysis session with empty interface registry.
+    pub fn new() -> Self {
         Self {
             sources: SourceCache::new(),
-            registry: Registry::new(),
+            interfaces: InterfaceRegistry::new(),
             interner: Interner::new(),
             analysis_cache: HashMap::new(),
-            vm: Vm::new(),
-            config,
         }
     }
 
@@ -128,16 +263,12 @@ impl Session {
     ///
     /// Returns the SourceId for the file.
     pub fn set_source(&mut self, name: &str, source: &str) -> SourceId {
-        // Check if source already exists
         if let Some(id) = self.sources.find_by_name(name) {
-            // Update existing source
             let file = self.sources.get_mut(id).unwrap();
             *file = SourceFile::new(id, name.into(), source.into());
-            // Invalidate cache
             self.analysis_cache.remove(&id);
             id
         } else {
-            // Create new source
             self.sources.add(name.into(), source.into())
         }
     }
@@ -150,20 +281,18 @@ impl Session {
     /// Apply an incremental edit to a source file.
     pub fn edit_source(&mut self, id: SourceId, edit: SpanEdit) {
         if let Some(analysis) = self.analysis_cache.get_mut(&id) {
-            analysis.apply_edit(edit, &self.registry, &mut self.interner);
-            // Update the source file to match
+            analysis.apply_edit(edit, &self.interfaces, &mut self.interner);
             if let Some(file) = self.sources.get_mut(id) {
                 let name = file.name().to_string();
                 *file = SourceFile::new(id, name, analysis.source().into());
             }
         } else if let Some(file) = self.sources.get_mut(id) {
-            // No cached analysis, create one and apply edit
             let mut analysis = IncrementalAnalysis::new(
                 file.source(),
-                &self.registry,
+                &self.interfaces,
                 &mut self.interner,
             );
-            analysis.apply_edit(edit, &self.registry, &mut self.interner);
+            analysis.apply_edit(edit, &self.interfaces, &mut self.interner);
             let name = file.name().to_string();
             *file = SourceFile::new(id, name, analysis.source().into());
             self.analysis_cache.insert(id, analysis);
@@ -172,60 +301,16 @@ impl Session {
 
     /// Get or compute the analysis result for a source file.
     pub fn analyze(&mut self, id: SourceId) -> Option<&AnalysisResult> {
-        // Ensure we have an analysis
         if !self.analysis_cache.contains_key(&id) {
             let source = self.sources.get(id)?;
             let analysis = IncrementalAnalysis::new(
                 source.source(),
-                &self.registry,
+                &self.interfaces,
                 &mut self.interner,
             );
             self.analysis_cache.insert(id, analysis);
         }
-
         self.analysis_cache.get(&id).map(|a| a.result())
-    }
-
-    /// Evaluate source code and return the result.
-    ///
-    /// This is a convenience method that parses, lowers, and executes.
-    pub fn eval(&mut self, source: &str) -> Result<Vec<Value>, EvalError> {
-        // Parse
-        let nodes = parse(source, &self.registry, &mut self.interner)
-            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
-
-        // Lower to bytecode
-        let program = lower(&nodes, &self.registry, &self.interner)
-            .map_err(|e| EvalError::Lower(e.message))?;
-
-        // Execute
-        self.vm.reset();
-        self.vm
-            .execute(&program.code, &self.registry, &program.rodata)
-            .map_err(|e| EvalError::Runtime(e.to_string()))?;
-
-        // Collect results
-        Ok(self.vm.stack_contents().to_vec())
-    }
-
-    /// Evaluate source code for REPL (preserves stack between evaluations).
-    ///
-    /// Unlike `eval()`, this does not clear the stack before execution.
-    pub fn eval_repl(&mut self, source: &str) -> Result<(), EvalError> {
-        // Parse
-        let nodes = parse(source, &self.registry, &mut self.interner)
-            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
-
-        // Lower to bytecode
-        let program = lower(&nodes, &self.registry, &self.interner)
-            .map_err(|e| EvalError::Lower(e.message))?;
-
-        // Execute without reset
-        self.vm
-            .execute(&program.code, &self.registry, &program.rodata)
-            .map_err(|e| EvalError::Runtime(e.to_string()))?;
-
-        Ok(())
     }
 
     /// Get diagnostics for a source file.
@@ -248,19 +333,16 @@ impl Session {
         &self.sources
     }
 
-    /// Get the registry.
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    /// Get the interface registry.
+    pub fn interfaces(&self) -> &InterfaceRegistry {
+        &self.interfaces
     }
 
-    /// Get the VM state.
-    pub fn vm(&self) -> &Vm {
-        &self.vm
-    }
-
-    /// Get mutable access to the VM.
-    pub fn vm_mut(&mut self) -> &mut Vm {
-        &mut self.vm
+    /// Get mutable access to the interface registry.
+    ///
+    /// Use this to register library interfaces.
+    pub fn interfaces_mut(&mut self) -> &mut InterfaceRegistry {
+        &mut self.interfaces
     }
 
     /// Get the interner.
@@ -273,11 +355,11 @@ impl Session {
         &mut self.interner
     }
 
-    /// Get mutable access to the registry.
+    /// Get both interfaces and interner for parsing.
     ///
-    /// Use this to register external libraries.
-    pub fn registry_mut(&mut self) -> &mut Registry {
-        &mut self.registry
+    /// This avoids borrow conflicts when you need both references.
+    pub fn parsing_context(&mut self) -> (&InterfaceRegistry, &mut Interner) {
+        (&self.interfaces, &mut self.interner)
     }
 
     // === LSP Methods ===
@@ -300,7 +382,7 @@ impl Session {
             None => return Vec::new(),
         };
 
-        lsp::complete(analysis, source, &self.registry, &self.interner, pos)
+        lsp::complete(analysis, source, &self.interfaces, &self.interner, pos)
     }
 
     /// Get hover information at a position.
@@ -310,10 +392,8 @@ impl Session {
         pos: crate::core::Pos,
     ) -> Option<lsp::HoverResult> {
         let _ = self.analyze(id);
-
         let analysis = self.analysis_cache.get(&id)?.result();
-
-        lsp::hover(analysis, &self.registry, &self.interner, pos)
+        lsp::hover(analysis, &self.interfaces, &self.interner, pos)
     }
 
     /// Go to definition at a position.
@@ -323,9 +403,7 @@ impl Session {
         pos: crate::core::Pos,
     ) -> Option<lsp::GotoResult> {
         let _ = self.analyze(id);
-
         let analysis = self.analysis_cache.get(&id)?.result();
-
         lsp::goto_definition(analysis, &self.interner, pos)
     }
 
@@ -337,9 +415,7 @@ impl Session {
         include_definition: bool,
     ) -> Option<lsp::ReferenceResult> {
         let _ = self.analyze(id);
-
         let analysis = self.analysis_cache.get(&id)?.result();
-
         lsp::find_references(analysis, &self.interner, pos, include_definition)
     }
 
@@ -366,20 +442,282 @@ impl Session {
 
         lsp::document_symbols(analysis, &self.interner)
     }
+}
 
-    // === Debug Methods ===
+// ============================================================================
+// Session - full pipeline for REPL/debugger
+// ============================================================================
+
+/// Unified session for RPL2 compilation and execution.
+///
+/// Session provides a high-level API for:
+/// - Managing source files
+/// - Parsing and analyzing code
+/// - Compiling to bytecode
+/// - Executing programs
+/// - LSP functionality (completions, hover, etc.)
+///
+/// Session composes [`AnalysisSession`] and [`Runtime`] with a lowerer registry
+/// to provide the complete compilation pipeline.
+pub struct Session {
+    /// Analysis session for parsing and analysis.
+    analysis: AnalysisSession,
+    /// Lowerer registry for compilation (bridges analysis → runtime).
+    lowerers: LowererRegistry,
+    /// Runtime for execution.
+    runtime: Runtime,
+    #[allow(dead_code)]
+    config: SessionConfig,
+}
+
+impl Session {
+    /// Create a new session with default configuration.
+    pub fn new() -> Self {
+        Self::with_config(SessionConfig::default())
+    }
+
+    /// Create a new session with custom configuration.
+    ///
+    /// The registries start empty. To use standard library commands, register
+    /// them using `rpl_stdlib`:
+    ///
+    /// ```ignore
+    /// use rpl::Session;
+    ///
+    /// let mut session = Session::new();
+    /// rpl_stdlib::register_interfaces(session.interfaces_mut());
+    /// rpl_stdlib::register_lowerers(session.lowerers_mut());
+    /// rpl_stdlib::register_executors(session.executors_mut());
+    /// ```
+    pub fn with_config(config: SessionConfig) -> Self {
+        Self {
+            analysis: AnalysisSession::new(),
+            lowerers: LowererRegistry::new(),
+            runtime: Runtime::new(),
+            config,
+        }
+    }
+
+    // === Source Management (delegates to AnalysisSession) ===
+
+    /// Set or update source code for a file.
+    ///
+    /// Returns the SourceId for the file.
+    pub fn set_source(&mut self, name: &str, source: &str) -> SourceId {
+        self.analysis.set_source(name, source)
+    }
+
+    /// Get a source file by ID.
+    pub fn get_source(&self, id: SourceId) -> Option<&SourceFile> {
+        self.analysis.get_source(id)
+    }
+
+    /// Apply an incremental edit to a source file.
+    pub fn edit_source(&mut self, id: SourceId, edit: SpanEdit) {
+        self.analysis.edit_source(id, edit)
+    }
+
+    /// Get or compute the analysis result for a source file.
+    pub fn analyze(&mut self, id: SourceId) -> Option<&AnalysisResult> {
+        self.analysis.analyze(id)
+    }
+
+    /// Get diagnostics for a source file.
+    pub fn diagnostics(&mut self, id: SourceId) -> Vec<&Diagnostic> {
+        self.analysis.diagnostics(id)
+    }
+
+    /// Check if a source file has errors.
+    pub fn has_errors(&mut self, id: SourceId) -> bool {
+        self.analysis.has_errors(id)
+    }
+
+    // === Compilation and Execution ===
+
+    /// Evaluate source code and return the result.
+    ///
+    /// This is a convenience method that parses, lowers, and executes.
+    pub fn eval(&mut self, source: &str) -> Result<Vec<Value>, EvalError> {
+        // Parse
+        let (interfaces, interner) = self.analysis.parsing_context();
+        let nodes = parse(source, interfaces, interner)
+            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
+
+        // Lower to bytecode
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
+            .map_err(|e| EvalError::Lower(e.message))?;
+
+        // Execute
+        self.runtime.execute(&program)
+            .map_err(|e| EvalError::Runtime(e.to_string()))?;
+
+        // Collect results
+        Ok(self.runtime.stack_contents().to_vec())
+    }
+
+    /// Evaluate source code for REPL (preserves stack between evaluations).
+    ///
+    /// Unlike `eval()`, this does not clear the stack before execution.
+    pub fn eval_repl(&mut self, source: &str) -> Result<(), EvalError> {
+        // Parse
+        let (interfaces, interner) = self.analysis.parsing_context();
+        let nodes = parse(source, interfaces, interner)
+            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
+
+        // Lower to bytecode
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
+            .map_err(|e| EvalError::Lower(e.message))?;
+
+        // Execute without reset
+        self.runtime.execute_continue(&program)
+            .map_err(|e| EvalError::Runtime(e.to_string()))?;
+
+        Ok(())
+    }
 
     /// Compile source code to a CompiledProgram (with debug info).
     ///
     /// This returns a CompiledProgram with source span mappings
     /// that can be used with execute_debug().
-    pub fn compile(&mut self, source: &str) -> Result<crate::lower::CompiledProgram, EvalError> {
-        let nodes = parse(source, &self.registry, &mut self.interner)
+    pub fn compile(&mut self, source: &str) -> Result<CompiledProgram, EvalError> {
+        let (interfaces, interner) = self.analysis.parsing_context();
+        let nodes = parse(source, interfaces, interner)
             .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
 
-        lower(&nodes, &self.registry, &self.interner)
+        lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
             .map_err(|e| EvalError::Lower(e.message))
     }
+
+    // === Registry Access ===
+
+    /// Get the source cache.
+    pub fn sources(&self) -> &SourceCache {
+        self.analysis.sources()
+    }
+
+    /// Get the interface registry.
+    pub fn interfaces(&self) -> &InterfaceRegistry {
+        self.analysis.interfaces()
+    }
+
+    /// Get the lowerer registry.
+    pub fn lowerers(&self) -> &LowererRegistry {
+        &self.lowerers
+    }
+
+    /// Get the executor registry.
+    pub fn executors(&self) -> &ExecutorRegistry {
+        self.runtime.executors()
+    }
+
+    /// Get the interner.
+    pub fn interner(&self) -> &Interner {
+        self.analysis.interner()
+    }
+
+    /// Get mutable access to the interner.
+    pub fn interner_mut(&mut self) -> &mut Interner {
+        self.analysis.interner_mut()
+    }
+
+    /// Get mutable access to the interface registry.
+    ///
+    /// Use this to register external library interfaces.
+    pub fn interfaces_mut(&mut self) -> &mut InterfaceRegistry {
+        self.analysis.interfaces_mut()
+    }
+
+    /// Get mutable access to the lowerer registry.
+    ///
+    /// Use this to register external library lowerers.
+    pub fn lowerers_mut(&mut self) -> &mut LowererRegistry {
+        &mut self.lowerers
+    }
+
+    /// Get mutable access to the executor registry.
+    ///
+    /// Use this to register external library executors.
+    pub fn executors_mut(&mut self) -> &mut ExecutorRegistry {
+        self.runtime.executors_mut()
+    }
+
+    // === VM Access (delegates to Runtime) ===
+
+    /// Get the VM state.
+    pub fn vm(&self) -> &Vm {
+        self.runtime.vm()
+    }
+
+    /// Get mutable access to the VM.
+    pub fn vm_mut(&mut self) -> &mut Vm {
+        self.runtime.vm_mut()
+    }
+
+    /// Reset the VM state for a new debug session.
+    pub fn reset_vm(&mut self) {
+        self.runtime.reset();
+    }
+
+    /// Get the current call depth (for step-over/step-out).
+    pub fn call_depth(&self) -> usize {
+        self.runtime.call_depth()
+    }
+
+    /// Get the current PC (program counter) for debugging.
+    pub fn current_pc(&self) -> usize {
+        self.runtime.current_pc()
+    }
+
+    // === LSP Methods (delegates to AnalysisSession) ===
+
+    /// Get completions at a position in a source file.
+    pub fn completions(
+        &mut self,
+        id: SourceId,
+        pos: crate::core::Pos,
+    ) -> Vec<lsp::CompletionItem> {
+        self.analysis.completions(id, pos)
+    }
+
+    /// Get hover information at a position.
+    pub fn hover(
+        &mut self,
+        id: SourceId,
+        pos: crate::core::Pos,
+    ) -> Option<lsp::HoverResult> {
+        self.analysis.hover(id, pos)
+    }
+
+    /// Go to definition at a position.
+    pub fn definition(
+        &mut self,
+        id: SourceId,
+        pos: crate::core::Pos,
+    ) -> Option<lsp::GotoResult> {
+        self.analysis.definition(id, pos)
+    }
+
+    /// Find all references at a position.
+    pub fn references(
+        &mut self,
+        id: SourceId,
+        pos: crate::core::Pos,
+        include_definition: bool,
+    ) -> Option<lsp::ReferenceResult> {
+        self.analysis.references(id, pos, include_definition)
+    }
+
+    /// Get semantic tokens for a source file.
+    pub fn semantic_tokens(&mut self, id: SourceId) -> Vec<lsp::SemanticToken> {
+        self.analysis.semantic_tokens(id)
+    }
+
+    /// Get document symbols for outline view.
+    pub fn document_symbols(&mut self, id: SourceId) -> Vec<lsp::DocumentSymbol> {
+        self.analysis.document_symbols(id)
+    }
+
+    // === Debug Methods ===
 
     /// Execute a compiled program with debugging support.
     ///
@@ -392,27 +730,33 @@ impl Session {
     /// program and debug state.
     pub fn execute_debug(
         &mut self,
-        program: &crate::lower::CompiledProgram,
-        debug: &mut crate::vm::DebugState,
-    ) -> Result<crate::vm::ExecuteOutcome, EvalError> {
-        self.vm
-            .execute_debug(program, &self.registry, debug)
+        program: &CompiledProgram,
+        debug: &mut DebugState,
+    ) -> Result<ExecuteOutcome, EvalError> {
+        self.runtime.execute_debug(program, debug)
             .map_err(|e| EvalError::Runtime(e.to_string()))
     }
 
-    /// Reset the VM state for a new debug session.
-    pub fn reset_vm(&mut self) {
-        self.vm.reset();
+    // === Component Access ===
+
+    /// Get the analysis session.
+    pub fn analysis(&self) -> &AnalysisSession {
+        &self.analysis
     }
 
-    /// Get the current call depth (for step-over/step-out).
-    pub fn call_depth(&self) -> usize {
-        self.vm.call_depth()
+    /// Get mutable access to the analysis session.
+    pub fn analysis_mut(&mut self) -> &mut AnalysisSession {
+        &mut self.analysis
     }
 
-    /// Get the current PC (program counter) for debugging.
-    pub fn current_pc(&self) -> usize {
-        self.vm.pc
+    /// Get the runtime.
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    /// Get mutable access to the runtime.
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        &mut self.runtime
     }
 }
 
@@ -429,7 +773,7 @@ mod tests {
     #[test]
     fn session_new() {
         let session = Session::new();
-        assert!(session.sources.is_empty());
+        assert!(session.sources().is_empty());
     }
 
     #[test]

@@ -24,7 +24,7 @@ use stack::{Stack, StackError};
 use crate::{
     libs::ExecuteContext,
     lower::CompiledProgram,
-    registry::Registry,
+    registry::ExecutorRegistry,
     value::{ProgramData, Value},
 };
 
@@ -247,7 +247,7 @@ impl Vm {
     pub fn execute(
         &mut self,
         code: &[u8],
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         rodata: &[u8],
     ) -> Result<(), VmError> {
         let saved_pc = self.pc;
@@ -270,7 +270,7 @@ impl Vm {
     pub fn execute_debug(
         &mut self,
         program: &CompiledProgram,
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         debug: &mut DebugState,
     ) -> Result<ExecuteOutcome, VmError> {
         // Resume nested calls first
@@ -313,7 +313,7 @@ impl Vm {
     fn execute_inner_debug(
         &mut self,
         code: &[u8],
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         rodata: &[u8],
         debug: &mut DebugState,
         source_fn: impl Fn(usize) -> Option<u32>,
@@ -345,7 +345,7 @@ impl Vm {
     fn step(
         &mut self,
         code: &[u8],
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         rodata: &[u8],
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
@@ -435,7 +435,7 @@ impl Vm {
         name: Option<String>,
         program_data: Arc<ProgramData>,
         source_fn: impl Fn(usize) -> Option<u32>,
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         // Pop parameters from stack before saving locals (for functions with param_count > 0)
@@ -486,7 +486,7 @@ impl Vm {
         &mut self,
         lib_id: u16,
         cmd_id: u16,
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         // Special case: EVAL
@@ -495,7 +495,7 @@ impl Vm {
         }
 
         let library = registry
-            .get_impl(lib_id)
+            .get(lib_id)
             .ok_or(VmError::UnknownLibrary(lib_id))?;
         let last_error = self.last_error.clone();
         let mut ctx = ExecuteContext::new(&mut self.stack, &mut self.directory, cmd_id, last_error);
@@ -519,7 +519,7 @@ impl Vm {
 
     fn eval_program(
         &mut self,
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         let value = self.stack.pop()?;
@@ -565,7 +565,7 @@ impl Vm {
         &mut self,
         op: Opcode,
         code: &[u8],
-        registry: &Registry,
+        registry: &ExecutorRegistry,
         rodata: &[u8],
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
@@ -1160,7 +1160,7 @@ mod tests {
     #[test]
     fn push_integer() {
         let mut vm = Vm::new();
-        let reg = Registry::new();
+        let reg = ExecutorRegistry::new();
         let code = bytecode(|c| {
             c.push(Opcode::I64Const.as_byte());
             write_leb128_i64(42, c);

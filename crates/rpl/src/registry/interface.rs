@@ -1,35 +1,17 @@
-//! Library registry for managing commands and token claims.
+//! Interface registry for parsing and analysis.
 //!
-//! The registry maintains:
-//! - Token claims for parsing (libraries can claim keywords like IF, FOR)
+//! The InterfaceRegistry holds library interfaces which provide:
+//! - Token claims for custom syntax
 //! - Command name → (lib, cmd) mapping
-//! - Library interfaces (for parsing, analysis)
-//! - Library implementations (for lowering, execution)
-//!
-//! # Example
-//!
-//! ```ignore
-//! use rpl::registry::Registry;
-//! use rpl_stdlib;
-//!
-//! // Create empty registry
-//! let mut registry = Registry::new();
-//!
-//! // Register standard library
-//! rpl_stdlib::register_interfaces(&mut registry);
-//! rpl_stdlib::register_impls(&mut registry);
-//! ```
+//! - Stack effects for type inference
+//! - Binding information for scope analysis
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Re-export for convenience
-pub use crate::libs::{ClaimContext, TokenClaim};
-use crate::{
-    ir::LibId,
-    libs::{LibraryImpl, LibraryInterface, StackEffect},
-    types::CStack,
-};
+use crate::ir::LibId;
+use crate::libs::{ClaimContext, LibraryInterface, StackEffect, TokenClaim};
+use crate::types::CStack;
 
 /// Reference to a command in the registry.
 pub struct CommandRef {
@@ -41,40 +23,41 @@ pub struct CommandRef {
     pub cmd: u16,
 }
 
-/// Registry of libraries, commands, and token claims.
-pub struct Registry {
+/// Registry of library interfaces for parsing and analysis.
+///
+/// This registry is used during:
+/// - **Parsing**: Token claims determine how to parse custom syntax
+/// - **Analysis**: Stack effects and binding info for type/scope analysis
+pub struct InterfaceRegistry {
     /// Token claims sorted by priority (highest first).
     claims: Vec<TokenClaim>,
     /// Command name → (lib_id, cmd_id) mapping.
     commands: HashMap<String, (LibId, u16)>,
     /// Command (lib_id, cmd_id) → static StackEffect mapping.
     command_effects: HashMap<(LibId, u16), StackEffect>,
-    /// Library interfaces by ID (for analysis, parsing).
+    /// Library interfaces by ID.
     interfaces: HashMap<LibId, Arc<dyn LibraryInterface>>,
-    /// Library implementations by ID (for lowering, execution).
-    impls: HashMap<LibId, Arc<dyn LibraryImpl>>,
 }
 
-impl Default for Registry {
+impl Default for InterfaceRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Registry {
-    /// Create a new empty registry.
+impl InterfaceRegistry {
+    /// Create a new empty interface registry.
     pub fn new() -> Self {
         Self {
             claims: Vec::new(),
             commands: HashMap::new(),
             command_effects: HashMap::new(),
             interfaces: HashMap::new(),
-            impls: HashMap::new(),
         }
     }
 
-    /// Register a library interface (for parsing, analysis).
-    pub fn add_interface<T: LibraryInterface + 'static>(&mut self, lib: T) {
+    /// Register a library interface.
+    pub fn add<T: LibraryInterface + 'static>(&mut self, lib: T) {
         let id = lib.id();
 
         // Register commands
@@ -94,20 +77,30 @@ impl Registry {
         self.interfaces.insert(id, Arc::new(lib));
     }
 
-    /// Register a library implementation (for lowering, execution).
-    pub fn add_impl<T: LibraryImpl + 'static>(&mut self, lib: T) {
+    /// Register a library interface from an Arc (for shared interfaces).
+    pub fn add_arc(&mut self, lib: Arc<dyn LibraryInterface>) {
         let id = lib.id();
-        self.impls.insert(id, Arc::new(lib));
+
+        // Register commands
+        for cmd in lib.commands() {
+            self.commands
+                .insert(cmd.name.to_string(), (cmd.lib_id, cmd.cmd_id));
+            self.command_effects
+                .insert((cmd.lib_id, cmd.cmd_id), cmd.effect);
+        }
+
+        // Register token claims
+        for claim in lib.claims() {
+            self.register_claim(claim.clone());
+        }
+
+        // Store interface
+        self.interfaces.insert(id, lib);
     }
 
-    /// Get a library interface by ID (for parsing, analysis).
-    pub fn get_interface(&self, lib_id: LibId) -> Option<&dyn LibraryInterface> {
+    /// Get a library interface by ID.
+    pub fn get(&self, lib_id: LibId) -> Option<&dyn LibraryInterface> {
         self.interfaces.get(&lib_id).map(|a| a.as_ref())
-    }
-
-    /// Get a library implementation by ID (for lowering, execution).
-    pub fn get_impl(&self, lib_id: LibId) -> Option<&dyn LibraryImpl> {
-        self.impls.get(&lib_id).map(|a| a.as_ref())
     }
 
     /// Get a library name by ID.
@@ -228,7 +221,7 @@ mod tests {
 
     #[test]
     fn register_claim() {
-        let mut reg = Registry::new();
+        let mut reg = InterfaceRegistry::new();
 
         reg.register_claim(TokenClaim {
             token: "IF".to_string(),
@@ -244,7 +237,7 @@ mod tests {
 
     #[test]
     fn claim_priority() {
-        let mut reg = Registry::new();
+        let mut reg = InterfaceRegistry::new();
 
         reg.register_claim(TokenClaim {
             token: "TEST".to_string(),
@@ -266,7 +259,7 @@ mod tests {
 
     #[test]
     fn register_command() {
-        let mut reg = Registry::new();
+        let mut reg = InterfaceRegistry::new();
         reg.register_command("TEST", 1, 0);
 
         assert_eq!(reg.find_command("TEST"), Some((1, 0)));

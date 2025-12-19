@@ -16,7 +16,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
     vm::bytecode::Opcode,
@@ -67,7 +67,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct TranscendentalsLib;
 
-impl LibraryImpl for TranscendentalsLib {
+impl LibraryLowerer for TranscendentalsLib {
     fn id(&self) -> LibId {
         TRANSCENDENTALS_LIB
     }
@@ -152,6 +152,12 @@ impl LibraryImpl for TranscendentalsLib {
             }
         }
         Ok(())
+    }
+}
+
+impl LibraryExecutor for TranscendentalsLib {
+    fn id(&self) -> LibId {
+        TRANSCENDENTALS_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

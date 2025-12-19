@@ -68,41 +68,48 @@ pub use source::{DiagnosticRenderer, LineCol, SourceCache, SourceFile, SourceId}
 
 // Re-export commonly used types at crate root
 pub use lower::CompiledProgram;
-pub use session::{Session, SessionConfig, EvalError};
+pub use session::{AnalysisSession, Runtime, Session, SessionConfig, EvalError};
 pub use session::lsp;
 pub use session::debug as debug_helpers;
 pub use vm::{DebugState, DebugMode, DebugEvent, ExecuteOutcome, ReturnEntry};
 
 /// Evaluate RPL source code and return the resulting stack.
 ///
-/// This is a low-level function that uses an empty registry. For evaluation
+/// This is a low-level function that uses empty registries. For evaluation
 /// with standard library commands (+, -, IF, etc.), use `rpl_stdlib::eval()`.
 ///
 /// This function can only handle basic literals (integers, reals, strings,
 /// lists, programs) - no commands.
 pub fn eval(source: &str) -> Result<Vec<value::Value>, String> {
-    let registry = registry::Registry::new();
-    eval_with_registry(source, &registry)
+    let interfaces = registry::InterfaceRegistry::new();
+    let lowerers = registry::LowererRegistry::new();
+    let executors = registry::ExecutorRegistry::new();
+    eval_with_registries(source, &interfaces, &lowerers, &executors)
 }
 
-/// Evaluate RPL source code with a custom registry.
+/// Evaluate RPL source code with custom registries.
 ///
 /// Use this when you need to evaluate code with a specific set of libraries
 /// registered.
-pub fn eval_with_registry(source: &str, registry: &registry::Registry) -> Result<Vec<value::Value>, String> {
+pub fn eval_with_registries(
+    source: &str,
+    interfaces: &registry::InterfaceRegistry,
+    lowerers: &registry::LowererRegistry,
+    executors: &registry::ExecutorRegistry,
+) -> Result<Vec<value::Value>, String> {
     let mut interner = Interner::new();
 
     // Parse
-    let nodes = parse::parse(source, registry, &mut interner)
+    let nodes = parse::parse(source, interfaces, &mut interner)
         .map_err(|e| format!("parse error: {}", e))?;
 
     // Lower
-    let program = lower::lower(&nodes, registry, &interner)
+    let program = lower::lower(&nodes, interfaces, lowerers, &interner)
         .map_err(|e| format!("lower error: {}", e))?;
 
     // Execute
     let mut vm = vm::Vm::new();
-    vm.execute(&program.code, registry, &program.rodata)
+    vm.execute(&program.code, executors, &program.rodata)
         .map_err(|e| format!("runtime error: {}", e))?;
 
     // Return stack contents

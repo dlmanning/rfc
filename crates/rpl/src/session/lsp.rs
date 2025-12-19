@@ -8,7 +8,7 @@ use crate::source::SourceFile;
 
 use crate::{
     analysis::{AnalysisResult, Definition, DefinitionKind, IncrementalAnalysis},
-    registry::Registry,
+    registry::InterfaceRegistry,
 };
 
 // ============================================================================
@@ -211,7 +211,7 @@ pub struct DocumentSymbol {
 pub fn complete(
     analysis: &AnalysisResult,
     source: &SourceFile,
-    registry: &Registry,
+    registry: &InterfaceRegistry,
     interner: &Interner,
     pos: Pos,
 ) -> Vec<CompletionItem> {
@@ -257,7 +257,7 @@ pub fn complete(
 /// Get hover information at a position.
 pub fn hover(
     analysis: &AnalysisResult,
-    registry: &Registry,
+    registry: &InterfaceRegistry,
     interner: &Interner,
     pos: Pos,
 ) -> Option<HoverResult> {
@@ -323,7 +323,7 @@ fn make_definition_hover(def: &Definition) -> HoverResult {
     }
 }
 
-fn hover_command(name: &str, span: Span, registry: &Registry) -> Option<HoverResult> {
+fn hover_command(name: &str, span: Span, registry: &InterfaceRegistry) -> Option<HoverResult> {
     // Look up command in registry
     if let Some((lib_id, cmd_id)) = registry.find_command(name) {
         let mut parts = Vec::new();

@@ -17,7 +17,7 @@ use rpl::interface::InterfaceSpec;
 use rpl::{
     core::Span,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -58,7 +58,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct ListLib;
 
-impl LibraryImpl for ListLib {
+impl LibraryLowerer for ListLib {
     fn id(&self) -> LibId {
         LIST_LIB
     }
@@ -71,6 +71,12 @@ impl LibraryImpl for ListLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(LIST_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for ListLib {
+    fn id(&self) -> LibId {
+        LIST_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {

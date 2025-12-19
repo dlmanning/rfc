@@ -22,7 +22,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
+    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -63,7 +63,7 @@ pub mod cmd {
 #[derive(Clone, Copy)]
 pub struct StringsLib;
 
-impl LibraryImpl for StringsLib {
+impl LibraryLowerer for StringsLib {
     fn id(&self) -> LibId {
         STRINGS_LIB
     }
@@ -88,6 +88,12 @@ impl LibraryImpl for StringsLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(STRINGS_LIB, cmd);
         Ok(())
+    }
+}
+
+impl LibraryExecutor for StringsLib {
+    fn id(&self) -> LibId {
+        STRINGS_LIB
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
