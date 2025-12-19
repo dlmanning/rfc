@@ -4,7 +4,7 @@
 //! use in debugger disassembly views.
 
 use super::bytecode::{
-    BlockType, CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16,
+    BlockType, CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
 };
 
 /// A disassembled instruction.
@@ -160,18 +160,39 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
         Opcode::F64ConvertI64S => ("F64ConvertI64S".into(), offset),
         Opcode::I64TruncF64S => ("I64TruncF64S".into(), offset),
 
-        // Block type operands
+        // Block type operands with u32 offsets
         Opcode::Block => {
             let (block_type, new_offset) = read_block_type(code, offset);
-            (format!("Block {}", block_type), new_offset)
+            offset = new_offset;
+            if let Some(end_offset) = read_u32(code, &mut offset) {
+                (format!("Block {} end=@{}", block_type, end_offset), offset)
+            } else {
+                ("Block ???".into(), code.len())
+            }
         }
         Opcode::Loop => {
             let (block_type, new_offset) = read_block_type(code, offset);
-            (format!("Loop {}", block_type), new_offset)
+            offset = new_offset;
+            if let Some(end_offset) = read_u32(code, &mut offset) {
+                (format!("Loop {} end=@{}", block_type, end_offset), offset)
+            } else {
+                ("Loop ???".into(), code.len())
+            }
         }
         Opcode::If => {
             let (block_type, new_offset) = read_block_type(code, offset);
-            (format!("If {}", block_type), new_offset)
+            offset = new_offset;
+            if let (Some(else_offset), Some(end_offset)) =
+                (read_u32(code, &mut offset), read_u32(code, &mut offset))
+            {
+                if else_offset == end_offset {
+                    (format!("If {} end=@{}", block_type, end_offset), offset)
+                } else {
+                    (format!("If {} else=@{} end=@{}", block_type, else_offset, end_offset), offset)
+                }
+            } else {
+                ("If ???".into(), code.len())
+            }
         }
 
         // LEB128 u32 operands
@@ -347,32 +368,37 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             }
         }
 
-        // TryTable - complex
+        // TryTable - complex with u32 end offset
         Opcode::TryTable => {
             // Block type
             let (block_type, new_offset) = read_block_type(code, offset);
             offset = new_offset;
 
-            // Catch clause count
-            if let Some(catch_count) = read_leb128_u32(code, &mut offset) {
-                // Skip catch clauses
-                for _ in 0..catch_count {
-                    if offset >= code.len() {
-                        break;
-                    }
-                    let kind = CatchKind::from_byte(code[offset]);
-                    offset += 1;
-                    if let Some(k) = kind && k.has_tag() {
-                        // Skip tag index
+            // End offset (u32)
+            if let Some(end_offset) = read_u32(code, &mut offset) {
+                // Catch clause count
+                if let Some(catch_count) = read_leb128_u32(code, &mut offset) {
+                    // Skip catch clauses
+                    for _ in 0..catch_count {
+                        if offset >= code.len() {
+                            break;
+                        }
+                        let kind = CatchKind::from_byte(code[offset]);
+                        offset += 1;
+                        if let Some(k) = kind && k.has_tag() {
+                            // Skip tag index
+                            let _ = read_leb128_u32(code, &mut offset);
+                        }
+                        // Skip label index
                         let _ = read_leb128_u32(code, &mut offset);
                     }
-                    // Skip label index
-                    let _ = read_leb128_u32(code, &mut offset);
+                    (
+                        format!("TryTable {} end=@{} catches={}", block_type, end_offset, catch_count),
+                        offset,
+                    )
+                } else {
+                    ("TryTable ???".into(), code.len())
                 }
-                (
-                    format!("TryTable {} catches={}", block_type, catch_count),
-                    offset,
-                )
             } else {
                 ("TryTable ???".into(), code.len())
             }
@@ -515,12 +541,13 @@ mod tests {
 
     #[test]
     fn disassemble_block() {
-        // Block [] (empty block type)
-        let code = vec![0x02, 0x40];
+        // Block [] with end offset (new format: opcode, type, end_offset:u32)
+        // end_offset = 10 (0x0A000000 in little-endian)
+        let code = vec![0x02, 0x40, 0x0A, 0x00, 0x00, 0x00];
         let result = disassemble(&code, 0, 10);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].text, "Block []");
-        assert_eq!(result[0].size, 2);
+        assert_eq!(result[0].text, "Block [] end=@10");
+        assert_eq!(result[0].size, 6);
     }
 
     #[test]
@@ -638,15 +665,19 @@ mod tests {
 
     #[test]
     fn disassemble_conditional() {
-        // Use raw bytecode for If/Else/End structure:
-        // I64Const 1, If, I64Const 2, Else, I64Const 3, End
+        // Use raw bytecode for If/Else/End structure (new format):
+        // I64Const 1, If (type, else_offset:u32, end_offset:u32), I64Const 2, Else, I64Const 3, End
+        // Layout: I64Const 1 at 0-1, If at 2-11, I64Const 2 at 12-13, Else at 14, I64Const 3 at 15-16, End at 17
+        // else_offset points AFTER Else (15), end_offset points AFTER End (18)
         let code = vec![
-            0x42, 0x01, // I64Const 1
-            0x04, 0x40, // If []
-            0x42, 0x02, // I64Const 2
-            0x05,       // Else
-            0x42, 0x03, // I64Const 3
-            0x0B,       // End
+            0x42, 0x01,                         // I64Const 1 (PC 0-1)
+            0x04, 0x40,                         // If [] (PC 2-3)
+            0x0F, 0x00, 0x00, 0x00,             // else_offset = 15 (PC 4-7)
+            0x12, 0x00, 0x00, 0x00,             // end_offset = 18 (PC 8-11)
+            0x42, 0x02,                         // I64Const 2 (PC 12-13)
+            0x05,                               // Else (PC 14)
+            0x42, 0x03,                         // I64Const 3 (PC 15-16)
+            0x0B,                               // End (PC 17)
         ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
@@ -661,12 +692,15 @@ mod tests {
 
     #[test]
     fn disassemble_loop_bytecode() {
-        // Use raw bytecode for Loop/End structure:
-        // Loop, I64Const 1, End
+        // Use raw bytecode for Loop/End structure (new format):
+        // Loop (type, end_offset:u32), I64Const 1, End
+        // Layout: Loop at 0-5, I64Const at 6-7, End at 8
+        // end_offset points AFTER End (9)
         let code = vec![
-            0x03, 0x40, // Loop []
-            0x42, 0x01, // I64Const 1
-            0x0B,       // End
+            0x03, 0x40,                 // Loop [] (PC 0-1)
+            0x09, 0x00, 0x00, 0x00,     // end_offset = 9 (PC 2-5)
+            0x42, 0x01,                 // I64Const 1 (PC 6-7)
+            0x0B,                       // End (PC 8)
         ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 

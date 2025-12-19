@@ -15,7 +15,7 @@ pub mod stack;
 
 use std::sync::Arc;
 
-use bytecode::{CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16};
+use bytecode::{CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32};
 pub use debug::{DebugEvent, DebugMode, DebugState};
 use directory::Directory;
 use locals::Locals;
@@ -630,7 +630,7 @@ impl Vm {
             Block => {
                 let _bt = code.get(self.pc).ok_or(VmError::UnexpectedEnd)?;
                 self.pc += 1;
-                let end_pos = find_matching_end(code, self.pc)?;
+                let end_pos = read_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 self.control_stack.push(ControlEntry {
                     kind: ControlKind::Block,
                     branch_target: end_pos,
@@ -641,8 +641,8 @@ impl Vm {
             Loop => {
                 let _bt = code.get(self.pc).ok_or(VmError::UnexpectedEnd)?;
                 self.pc += 1;
-                let loop_start = self.pc;
-                let end_pos = find_matching_end(code, self.pc)?;
+                let end_pos = read_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
+                let loop_start = self.pc; // Loop body starts after the header
                 self.control_stack.push(ControlEntry {
                     kind: ControlKind::Loop,
                     branch_target: loop_start,
@@ -653,8 +653,9 @@ impl Vm {
             If => {
                 let _bt = code.get(self.pc).ok_or(VmError::UnexpectedEnd)?;
                 self.pc += 1;
+                let else_pos = read_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
+                let end_pos = read_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 let cond = self.stack.pop()?;
-                let (else_pos, end_pos) = find_if_structure(code, self.pc)?;
 
                 if value_is_true(&cond) {
                     self.control_stack.push(ControlEntry {
@@ -663,8 +664,9 @@ impl Vm {
                         end_pos: Some(end_pos),
                         catch_clauses: vec![],
                     });
-                } else if let Some(else_pc) = else_pos {
-                    self.pc = else_pc;
+                } else if else_pos != end_pos {
+                    // There is an Else branch
+                    self.pc = else_pos;
                     self.control_stack.push(ControlEntry {
                         kind: ControlKind::If,
                         branch_target: end_pos,
@@ -672,6 +674,7 @@ impl Vm {
                         catch_clauses: vec![],
                     });
                 } else {
+                    // No Else, skip to end
                     self.pc = end_pos;
                 }
             }
@@ -705,6 +708,7 @@ impl Vm {
             TryTable => {
                 let _bt = code.get(self.pc).ok_or(VmError::UnexpectedEnd)?;
                 self.pc += 1;
+                let end_pos = read_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 let clause_count =
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)?;
                 let mut clauses = Vec::with_capacity(clause_count as usize);
@@ -720,7 +724,6 @@ impl Vm {
                         read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)?;
                     clauses.push(CatchClause { kind, label });
                 }
-                let end_pos = find_matching_end(code, self.pc)?;
                 self.control_stack.push(ControlEntry {
                     kind: ControlKind::TryTable,
                     branch_target: end_pos,
@@ -1140,153 +1143,6 @@ fn value_is_true(value: &Value) -> bool {
         Value::Real(x) if *x == 0.0 => false,
         _ => true,
     }
-}
-
-fn find_matching_end(code: &[u8], start: usize) -> Result<usize, VmError> {
-    let mut depth = 1;
-    let mut pc = start;
-
-    while pc < code.len() && depth > 0 {
-        let op_byte = code[pc];
-        pc += 1;
-
-        match Opcode::from_byte(op_byte) {
-            Some(Opcode::Block | Opcode::Loop | Opcode::If) => {
-                depth += 1;
-                if pc < code.len() {
-                    pc += 1;
-                }
-            }
-            Some(Opcode::TryTable) => {
-                depth += 1;
-                pc = skip_try_header(code, pc)?;
-            }
-            Some(Opcode::End) => depth -= 1,
-            Some(op) => pc = skip_operands(code, pc, op)?,
-            None => return Err(VmError::InvalidOpcode(op_byte)),
-        }
-    }
-
-    if depth != 0 {
-        return Err(VmError::UnexpectedEnd);
-    }
-    Ok(pc)
-}
-
-fn find_if_structure(code: &[u8], start: usize) -> Result<(Option<usize>, usize), VmError> {
-    let mut depth = 1;
-    let mut pc = start;
-    let mut else_pos = None;
-
-    while pc < code.len() && depth > 0 {
-        let op_byte = code[pc];
-        pc += 1;
-
-        match Opcode::from_byte(op_byte) {
-            Some(Opcode::Block | Opcode::Loop | Opcode::If) => {
-                depth += 1;
-                if pc < code.len() {
-                    pc += 1;
-                }
-            }
-            Some(Opcode::TryTable) => {
-                depth += 1;
-                pc = skip_try_header(code, pc)?;
-            }
-            Some(Opcode::Else) if depth == 1 => else_pos = Some(pc),
-            Some(Opcode::End) => depth -= 1,
-            Some(op) => pc = skip_operands(code, pc, op)?,
-            None => return Err(VmError::InvalidOpcode(op_byte)),
-        }
-    }
-
-    if depth != 0 {
-        return Err(VmError::UnexpectedEnd);
-    }
-    Ok((else_pos, pc))
-}
-
-fn skip_try_header(code: &[u8], mut pc: usize) -> Result<usize, VmError> {
-    if pc >= code.len() {
-        return Err(VmError::UnexpectedEnd);
-    }
-    pc += 1; // block type
-
-    let count = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-    for _ in 0..count {
-        let kind_byte = *code.get(pc).ok_or(VmError::UnexpectedEnd)?;
-        pc += 1;
-        if CatchKind::from_byte(kind_byte)
-            .map(|k| k.has_tag())
-            .unwrap_or(false)
-        {
-            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-        }
-        read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-    }
-    Ok(pc)
-}
-
-fn skip_operands(code: &[u8], mut pc: usize, op: Opcode) -> Result<usize, VmError> {
-    use Opcode::*;
-    match op {
-        Br | BrIf | LocalGet | LocalSet | LocalTee | MakeList | Throw => {
-            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-        }
-        I64Const => {
-            read_leb128_i64(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-        }
-        F64Const => {
-            if pc + 8 > code.len() {
-                return Err(VmError::UnexpectedEnd);
-            }
-            pc += 8;
-        }
-        CallLib => {
-            if pc + 4 > code.len() {
-                return Err(VmError::UnexpectedEnd);
-            }
-            pc += 4;
-        }
-        // Offset/len pairs (reference into rodata)
-        StringConst | SymbolicConst | EvalName | BlobConst => {
-            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // offset
-            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // len
-        }
-        MakeProgram => {
-            // param_count
-            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-            // rodata_len + rodata_bytes
-            let rodata_len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            if pc + rodata_len > code.len() {
-                return Err(VmError::UnexpectedEnd);
-            }
-            pc += rodata_len;
-            // code_len + code_bytes
-            let code_len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            if pc + code_len > code.len() {
-                return Err(VmError::UnexpectedEnd);
-            }
-            pc += code_len;
-            // span_count + spans
-            let span_count = read_u16(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            for _ in 0..span_count {
-                read_u16(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-            }
-        }
-        PushLocalScope => {
-            let count = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            for _ in 0..count {
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // offset
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // len
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // local_idx
-            }
-        }
-        _ => {}
-    }
-    Ok(pc)
 }
 
 #[cfg(test)]

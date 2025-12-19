@@ -167,6 +167,19 @@ impl std::fmt::Display for LowerError {
 
 impl std::error::Error for LowerError {}
 
+/// Control flow fixup entry for backpatching branch targets.
+#[derive(Debug)]
+enum ControlFixup {
+    /// Block: needs end_offset patched.
+    Block { end_offset_pos: usize },
+    /// Loop: needs end_offset patched (branch target is loop start, not end).
+    Loop { end_offset_pos: usize },
+    /// If: needs else_offset and end_offset patched.
+    If { else_offset_pos: usize, end_offset_pos: usize },
+    /// TryTable: needs end_offset patched.
+    TryTable { end_offset_pos: usize },
+}
+
 /// Bytecode output buffer with span tracking.
 pub struct BytecodeBuffer {
     code: Vec<u8>,
@@ -180,6 +193,8 @@ pub struct BytecodeBuffer {
     rodata: Vec<u8>,
     /// Number of parameters (0 for regular programs, N for functions).
     param_count: u16,
+    /// Stack of control flow fixups for backpatching.
+    control_fixups: Vec<ControlFixup>,
 }
 
 impl Default for BytecodeBuffer {
@@ -205,6 +220,7 @@ impl BytecodeBuffer {
             current_span: None,
             rodata: Vec::new(),
             param_count: 0,
+            control_fixups: Vec::new(),
         }
     }
 
@@ -250,6 +266,21 @@ impl BytecodeBuffer {
     #[inline]
     pub fn emit_byte(&mut self, byte: u8) {
         self.code.push(byte);
+    }
+
+    /// Emit a u32 placeholder (4 bytes, little-endian).
+    #[inline]
+    fn emit_u32_placeholder(&mut self) -> usize {
+        let pos = self.code.len();
+        self.code.extend_from_slice(&[0, 0, 0, 0]);
+        pos
+    }
+
+    /// Patch a u32 at a specific position.
+    #[inline]
+    fn patch_u32(&mut self, pos: usize, value: u32) {
+        let bytes = value.to_le_bytes();
+        self.code[pos..pos + 4].copy_from_slice(&bytes);
     }
 
     /// Emit an opcode.
@@ -410,33 +441,86 @@ impl BytecodeBuffer {
         // Conversions
         emit_f64_convert_i64_s => F64ConvertI64S,
         emit_i64_trunc_f64_s => I64TruncF64S,
-        // Control flow (simple)
-        emit_else => Else,
-        emit_end => End,
+        // Other
         emit_pop_local_scope => PopLocalScope,
     }
 
-    // === Control flow (with block type) ===
+    // === Control flow (with block type and backpatching) ===
 
-    /// Emit block with empty type.
+    /// Emit block with empty type and placeholder for end offset.
+    /// The end offset will be patched when emit_end is called.
     #[inline]
     pub fn emit_block(&mut self) {
         self.emit_opcode(Opcode::Block);
         self.emit_byte(0x40); // Empty block type
+        let end_offset_pos = self.emit_u32_placeholder();
+        self.control_fixups.push(ControlFixup::Block { end_offset_pos });
     }
 
-    /// Emit loop with empty type.
+    /// Emit loop with empty type and placeholder for end offset.
+    /// The end offset will be patched when emit_end is called.
     #[inline]
     pub fn emit_loop(&mut self) {
         self.emit_opcode(Opcode::Loop);
         self.emit_byte(0x40); // Empty block type
+        let end_offset_pos = self.emit_u32_placeholder();
+        self.control_fixups.push(ControlFixup::Loop { end_offset_pos });
     }
 
-    /// Emit if with empty type.
+    /// Emit if with empty type and placeholders for else/end offsets.
+    /// The offsets will be patched when emit_else/emit_end are called.
     #[inline]
     pub fn emit_if(&mut self) {
         self.emit_opcode(Opcode::If);
         self.emit_byte(0x40); // Empty block type
+        let else_offset_pos = self.emit_u32_placeholder();
+        let end_offset_pos = self.emit_u32_placeholder();
+        self.control_fixups.push(ControlFixup::If { else_offset_pos, end_offset_pos });
+    }
+
+    /// Emit else and patch the else offset in the corresponding If.
+    pub fn emit_else(&mut self) {
+        self.emit_opcode(Opcode::Else);
+        // Patch the else_offset in the If entry to point here
+        if let Some(ControlFixup::If { else_offset_pos, .. }) = self.control_fixups.last() {
+            let current_pos = self.code.len() as u32;
+            self.patch_u32(*else_offset_pos, current_pos);
+        }
+    }
+
+    /// Emit end and patch the end offset(s) in the corresponding control structure.
+    pub fn emit_end(&mut self) {
+        self.emit_opcode(Opcode::End);
+        let current_pos = self.code.len() as u32;
+
+        if let Some(fixup) = self.control_fixups.pop() {
+            match fixup {
+                ControlFixup::Block { end_offset_pos } => {
+                    self.patch_u32(end_offset_pos, current_pos);
+                }
+                ControlFixup::Loop { end_offset_pos } => {
+                    self.patch_u32(end_offset_pos, current_pos);
+                }
+                ControlFixup::If { else_offset_pos, end_offset_pos } => {
+                    // If there was no Else, else_offset should point to End
+                    // Check if else_offset was already patched (non-zero)
+                    let else_val = u32::from_le_bytes([
+                        self.code[else_offset_pos],
+                        self.code[else_offset_pos + 1],
+                        self.code[else_offset_pos + 2],
+                        self.code[else_offset_pos + 3],
+                    ]);
+                    if else_val == 0 {
+                        // No Else was emitted, point else_offset to end
+                        self.patch_u32(else_offset_pos, current_pos);
+                    }
+                    self.patch_u32(end_offset_pos, current_pos);
+                }
+                ControlFixup::TryTable { end_offset_pos } => {
+                    self.patch_u32(end_offset_pos, current_pos);
+                }
+            }
+        }
     }
 
     /// Emit br (unconditional branch).
@@ -454,13 +538,15 @@ impl BytecodeBuffer {
     /// Emit try_table with a single catch_all clause.
     ///
     /// The catch_all branches to the specified label depth when any exception is thrown.
-    /// Format: try_table blocktype clause_count [catch_kind label]* ... end
+    /// Format: try_table blocktype end_offset clause_count [catch_kind label]* ... end
     pub fn emit_try_table_catch_all(&mut self, label: u32) {
         self.emit_opcode(Opcode::TryTable);
         self.emit_byte(0x40); // Empty block type
+        let end_offset_pos = self.emit_u32_placeholder();
         write_leb128_u32(1, &mut self.code); // 1 catch clause
         self.emit_byte(CatchKind::CatchAll.as_byte()); // catch_all
         write_leb128_u32(label, &mut self.code); // branch target
+        self.control_fixups.push(ControlFixup::TryTable { end_offset_pos });
     }
 
     /// Emit try_table with a single catch_all_ref clause.
@@ -469,9 +555,11 @@ impl BytecodeBuffer {
     pub fn emit_try_table_catch_all_ref(&mut self, label: u32) {
         self.emit_opcode(Opcode::TryTable);
         self.emit_byte(0x40); // Empty block type
+        let end_offset_pos = self.emit_u32_placeholder();
         write_leb128_u32(1, &mut self.code); // 1 catch clause
         self.emit_byte(CatchKind::CatchAllRef.as_byte()); // catch_all_ref
         write_leb128_u32(label, &mut self.code); // branch target
+        self.control_fixups.push(ControlFixup::TryTable { end_offset_pos });
     }
 
     /// Emit throw instruction with a tag index.
