@@ -3,10 +3,22 @@
 //! Provides program execution commands:
 //! - EVAL - execute a program from the stack
 
-use crate::ir::{Branch, LibId};
-use crate::libs::{ExecuteContext, ExecuteResult, Library};
-use crate::lower::{LowerContext, LowerError};
-use crate::core::Span;
+use std::sync::OnceLock;
+
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+use rpl::ir::{Branch, LibId};
+use rpl::libs::{ExecuteContext, ExecuteResult, LibraryImpl};
+use rpl::lower::{LowerContext, LowerError};
+
+/// Interface declaration for the Program library.
+const INTERFACE: &str = include_str!("interfaces/prog.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid prog interface"))
+}
 
 /// Program library ID (matches rpl-stdlib).
 pub const PROG_LIB: LibId = 8;
@@ -16,30 +28,18 @@ pub mod cmd {
     pub const EVAL: u16 = 0;
 }
 
-/// Program operations library.
+/// Program operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct ProgLib;
 
-impl Library for ProgLib {
+impl LibraryImpl for ProgLib {
     fn id(&self) -> LibId {
         PROG_LIB
     }
 
-    fn name(&self) -> &'static str {
-        "Programs"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // EVAL is dynamic - consumes 1 program, produces unknown
-            CommandInfo::new("EVAL", PROG_LIB, cmd::EVAL),
-        ]
-    }
-
     fn lower_composite(
         &self,
-        _id: u16,
+        _construct_id: u16,
         _branches: &[Branch],
         _span: Span,
         _ctx: &mut LowerContext,
@@ -78,11 +78,11 @@ mod tests {
 
     #[test]
     fn prog_lib_id() {
-        assert_eq!(ProgLib.id(), 8);
+        assert_eq!(interface().id(), 8);
     }
 
     #[test]
     fn prog_lib_name() {
-        assert_eq!(ProgLib.name(), "Programs");
+        assert_eq!(interface().name(), "Programs");
     }
 }

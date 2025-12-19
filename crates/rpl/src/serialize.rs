@@ -189,13 +189,11 @@ fn serialize_into(buf: &mut Vec<u8>, value: &Value, opts: &SerializeOptions) {
     }
 }
 
-/// Serialize program data (strings + bytecode, optionally with source map).
+/// Serialize program data (rodata + bytecode, optionally with source map).
 fn serialize_program_data(buf: &mut Vec<u8>, prog: &ProgramData, opts: &SerializeOptions) {
-    // String table
-    write_u16(buf, prog.strings.len() as u16);
-    for s in prog.strings.iter() {
-        write_string_u16(buf, s);
-    }
+    // Rodata section
+    write_u32(buf, prog.rodata.len() as u32);
+    buf.extend(prog.rodata.iter());
 
     // Bytecode
     write_u32(buf, prog.code.len() as u32);
@@ -216,8 +214,8 @@ fn serialize_program_data(buf: &mut Vec<u8>, prog: &ProgramData, opts: &Serializ
 /// - per command:
 ///   - name_len: u8
 ///   - name: UTF-8 bytes
-///   - strings_count: u16 (LE)
-///   - strings...
+///   - rodata_len: u32 (LE)
+///   - rodata: bytes
 ///   - code_len: u32 (LE)
 ///   - code: bytes
 fn serialize_library_data(buf: &mut Vec<u8>, lib: &LibraryData, _opts: &SerializeOptions) {
@@ -234,11 +232,9 @@ fn serialize_library_data(buf: &mut Vec<u8>, lib: &LibraryData, _opts: &Serializ
         buf.push(cmd.name.len() as u8);
         buf.extend(cmd.name.as_bytes());
 
-        // String table
-        write_u16(buf, cmd.strings.len() as u16);
-        for s in cmd.strings.iter() {
-            write_string_u16(buf, s);
-        }
+        // Rodata section
+        write_u32(buf, cmd.rodata.len() as u32);
+        buf.extend(cmd.rodata.iter());
 
         // Bytecode
         write_u32(buf, cmd.code.len() as u32);
@@ -326,19 +322,18 @@ pub fn deserialize_value(bytes: &[u8]) -> Result<(Value, usize), SerializeError>
 fn deserialize_program_data(bytes: &[u8], has_debug: bool) -> Result<(ProgramData, usize), SerializeError> {
     let mut offset = 0;
 
-    // String table
-    if bytes.len() < 2 {
+    // Rodata section
+    if bytes.len() < 4 {
         return Err(SerializeError::UnexpectedEnd);
     }
-    let strings_count = read_u16(bytes)? as usize;
-    offset += 2;
+    let rodata_len = read_u32(bytes)? as usize;
+    offset += 4;
 
-    let mut strings = Vec::with_capacity(strings_count);
-    for _ in 0..strings_count {
-        let (s, consumed) = read_string_u16(&bytes[offset..])?;
-        strings.push(s);
-        offset += consumed;
+    if bytes.len() < offset + rodata_len {
+        return Err(SerializeError::UnexpectedEnd);
     }
+    let rodata: Vec<u8> = bytes[offset..offset + rodata_len].to_vec();
+    offset += rodata_len;
 
     // Bytecode
     if bytes.len() < offset + 4 {
@@ -363,9 +358,9 @@ fn deserialize_program_data(bytes: &[u8], has_debug: bool) -> Result<(ProgramDat
     };
 
     let prog = if let Some(sm) = source_map {
-        ProgramData::with_source_map(code, strings, sm)
+        ProgramData::with_source_map(code, rodata, sm)
     } else {
-        ProgramData::with_strings(code, strings)
+        ProgramData::with_rodata(code, rodata)
     };
 
     Ok((prog, offset))
@@ -415,19 +410,18 @@ fn deserialize_library_data(bytes: &[u8], _has_debug: bool) -> Result<(LibraryDa
             .to_string();
         offset += name_len;
 
-        // String table
-        if bytes.len() < offset + 2 {
+        // Rodata section
+        if bytes.len() < offset + 4 {
             return Err(SerializeError::UnexpectedEnd);
         }
-        let strings_count = read_u16(&bytes[offset..])? as usize;
-        offset += 2;
+        let rodata_len = read_u32(&bytes[offset..])? as usize;
+        offset += 4;
 
-        let mut strings = Vec::with_capacity(strings_count);
-        for _ in 0..strings_count {
-            let (s, consumed) = read_string_u16(&bytes[offset..])?;
-            strings.push(s);
-            offset += consumed;
+        if bytes.len() < offset + rodata_len {
+            return Err(SerializeError::UnexpectedEnd);
         }
+        let rodata: Vec<u8> = bytes[offset..offset + rodata_len].to_vec();
+        offset += rodata_len;
 
         // Bytecode
         if bytes.len() < offset + 4 {
@@ -442,7 +436,7 @@ fn deserialize_library_data(bytes: &[u8], _has_debug: bool) -> Result<(LibraryDa
         let code: Vec<u8> = bytes[offset..offset + code_len].to_vec();
         offset += code_len;
 
-        commands.push(LibraryCommand::new(name, code, strings));
+        commands.push(LibraryCommand::new(name, code, rodata));
     }
 
     Ok((LibraryData::with_commands(id, commands), offset))
@@ -1012,7 +1006,7 @@ mod tests {
         match result {
             Value::Program(data) => {
                 assert!(data.code.is_empty());
-                assert!(data.strings.is_empty());
+                assert!(data.rodata.is_empty());
             }
             _ => panic!("expected program"),
         }
@@ -1026,26 +1020,24 @@ mod tests {
         match result {
             Value::Program(data) => {
                 assert_eq!(data.code.as_ref(), &[0x12, 0x34, 0x56, 0x78]);
-                assert!(data.strings.is_empty());
+                assert!(data.rodata.is_empty());
             }
             _ => panic!("expected program"),
         }
     }
 
     #[test]
-    fn test_program_with_strings() {
-        let prog = Value::program_with_strings(
+    fn test_program_with_rodata() {
+        let prog = Value::program_with_rodata(
             vec![0xAB, 0xCD],
-            vec!["foo".to_string(), "bar".to_string()],
+            vec![b'f', b'o', b'o', b'b', b'a', b'r'],  // "foobar" as rodata
         );
         let result = round_trip(prog);
 
         match result {
             Value::Program(data) => {
                 assert_eq!(data.code.as_ref(), &[0xAB, 0xCD]);
-                assert_eq!(data.strings.len(), 2);
-                assert_eq!(data.strings[0], "foo");
-                assert_eq!(data.strings[1], "bar");
+                assert_eq!(data.rodata.as_ref(), b"foobar");
                 assert!(data.source_map.is_none());
             }
             _ => panic!("expected program"),
@@ -1064,7 +1056,7 @@ mod tests {
 
         let prog = Value::program_with_source_map(
             vec![0x01, 0x02, 0x03],
-            vec!["x".to_string()],
+            vec![b'x'],  // rodata containing "x"
             source_map,
         );
 
@@ -1082,8 +1074,7 @@ mod tests {
         match result {
             Value::Program(data) => {
                 assert_eq!(data.code.as_ref(), &[0x01, 0x02, 0x03]);
-                assert_eq!(data.strings.len(), 1);
-                assert_eq!(data.strings[0], "x");
+                assert_eq!(data.rodata.as_ref(), b"x");
 
                 // Verify source map was preserved
                 assert!(data.source_map.is_some());
@@ -1109,7 +1100,7 @@ mod tests {
 
         let prog = Value::program_with_source_map(
             vec![0xFF],
-            Vec::<String>::new(),
+            Vec::<u8>::new(),  // empty rodata
             source_map,
         );
 
@@ -1210,11 +1201,11 @@ mod tests {
         let lib = LibraryData::with_commands(
             "TEST",
             vec![
-                LibraryCommand::new("DBL", vec![0x01, 0x02], Vec::<String>::new()),
+                LibraryCommand::new("DBL", vec![0x01, 0x02], Vec::<u8>::new()),
                 LibraryCommand::new(
                     "TRIPLE",
                     vec![0x03, 0x04, 0x05],
-                    vec!["x".to_string()],
+                    vec![b'x'],  // rodata containing "x"
                 ),
             ],
         );
@@ -1227,11 +1218,10 @@ mod tests {
                 assert_eq!(lib.commands.len(), 2);
                 assert_eq!(lib.commands[0].name, "DBL");
                 assert_eq!(lib.commands[0].code.as_ref(), &[0x01, 0x02]);
-                assert!(lib.commands[0].strings.is_empty());
+                assert!(lib.commands[0].rodata.is_empty());
                 assert_eq!(lib.commands[1].name, "TRIPLE");
                 assert_eq!(lib.commands[1].code.as_ref(), &[0x03, 0x04, 0x05]);
-                assert_eq!(lib.commands[1].strings.len(), 1);
-                assert_eq!(lib.commands[1].strings[0], "x");
+                assert_eq!(lib.commands[1].rodata.as_ref(), b"x");
             }
             _ => panic!("expected library"),
         }

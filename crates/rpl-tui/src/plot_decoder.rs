@@ -287,12 +287,15 @@ fn fmt_num(n: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use rpl_plot::{encode_number, to_fixed_point, CMD_CIRCLE, CMD_END, CMD_LINETO, CMD_MOVETO};
+    use rpl_plot::{encode_number, to_fixed_point, CMD_CIRCLE, CMD_END, CMD_LINETO, CMD_MOVETO, PLOT_MAGIC};
 
     use super::*;
 
     fn make_simple_plot() -> Vec<u8> {
         let mut bytes = Vec::new();
+
+        // Magic header
+        bytes.extend_from_slice(&PLOT_MAGIC);
 
         // MOVETO 10, 20
         bytes.push(CMD_MOVETO);

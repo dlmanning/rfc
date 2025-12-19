@@ -378,9 +378,38 @@ pub fn line_edit_to_span_edit(
 mod tests {
     use super::*;
     use crate::registry::Registry;
+    use crate::ir::LibId;
+    use crate::libs::{DIRECTORY_LIB, dir_cmd, CommandInfo, StackEffect};
+
+    /// Minimal DirectoryInterface for testing STO pattern recognition.
+    struct MockDirectoryInterface;
+
+    impl crate::libs::LibraryInterface for MockDirectoryInterface {
+        fn id(&self) -> LibId { DIRECTORY_LIB }
+        fn name(&self) -> &'static str { "Directory" }
+
+        fn commands(&self) -> Vec<CommandInfo> {
+            vec![
+                CommandInfo {
+                    name: "STO",
+                    lib_id: DIRECTORY_LIB,
+                    cmd_id: dir_cmd::STO,
+                    effect: StackEffect::fixed(2, &[]),
+                },
+                CommandInfo {
+                    name: "RCL",
+                    lib_id: DIRECTORY_LIB,
+                    cmd_id: dir_cmd::RCL,
+                    effect: StackEffect::fixed(1, &[None]),
+                },
+            ]
+        }
+    }
 
     fn make_registry() -> Registry {
-        Registry::with_core()
+        let mut reg = Registry::new();
+        reg.add_interface(MockDirectoryInterface);
+        reg
     }
 
     #[test]

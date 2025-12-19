@@ -1,6 +1,7 @@
 //! Tests for program literals and local bindings.
 
 use rpl::value::Value;
+#[allow(unused_imports)]
 use rpl::Session;
 
 use super::assert_stack_eq;
@@ -11,7 +12,7 @@ use super::assert_stack_eq;
 
 /// Helper to evaluate code and check if a program object is on the stack.
 fn eval_has_program(code: &str) -> bool {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let values = session
         .eval(code)
         .unwrap_or_else(|e| panic!("eval failed for '{}': {:?}", code, e));

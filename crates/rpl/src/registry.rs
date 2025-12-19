@@ -3,29 +3,31 @@
 //! The registry maintains:
 //! - Token claims for parsing (libraries can claim keywords like IF, FOR)
 //! - Command name → (lib, cmd) mapping
-//! - Library instances for parsing, lowering, execution, and analysis
+//! - Library interfaces (for parsing, analysis)
+//! - Library implementations (for lowering, execution)
 //!
 //! # Example
 //!
 //! ```ignore
+//! use rpl::registry::Registry;
+//! use rpl_stdlib;
+//!
+//! // Create empty registry
 //! let mut registry = Registry::new();
-//! registry.add(StackLib);
-//! registry.add(ArithLib);
+//!
+//! // Register standard library
+//! rpl_stdlib::register_interfaces(&mut registry);
+//! rpl_stdlib::register_impls(&mut registry);
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // Re-export for convenience
 pub use crate::libs::{ClaimContext, TokenClaim};
 use crate::{
     ir::LibId,
-    libs::{
-        ArithLib, BinaryLib, CommentsLib, DirectoryLib, Library, ListLib, ProgLib, StackEffect,
-        StackLib, StringsLib, SymbolicLib, TranscendentalsLib,
-        flow::FlowLib,
-        locals::LocalsLib,
-        userlib::UserLibLib,
-    },
+    libs::{LibraryImpl, LibraryInterface, StackEffect},
     types::CStack,
 };
 
@@ -47,8 +49,10 @@ pub struct Registry {
     commands: HashMap<String, (LibId, u16)>,
     /// Command (lib_id, cmd_id) → static StackEffect mapping.
     command_effects: HashMap<(LibId, u16), StackEffect>,
-    /// Registered libraries by ID.
-    libraries: HashMap<LibId, Box<dyn Library>>,
+    /// Library interfaces by ID (for analysis, parsing).
+    interfaces: HashMap<LibId, Arc<dyn LibraryInterface>>,
+    /// Library implementations by ID (for lowering, execution).
+    impls: HashMap<LibId, Arc<dyn LibraryImpl>>,
 }
 
 impl Default for Registry {
@@ -64,20 +68,21 @@ impl Registry {
             claims: Vec::new(),
             commands: HashMap::new(),
             command_effects: HashMap::new(),
-            libraries: HashMap::new(),
+            interfaces: HashMap::new(),
+            impls: HashMap::new(),
         }
     }
 
-    /// Register a library.
-    ///
-    /// Automatically registers all commands and token claims from the library.
-    pub fn add<T: Library + 'static>(&mut self, lib: T) {
+    /// Register a library interface (for parsing, analysis).
+    pub fn add_interface<T: LibraryInterface + 'static>(&mut self, lib: T) {
         let id = lib.id();
 
         // Register commands
         for cmd in lib.commands() {
-            self.commands.insert(cmd.name.to_string(), (cmd.lib_id, cmd.cmd_id));
-            self.command_effects.insert((cmd.lib_id, cmd.cmd_id), cmd.effect);
+            self.commands
+                .insert(cmd.name.to_string(), (cmd.lib_id, cmd.cmd_id));
+            self.command_effects
+                .insert((cmd.lib_id, cmd.cmd_id), cmd.effect);
         }
 
         // Register token claims
@@ -85,18 +90,40 @@ impl Registry {
             self.register_claim(claim.clone());
         }
 
-        // Store the library
-        self.libraries.insert(id, Box::new(lib));
+        // Store interface
+        self.interfaces.insert(id, Arc::new(lib));
     }
 
-    /// Get a library by ID.
-    pub fn get(&self, lib_id: LibId) -> Option<&dyn Library> {
-        self.libraries.get(&lib_id).map(|b| b.as_ref())
+    /// Register a library implementation (for lowering, execution).
+    pub fn add_impl<T: LibraryImpl + 'static>(&mut self, lib: T) {
+        let id = lib.id();
+        self.impls.insert(id, Arc::new(lib));
+    }
+
+    /// Get a library interface by ID (for parsing, analysis).
+    pub fn get_interface(&self, lib_id: LibId) -> Option<&dyn LibraryInterface> {
+        self.interfaces.get(&lib_id).map(|a| a.as_ref())
+    }
+
+    /// Get a library implementation by ID (for lowering, execution).
+    pub fn get_impl(&self, lib_id: LibId) -> Option<&dyn LibraryImpl> {
+        self.impls.get(&lib_id).map(|a| a.as_ref())
     }
 
     /// Get a library name by ID.
     pub fn get_library_name(&self, lib_id: LibId) -> Option<&'static str> {
-        self.libraries.get(&lib_id).map(|lib| lib.name())
+        self.interfaces.get(&lib_id).map(|lib| lib.name())
+    }
+
+    /// Get binding branch indices for a construct.
+    ///
+    /// Returns the indices of branches that contain local variable bindings.
+    /// Used by the analyzer to determine scope structure without hardcoding library IDs.
+    pub fn binding_branches(&self, lib_id: LibId, construct_id: u16, num_branches: usize) -> Vec<usize> {
+        self.interfaces
+            .get(&lib_id)
+            .map(|lib| lib.binding_branches(construct_id, num_branches))
+            .unwrap_or_default()
     }
 
     /// Register a token claim.
@@ -114,7 +141,7 @@ impl Registry {
     /// Get the stack effect for a command given the current type stack.
     pub fn get_command_effect(&self, lib_id: LibId, cmd_id: u16, types: &CStack) -> StackEffect {
         // First try the library's analyzer
-        if let Some(lib) = self.libraries.get(&lib_id) {
+        if let Some(lib) = self.interfaces.get(&lib_id) {
             let effect = lib.command_effect(cmd_id, types);
             if !matches!(effect, StackEffect::Dynamic) {
                 return effect;
@@ -179,50 +206,18 @@ impl Registry {
             cmd,
         })
     }
-
-    /// Create a registry with standard libraries.
-    pub fn with_core() -> Self {
-        let mut reg = Self::new();
-
-        reg.add(StackLib);
-        reg.add(ArithLib);
-        reg.add(SymbolicLib);
-        reg.add(ListLib);
-        reg.add(TranscendentalsLib);
-        reg.add(StringsLib);
-        reg.add(CommentsLib);
-        reg.add(DirectoryLib);
-        reg.add(UserLibLib);
-        reg.add(BinaryLib);
-        reg.add(FlowLib);
-        reg.add(ProgLib);
-        reg.add(LocalsLib);
-
-        reg
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::{arith, stack, ARITH_LIB, STACK_LIB, flow::FLOW_LIB};
-
-    #[test]
-    fn find_command() {
-        let reg = Registry::with_core();
-
-        assert_eq!(reg.find_command("+"), Some((ARITH_LIB, arith::cmd::ADD)));
-        assert_eq!(reg.find_command("DUP"), Some((STACK_LIB, stack::cmd::DUP)));
-        assert_eq!(reg.find_command("dup"), Some((STACK_LIB, stack::cmd::DUP)));
-        assert_eq!(reg.find_command("UNKNOWN"), None);
-    }
 
     #[test]
     fn register_claim() {
         let mut reg = Registry::new();
 
         reg.register_claim(TokenClaim {
-            token: "IF",
+            token: "IF".to_string(),
             priority: 100,
             context: ClaimContext::NotInfix,
             lib_id: 1,
@@ -238,14 +233,14 @@ mod tests {
         let mut reg = Registry::new();
 
         reg.register_claim(TokenClaim {
-            token: "TEST",
+            token: "TEST".to_string(),
             priority: 50,
             context: ClaimContext::Any,
             lib_id: 1,
         });
 
         reg.register_claim(TokenClaim {
-            token: "TEST",
+            token: "TEST".to_string(),
             priority: 100,
             context: ClaimContext::Any,
             lib_id: 2,
@@ -256,31 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn core_commands_complete() {
-        let reg = Registry::with_core();
-
-        assert!(reg.find_command("DUP").is_some());
-        assert!(reg.find_command("DROP").is_some());
-        assert!(reg.find_command("+").is_some());
-        assert!(reg.find_command("EVAL").is_some());
-    }
-
-    #[test]
-    fn add_library() {
+    fn register_command() {
         let mut reg = Registry::new();
-        reg.add(StackLib);
+        reg.register_command("TEST", 1, 0);
 
-        assert!(reg.get(STACK_LIB).is_some());
-        assert_eq!(reg.get_library_name(STACK_LIB), Some("Stack"));
-        assert!(reg.find_command("DUP").is_some());
-    }
-
-    #[test]
-    fn add_with_parser() {
-        let mut reg = Registry::new();
-        reg.add(FlowLib);
-
-        assert!(reg.get(FLOW_LIB).is_some());
-        assert!(reg.find_claim("IF", ClaimContext::Any).is_some());
+        assert_eq!(reg.find_command("TEST"), Some((1, 0)));
+        assert_eq!(reg.find_command("test"), Some((1, 0)));
+        assert_eq!(reg.find_command("UNKNOWN"), None);
     }
 }

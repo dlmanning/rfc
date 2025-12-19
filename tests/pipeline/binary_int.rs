@@ -7,7 +7,7 @@ use rpl::Session;
 
 /// Helper to evaluate code and extract the stack as i64 values.
 fn eval_to_ints(code: &str) -> Vec<i64> {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let values = session
         .eval(code)
         .unwrap_or_else(|e| panic!("eval failed for '{}': {:?}", code, e));
@@ -43,7 +43,7 @@ fn assert_stack_eq(code: &str, expected: &[i64]) {
 
 /// Helper that expects an error.
 fn assert_error(code: &str) {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let result = session.eval(code);
     assert!(
         result.is_err(),
@@ -310,7 +310,7 @@ fn commands_case_insensitive() {
 #[test]
 fn bint_and_real_on_stack() {
     // Binary integers and reals can coexist on stack
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let values = session.eval("#FF 3.15").unwrap();
     assert_eq!(values.len(), 2);
     assert!(matches!(values[0], Value::Integer(255)));

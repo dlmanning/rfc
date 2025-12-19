@@ -1,0 +1,23 @@
+library flow 9
+
+-- Commands
+0: Int -> DOERR ->
+1:     -> ERRN  -> Int
+2:     -> ERRM  -> Str
+
+-- Conditionals
+10:          -> IF    cond:Int THEN body:Prog ELSE? alt:Prog END ->
+11:          -> IFERR try:Prog THENERR catch:Prog ELSEERR? else:Prog ENDERR ->
+
+-- Counted loops
+20: Int Int  -> FOR   $name:Sym body:Prog ( NEXT | STEP! ) ->
+21: Int Int  -> FORUP $name:Sym body:Prog ( NEXT | STEP! ) ->
+22: Int Int  -> FORDN $name:Sym body:Prog ( NEXT | STEP! ) ->
+23: Int Int  -> START body:Prog ( NEXT | STEP! ) ->
+
+-- Conditional loops
+30:          -> DO    body:Prog UNTIL cond:Int END ->
+31:          -> WHILE cond:Int REPEAT body:Prog END ->
+
+-- Multi-way branch
+40:          -> CASE  ( cond:Prog THEN body:Prog END )* default:Prog END ->

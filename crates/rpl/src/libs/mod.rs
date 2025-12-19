@@ -1,60 +1,57 @@
 //! Library infrastructure for extending RPL.
 //!
+//! This module defines the traits and types that make up the library system.
 //! Libraries provide:
 //! - Token claims for custom syntax (IF, FOR, etc.)
 //! - Commands (stack operations, arithmetic, etc.)
 //! - Lowering for extended composites
 //! - Runtime execution
 //!
-//! Library IDs follow the rpl-stdlib convention:
-//! - Programs: PROG_LIB (8)
-//! - Flow control: FLOW_LIB (9)
-//! - Locals: LOCALS_LIB (32)
-//! - Arithmetic: ARITH_LIB (64)
-//! - Stack operations: STACK_LIB (72)
-
-// Library modules
-pub mod arith;
-pub mod binary;
-pub mod comments;
-pub mod directory;
-pub mod flow;
-pub mod list;
-pub mod locals;
-pub mod prog;
-pub mod stack;
-pub mod strings;
-pub mod symbolic;
-pub mod transcendentals;
-pub mod userlib;
-
-// Re-export library structs
-pub use arith::ArithLib;
-pub use binary::BinaryLib;
-pub use comments::CommentsLib;
-pub use directory::DirectoryLib;
-pub use flow::FlowLib;
-pub use list::ListLib;
-pub use locals::LocalsLib;
-pub use prog::ProgLib;
-pub use stack::StackLib;
-pub use strings::StringsLib;
-pub use symbolic::SymbolicLib;
-pub use transcendentals::TranscendentalsLib;
-
-// Re-export library IDs
-pub use arith::ARITH_LIB;
-pub use binary::BINARY_LIB;
-pub use comments::COMMENTS_LIB;
-pub use directory::DIRECTORY_LIB;
-pub use list::LIST_LIB;
-pub use prog::PROG_LIB;
-pub use stack::STACK_LIB;
-pub use strings::STRINGS_LIB;
-pub use symbolic::SYMBOLIC_LIB;
-pub use transcendentals::TRANSCENDENTALS_LIB;
+//! The standard library implementations are in the `rpl-stdlib` crate.
 
 use crate::ir::{Branch, LibId};
+
+// ============================================================================
+// Well-known Library IDs
+// ============================================================================
+// These are defined here so the core can reference them without depending
+// on rpl-stdlib. The stdlib implementations must use these same IDs.
+
+/// Program library ID (EVAL command).
+pub const PROG_LIB: LibId = 8;
+
+/// Directory library ID (STO, RCL, etc.).
+pub const DIRECTORY_LIB: LibId = 28;
+
+/// Arithmetic library ID (+, -, *, /, comparisons).
+pub const ARITH_LIB: LibId = 64;
+
+/// Stack library ID (DUP, DROP, SWAP, etc.).
+pub const STACK_LIB: LibId = 72;
+
+/// Well-known command IDs for PROG_LIB.
+pub mod prog_cmd {
+    pub const EVAL: u16 = 0;
+}
+
+/// Well-known command IDs for DIRECTORY_LIB.
+pub mod dir_cmd {
+    pub const STO: u16 = 0;
+    pub const RCL: u16 = 1;
+    pub const PURGE: u16 = 2;
+    pub const INCR: u16 = 10;
+    pub const DECR: u16 = 11;
+}
+
+/// Well-known command IDs for ARITH_LIB.
+pub mod arith_cmd {
+    pub const ADD: u16 = 0;
+    pub const SUB: u16 = 1;
+    pub const MUL: u16 = 2;
+    pub const DIV: u16 = 3;
+    pub const NEG: u16 = 4;
+    pub const GT: u16 = 12;
+}
 use crate::lower::{LowerContext, LowerError};
 use crate::value::Value;
 use crate::vm::directory::Directory;
@@ -277,7 +274,7 @@ pub enum ClaimContext {
 #[derive(Clone, Debug)]
 pub struct TokenClaim {
     /// The token text to claim (case-insensitive matching).
-    pub token: &'static str,
+    pub token: String,
     /// Priority (higher wins conflicts between libraries).
     pub priority: u8,
     /// Context in which this claim applies.
@@ -489,21 +486,14 @@ impl<'a> ExecuteContext<'a> {
 pub type ExecuteResult = Result<(), String>;
 
 // ============================================================================
-// Library Trait
+// Library Traits
 // ============================================================================
 
-/// Unified trait for RPL libraries.
+/// Interface trait: declares what commands exist, their names, effects, and syntax claims.
 ///
-/// Libraries can provide any combination of:
-/// - Commands (arithmetic, stack ops, etc.)
-/// - Custom syntax parsing (IF/THEN/ELSE, FOR loops)
-/// - Bytecode lowering
-/// - Runtime execution
-/// - Type analysis
-///
-/// All methods have default implementations, so libraries only override
-/// what they need.
-pub trait Library: Send + Sync {
+/// This trait describes the "what" of a library - its identity and the commands it provides.
+/// Implement this separately from `LibraryImpl` to cleanly separate interface from implementation.
+pub trait LibraryInterface: Send + Sync {
     /// Get the library ID.
     fn id(&self) -> LibId;
 
@@ -515,19 +505,21 @@ pub trait Library: Send + Sync {
         Vec::new()
     }
 
-    // ---- Parser methods (override for custom syntax) ----
-
     /// Get token claims for custom syntax (e.g., "IF", "FOR").
+    fn claims(&self) -> Vec<TokenClaim> {
+        Vec::new()
+    }
+
+    /// Compute the stack effect for a command.
     ///
-    /// Default: no claims (not a parser).
-    fn claims(&self) -> &[TokenClaim] {
-        &[]
+    /// Used for type inference during compilation and analysis.
+    fn command_effect(&self, _cmd: u16, _types: &crate::types::CStack) -> StackEffect {
+        StackEffect::Dynamic
     }
 
     /// Parse starting from a claimed token.
     ///
     /// Called when the parser encounters a token claimed by this library.
-    /// Default: returns an error (not a parser).
     fn parse(
         &self,
         _token: &str,
@@ -539,28 +531,27 @@ pub trait Library: Send + Sync {
         ))
     }
 
-    // ---- Lowerer methods (override for custom bytecode) ----
-
-    /// Lower an extended composite to bytecode.
+    /// Get the indices of binding branches for a construct.
     ///
-    /// Called for `CompositeKind::Extended(lib_id, id)` nodes.
-    /// Default: returns an error (no composites).
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError {
-            message: "library does not support composites".into(),
-            span: Some(span),
-        })
+    /// Given a construct ID and the actual number of branches, returns
+    /// which branch indices contain local variable bindings. Used by the
+    /// analyzer to determine scope structure without hardcoding library IDs.
+    ///
+    /// Returns empty vec if the construct has no bindings or is unknown.
+    fn binding_branches(&self, _construct_id: u16, _num_branches: usize) -> Vec<usize> {
+        Vec::new()
     }
+}
+
+/// Implementation trait: provides lowering and execution behavior.
+///
+/// This trait describes the "how" of a library - how commands are compiled and executed.
+/// Separate from `LibraryInterface` which describes metadata for analysis.
+pub trait LibraryImpl: Send + Sync {
+    /// Get the library ID.
+    fn id(&self) -> LibId;
 
     /// Lower a command by emitting bytecode.
-    ///
-    /// Default: emits a CallLib instruction.
     fn lower_command(
         &self,
         cmd: u16,
@@ -571,24 +562,27 @@ pub trait Library: Send + Sync {
         Ok(())
     }
 
-    // ---- Executor methods (override for runtime behavior) ----
+    /// Lower an extended composite to bytecode.
+    ///
+    /// Called for `CompositeKind::Extended(lib_id, construct_id)` nodes.
+    fn lower_composite(
+        &self,
+        _construct_id: u16,
+        _branches: &[Branch],
+        span: Span,
+        _ctx: &mut LowerContext,
+    ) -> Result<(), LowerError> {
+        Err(LowerError {
+            message: "library does not support composites".into(),
+            span: Some(span),
+        })
+    }
 
     /// Execute a command at runtime.
     ///
     /// Called when the VM encounters a CallLib instruction.
-    /// Default: returns an error (no runtime support).
     fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
         Err("library does not support execution".into())
-    }
-
-    // ---- Analyzer methods (override for type tracking) ----
-
-    /// Compute the stack effect for a command.
-    ///
-    /// Used for type inference during compilation and analysis.
-    /// Default: returns Dynamic (unknown effect).
-    fn command_effect(&self, _cmd: u16, _types: &crate::types::CStack) -> StackEffect {
-        StackEffect::Dynamic
     }
 }
 
@@ -606,7 +600,7 @@ mod tests {
     #[test]
     fn token_claim_creation() {
         let claim = TokenClaim {
-            token: "IF",
+            token: "IF".to_string(),
             priority: 100,
             context: ClaimContext::NotInfix,
             lib_id: 9,

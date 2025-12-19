@@ -7,70 +7,52 @@
 //! Provides binary arithmetic:
 //! - BADD, BSUB, BMUL, BDIV (64-bit integer arithmetic)
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
-    core::TypeId,
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::LibId,
-    libs::{
-        CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect,
-    },
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
     vm::bytecode::Opcode,
 };
 
+/// Interface declaration for the Binary library.
+const INTERFACE: &str = include_str!("interfaces/binary.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid binary interface"))
+}
+
 /// Binary operations library ID.
 pub const BINARY_LIB: LibId = 96;
 
-/// Binary library command IDs.
+/// Binary library command IDs (order matches INTERFACE declaration).
 pub mod cmd {
-    // Bitwise operations
     pub const BAND: u16 = 0;
     pub const BOR: u16 = 1;
     pub const BXOR: u16 = 2;
     pub const BNOT: u16 = 3;
-    pub const BLSL: u16 = 4; // Bit Left Shift Logical
-    pub const BLSR: u16 = 5; // Bit Right Shift Logical
-
-    // Binary arithmetic
-    pub const BADD: u16 = 10;
-    pub const BSUB: u16 = 11;
-    pub const BMUL: u16 = 12;
-    pub const BDIV: u16 = 13;
+    pub const BLSL: u16 = 4;
+    pub const BLSR: u16 = 5;
+    pub const BADD: u16 = 6;
+    pub const BSUB: u16 = 7;
+    pub const BMUL: u16 = 8;
+    pub const BDIV: u16 = 9;
 }
 
-/// Binary operations library.
+/// Binary operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct BinaryLib;
 
-impl Library for BinaryLib {
+impl LibraryImpl for BinaryLib {
     fn id(&self) -> LibId {
         BINARY_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Binary"
-    }
-
-    fn commands(&self) -> Vec<CommandInfo> {
-        vec![
-            // Bitwise operations (2 -> 1)
-            CommandInfo::with_effect("BAND", BINARY_LIB, cmd::BAND, 2, 1),
-            CommandInfo::with_effect("BOR", BINARY_LIB, cmd::BOR, 2, 1),
-            CommandInfo::with_effect("BXOR", BINARY_LIB, cmd::BXOR, 2, 1),
-            // Bitwise NOT (1 -> 1)
-            CommandInfo::with_effect("BNOT", BINARY_LIB, cmd::BNOT, 1, 1),
-            // Bit shifts (2 -> 1)
-            CommandInfo::with_effect("BLSL", BINARY_LIB, cmd::BLSL, 2, 1),
-            CommandInfo::with_effect("BLSR", BINARY_LIB, cmd::BLSR, 2, 1),
-            // Binary arithmetic (2 -> 1)
-            CommandInfo::with_effect("BADD", BINARY_LIB, cmd::BADD, 2, 1),
-            CommandInfo::with_effect("BSUB", BINARY_LIB, cmd::BSUB, 2, 1),
-            CommandInfo::with_effect("BMUL", BINARY_LIB, cmd::BMUL, 2, 1),
-            CommandInfo::with_effect("BDIV", BINARY_LIB, cmd::BDIV, 2, 1),
-        ]
     }
 
     fn lower_command(
@@ -183,22 +165,6 @@ impl Library for BinaryLib {
             cmd::BDIV => bdiv_op(ctx),
 
             _ => Err(format!("Unknown binary command: {}", ctx.cmd)),
-        }
-    }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            // Binary bitwise operations (2 -> 1)
-            cmd::BAND | cmd::BOR | cmd::BXOR | cmd::BLSL | cmd::BLSR => {
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
-            }
-            // Unary bitwise (1 -> 1)
-            cmd::BNOT => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            // Binary arithmetic (2 -> 1)
-            cmd::BADD | cmd::BSUB | cmd::BMUL | cmd::BDIV => {
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
-            }
-            _ => StackEffect::Dynamic,
         }
     }
 }

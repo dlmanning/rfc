@@ -1,17 +1,15 @@
 //! Plot library for scalable vector graphics.
 //!
-//! Provides commands to build Plot objects that store drawing commands
-//! as a compact byte stream for resolution-independent rendering.
+//! Provides commands to build Plot blobs using a functional Blob->Blob style.
+//! Each command takes a Blob, appends drawing commands, and returns the modified Blob.
 
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rpl::{
-    TypeId,
-    ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect},
+    interface::InterfaceSpec,
+    ir::LibId,
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
     Span,
 };
@@ -19,78 +17,59 @@ use rpl::{
 use crate::commands::*;
 use crate::encoding::{encode_number, encode_string, to_fixed_point};
 
+/// Interface declaration for the Plot library.
+const INTERFACE: &str = include_str!("plot.rpli");
+
+/// Get the interface specification (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid plot interface"))
+}
+
 /// Plot library ID.
 pub const PLOT_LIB_ID: LibId = 88;
 
-/// State for a plot being constructed.
-#[derive(Default)]
-struct PlotState {
-    bytes: Vec<u8>,
-}
+// ============================================================================
+// Helper functions
+// ============================================================================
 
-impl PlotState {
-    fn new() -> Self {
-        Self { bytes: Vec::new() }
-    }
-
-    fn push_byte(&mut self, b: u8) {
-        self.bytes.push(b);
-    }
-
-    fn push_coord(&mut self, f: f64) {
-        let fp = to_fixed_point(f);
-        self.bytes.extend(encode_number(fp as i64));
-    }
-
-    fn push_number(&mut self, n: i64) {
-        self.bytes.extend(encode_number(n));
-    }
-
-    fn push_string(&mut self, s: &str) {
-        self.bytes.extend(encode_string(s));
-    }
-
-    fn finalize(mut self) -> Vec<u8> {
-        self.bytes.push(CMD_END);
-        self.bytes
+/// Pop a Blob from the stack and return it as a mutable Vec<u8>.
+fn pop_blob(ctx: &mut ExecuteContext) -> Result<Vec<u8>, String> {
+    match ctx.pop()? {
+        Value::Bytes(arc) => Ok(arc.to_vec()),
+        other => Err(format!("Expected Blob, got {}", other.type_name())),
     }
 }
 
-// Thread-local storage for current plot state
-thread_local! {
-    static CURRENT_PLOT: RefCell<Option<PlotState>> = const { RefCell::new(None) };
+/// Push a Blob onto the stack.
+fn push_blob(ctx: &mut ExecuteContext, bytes: Vec<u8>) -> Result<(), String> {
+    ctx.push(Value::Bytes(Arc::from(bytes.into_boxed_slice())))
 }
 
-fn with_plot_state<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&mut PlotState) -> R,
-{
-    CURRENT_PLOT.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        match borrow.as_mut() {
-            Some(state) => Ok(f(state)),
-            None => Err("No plot in progress. Use BEGINPLOT first.".to_string()),
-        }
-    })
+/// Pop a number from the stack as f64.
+fn pop_number(ctx: &mut ExecuteContext) -> Result<f64, String> {
+    match ctx.pop()? {
+        Value::Real(r) => Ok(r),
+        Value::Integer(i) => Ok(i as f64),
+        other => Err(format!("Expected number, got {}", other.type_name())),
+    }
 }
 
-fn take_plot_state() -> Result<PlotState, String> {
-    CURRENT_PLOT.with(|cell| {
-        cell.borrow_mut()
-            .take()
-            .ok_or_else(|| "No plot in progress. Use BEGINPLOT first.".to_string())
-    })
+/// Pop an integer from the stack.
+fn pop_integer(ctx: &mut ExecuteContext) -> Result<i64, String> {
+    match ctx.pop()? {
+        Value::Integer(i) => Ok(i),
+        Value::Real(r) => Ok(r as i64),
+        other => Err(format!("Expected integer, got {}", other.type_name())),
+    }
 }
 
-fn set_plot_state(state: PlotState) -> Result<(), String> {
-    CURRENT_PLOT.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        if borrow.is_some() {
-            return Err("Plot already in progress. Use ENDPLOT first.".to_string());
-        }
-        *borrow = Some(state);
-        Ok(())
-    })
+/// Pop a string from the stack.
+fn pop_string(ctx: &mut ExecuteContext) -> Result<String, String> {
+    match ctx.pop()? {
+        Value::String(s) => Ok(s.to_string()),
+        other => Err(format!("Expected string, got {}", other.type_name())),
+    }
 }
 
 /// Pack RGBA components into a 32-bit integer (0xRRGGBBAA format).
@@ -99,6 +78,7 @@ fn pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
 }
 
 /// Unpack a 32-bit RGBA color into components.
+#[allow(dead_code)]
 fn unpack_rgba(rgba: u32) -> (u8, u8, u8, u8) {
     let r = ((rgba >> 24) & 0xFF) as u8;
     let g = ((rgba >> 16) & 0xFF) as u8;
@@ -108,52 +88,71 @@ fn unpack_rgba(rgba: u32) -> (u8, u8, u8, u8) {
 }
 
 /// Convert a Real color value to 0-255 range.
-fn real_to_color(r: f64) -> i64 {
+fn real_to_color(r: f64) -> u8 {
     if r > 1.0 {
-        r.clamp(0.0, 255.0) as i64
+        r.clamp(0.0, 255.0) as u8
     } else {
-        (r * 255.0).clamp(0.0, 255.0) as i64
-    }
-}
-
-/// Pop a number from the stack as f64.
-fn pop_number(ctx: &mut ExecuteContext) -> Result<f64, String> {
-    match ctx.pop() {
-        Ok(Value::Real(r)) => Ok(r),
-        Ok(Value::Integer(i)) => Ok(i as f64),
-        Ok(_) => Err("Expected number".to_string()),
-        Err(e) => Err(e),
+        (r * 255.0).clamp(0.0, 255.0) as u8
     }
 }
 
 /// Pop a color component (handles 0-1 or 0-255 range).
 fn pop_color(ctx: &mut ExecuteContext) -> Result<u8, String> {
-    match ctx.pop() {
-        Ok(Value::Real(r)) => Ok(real_to_color(r) as u8),
-        Ok(Value::Integer(i)) => Ok(i.clamp(0, 255) as u8),
-        Ok(_) => Err("Expected number".to_string()),
-        Err(e) => Err(e),
+    match ctx.pop()? {
+        Value::Real(r) => Ok(real_to_color(r)),
+        Value::Integer(i) => Ok(i.clamp(0, 255) as u8),
+        other => Err(format!("Expected number, got {}", other.type_name())),
     }
 }
 
+// ============================================================================
+// Blob building helpers
+// ============================================================================
+
+/// Append a command byte to the blob.
+fn append_byte(blob: &mut Vec<u8>, b: u8) {
+    blob.push(b);
+}
+
+/// Append a coordinate (as fixed-point) to the blob.
+fn append_coord(blob: &mut Vec<u8>, f: f64) {
+    let fp = to_fixed_point(f);
+    blob.extend(encode_number(fp as i64));
+}
+
+/// Append a number to the blob.
+fn append_number(blob: &mut Vec<u8>, n: i64) {
+    blob.extend(encode_number(n));
+}
+
+/// Append a string to the blob.
+fn append_string(blob: &mut Vec<u8>, s: &str) {
+    blob.extend(encode_string(s));
+}
+
+// ============================================================================
+// Library Implementation
+// ============================================================================
+
 /// Plot library for RPL.
+#[derive(Clone, Copy)]
 pub struct PlotLib;
 
 // Command IDs
 mod cmd {
-    pub const BEGINPLOT: u16 = 0;
-    pub const ENDPLOT: u16 = 1;
-    pub const MOVETO: u16 = 2;
-    pub const LINETO: u16 = 3;
-    pub const CIRCLE: u16 = 4;
-    pub const RECT: u16 = 5;
-    pub const ELLIPSE: u16 = 6;
-    pub const ARC: u16 = 7;
-    pub const BEZIER: u16 = 8;
-    pub const PIXEL: u16 = 9;
-    pub const TEXT: u16 = 10;
-    pub const FILL: u16 = 11;
-    pub const STROKE: u16 = 12;
+    pub const NEWPLOT: u16 = 0;
+    pub const MOVETO: u16 = 1;
+    pub const LINETO: u16 = 2;
+    pub const CIRCLE: u16 = 3;
+    pub const RECT: u16 = 4;
+    pub const ELLIPSE: u16 = 5;
+    pub const ARC: u16 = 6;
+    pub const BEZIER: u16 = 7;
+    pub const PIXEL: u16 = 8;
+    pub const TEXT: u16 = 9;
+    pub const FILL: u16 = 10;
+    pub const STROKE: u16 = 11;
+    pub const CLIP: u16 = 12;
     pub const LINEWIDTH: u16 = 13;
     pub const COLOR: u16 = 14;
     pub const FILLCOLOR: u16 = 15;
@@ -165,61 +164,12 @@ mod cmd {
     pub const TRANSLATE: u16 = 21;
     pub const PUSHSTATE: u16 = 22;
     pub const POPSTATE: u16 = 23;
-    pub const CLIP: u16 = 24;
-    pub const RGBA: u16 = 25;
+    pub const RGBA: u16 = 24;
 }
 
-impl Library for PlotLib {
+impl LibraryImpl for PlotLib {
     fn id(&self) -> LibId {
         PLOT_LIB_ID
-    }
-
-    fn name(&self) -> &'static str {
-        "Plot"
-    }
-
-    fn commands(&self) -> Vec<CommandInfo> {
-        vec![
-            CommandInfo::with_effect("BEGINPLOT", PLOT_LIB_ID, cmd::BEGINPLOT, 0, 0),
-            CommandInfo::with_effect("ENDPLOT", PLOT_LIB_ID, cmd::ENDPLOT, 0, 1),
-            CommandInfo::with_effect("MOVETO", PLOT_LIB_ID, cmd::MOVETO, 2, 0),
-            CommandInfo::with_effect("LINETO", PLOT_LIB_ID, cmd::LINETO, 2, 0),
-            CommandInfo::with_effect("CIRCLE", PLOT_LIB_ID, cmd::CIRCLE, 3, 0),
-            CommandInfo::with_effect("RECT", PLOT_LIB_ID, cmd::RECT, 4, 0),
-            CommandInfo::with_effect("ELLIPSE", PLOT_LIB_ID, cmd::ELLIPSE, 4, 0),
-            CommandInfo::with_effect("ARC", PLOT_LIB_ID, cmd::ARC, 5, 0),
-            CommandInfo::with_effect("BEZIER", PLOT_LIB_ID, cmd::BEZIER, 6, 0),
-            CommandInfo::with_effect("PIXEL", PLOT_LIB_ID, cmd::PIXEL, 2, 0),
-            CommandInfo::with_effect("TEXT", PLOT_LIB_ID, cmd::TEXT, 3, 0),
-            CommandInfo::with_effect("FILL", PLOT_LIB_ID, cmd::FILL, 0, 0),
-            CommandInfo::with_effect("STROKE", PLOT_LIB_ID, cmd::STROKE, 0, 0),
-            CommandInfo::with_effect("LINEWIDTH", PLOT_LIB_ID, cmd::LINEWIDTH, 1, 0),
-            CommandInfo::with_effect("COLOR", PLOT_LIB_ID, cmd::COLOR, 1, 0),
-            CommandInfo::with_effect("FILLCOLOR", PLOT_LIB_ID, cmd::FILLCOLOR, 1, 0),
-            CommandInfo::with_effect("FONT", PLOT_LIB_ID, cmd::FONT, 2, 0),
-            CommandInfo::with_effect("IDENTITY", PLOT_LIB_ID, cmd::IDENTITY, 0, 0),
-            CommandInfo::with_effect("TRANSFORM", PLOT_LIB_ID, cmd::TRANSFORM, 6, 0),
-            CommandInfo::with_effect("SCALE", PLOT_LIB_ID, cmd::SCALE, 2, 0),
-            CommandInfo::with_effect("ROTATE", PLOT_LIB_ID, cmd::ROTATE, 1, 0),
-            CommandInfo::with_effect("TRANSLATE", PLOT_LIB_ID, cmd::TRANSLATE, 2, 0),
-            CommandInfo::with_effect("PUSHSTATE", PLOT_LIB_ID, cmd::PUSHSTATE, 0, 0),
-            CommandInfo::with_effect("POPSTATE", PLOT_LIB_ID, cmd::POPSTATE, 0, 0),
-            CommandInfo::with_effect("CLIP", PLOT_LIB_ID, cmd::CLIP, 0, 0),
-            CommandInfo::with_effect("RGBA", PLOT_LIB_ID, cmd::RGBA, 4, 1),
-        ]
-    }
-
-    fn lower_composite(
-        &self,
-        _id: u16,
-        _branches: &[Branch],
-        _span: Span,
-        _ctx: &mut LowerContext,
-    ) -> Result<(), LowerError> {
-        Err(LowerError {
-            message: "Plot library has no composites".into(),
-            span: None,
-        })
     }
 
     fn lower_command(
@@ -232,59 +182,34 @@ impl Library for PlotLib {
         Ok(())
     }
 
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::BEGINPLOT => StackEffect::fixed(0, &[]),
-            cmd::ENDPLOT => StackEffect::fixed(0, &[None]),
-            cmd::MOVETO | cmd::LINETO | cmd::PIXEL => StackEffect::fixed(2, &[]),
-            cmd::CIRCLE => StackEffect::fixed(3, &[]),
-            cmd::RECT | cmd::ELLIPSE => StackEffect::fixed(4, &[]),
-            cmd::ARC => StackEffect::fixed(5, &[]),
-            cmd::BEZIER | cmd::TRANSFORM => StackEffect::fixed(6, &[]),
-            cmd::TEXT => StackEffect::fixed(3, &[]),
-            cmd::FILL | cmd::STROKE | cmd::IDENTITY | cmd::PUSHSTATE | cmd::POPSTATE | cmd::CLIP => {
-                StackEffect::fixed(0, &[])
-            }
-            cmd::LINEWIDTH | cmd::ROTATE | cmd::COLOR | cmd::FILLCOLOR => StackEffect::fixed(1, &[]),
-            cmd::FONT | cmd::SCALE | cmd::TRANSLATE => StackEffect::fixed(2, &[]),
-            cmd::RGBA => StackEffect::fixed(4, &[Some(TypeId::BINT)]),
-            _ => StackEffect::Dynamic,
-        }
-    }
-
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
-            cmd::BEGINPLOT => {
-                set_plot_state(PlotState::new())?;
-                Ok(())
-            }
-
-            cmd::ENDPLOT => {
-                let state = take_plot_state()?;
-                let bytes = state.finalize();
-                ctx.push(Value::Bytes(Arc::from(bytes.into_boxed_slice())))?;
+            cmd::NEWPLOT => {
+                // Create new empty blob with magic header
+                let blob = PLOT_MAGIC.to_vec();
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::MOVETO => {
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_MOVETO);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_MOVETO);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::LINETO => {
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_LINETO);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_LINETO);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -292,12 +217,12 @@ impl Library for PlotLib {
                 let r = pop_number(ctx)?;
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_CIRCLE);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(r);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_CIRCLE);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                append_coord(&mut blob, r);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -306,13 +231,13 @@ impl Library for PlotLib {
                 let w = pop_number(ctx)?;
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_RECT);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(w);
-                    state.push_coord(h);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_RECT);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                append_coord(&mut blob, w);
+                append_coord(&mut blob, h);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -321,13 +246,13 @@ impl Library for PlotLib {
                 let rx = pop_number(ctx)?;
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_ELLIPSE);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(rx);
-                    state.push_coord(ry);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_ELLIPSE);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                append_coord(&mut blob, rx);
+                append_coord(&mut blob, ry);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -337,14 +262,14 @@ impl Library for PlotLib {
                 let r = pop_number(ctx)?;
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_ARC);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_coord(r);
-                    state.push_coord(start_angle);
-                    state.push_coord(end_angle);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_ARC);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                append_coord(&mut blob, r);
+                append_coord(&mut blob, start_angle);
+                append_coord(&mut blob, end_angle);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -355,116 +280,105 @@ impl Library for PlotLib {
                 let x2 = pop_number(ctx)?;
                 let y1 = pop_number(ctx)?;
                 let x1 = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_BEZIER);
-                    state.push_coord(x1);
-                    state.push_coord(y1);
-                    state.push_coord(x2);
-                    state.push_coord(y2);
-                    state.push_coord(x3);
-                    state.push_coord(y3);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_BEZIER);
+                append_coord(&mut blob, x1);
+                append_coord(&mut blob, y1);
+                append_coord(&mut blob, x2);
+                append_coord(&mut blob, y2);
+                append_coord(&mut blob, x3);
+                append_coord(&mut blob, y3);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::PIXEL => {
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_PIXEL);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_PIXEL);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::TEXT => {
-                let text = match ctx.pop() {
-                    Ok(Value::String(s)) => s.to_string(),
-                    Ok(_) => return Err("TEXT: expected string".to_string()),
-                    Err(e) => return Err(e),
-                };
+                let text = pop_string(ctx)?;
                 let y = pop_number(ctx)?;
                 let x = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_TEXT);
-                    state.push_coord(x);
-                    state.push_coord(y);
-                    state.push_string(&text);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_TEXT);
+                append_coord(&mut blob, x);
+                append_coord(&mut blob, y);
+                append_string(&mut blob, &text);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::FILL => {
-                with_plot_state(|state| state.push_byte(CMD_FILL))?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_FILL);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::STROKE => {
-                with_plot_state(|state| state.push_byte(CMD_STROKE))?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_STROKE);
+                push_blob(ctx, blob)?;
+                Ok(())
+            }
+
+            cmd::CLIP => {
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_CLIP);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::LINEWIDTH => {
-                let w = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_LINEWIDTH);
-                    state.push_coord(w);
-                })?;
+                let width = pop_number(ctx)?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_LINEWIDTH);
+                append_coord(&mut blob, width);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::COLOR => {
-                let rgba = match ctx.pop() {
-                    Ok(Value::Integer(i)) => i as u32,
-                    Ok(_) => return Err("COLOR: expected packed RGBA integer".to_string()),
-                    Err(e) => return Err(e),
-                };
-                let (r, g, b, a) = unpack_rgba(rgba);
-                with_plot_state(|state| {
-                    state.push_byte(CMD_COLOR);
-                    state.push_number(r as i64);
-                    state.push_number(g as i64);
-                    state.push_number(b as i64);
-                    state.push_number(a as i64);
-                })?;
+                let color = pop_integer(ctx)? as u32;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_COLOR);
+                append_number(&mut blob, color as i64);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::FILLCOLOR => {
-                let rgba = match ctx.pop() {
-                    Ok(Value::Integer(i)) => i as u32,
-                    Ok(_) => return Err("FILLCOLOR: expected packed RGBA integer".to_string()),
-                    Err(e) => return Err(e),
-                };
-                let (r, g, b, a) = unpack_rgba(rgba);
-                with_plot_state(|state| {
-                    state.push_byte(CMD_FILLCOLOR);
-                    state.push_number(r as i64);
-                    state.push_number(g as i64);
-                    state.push_number(b as i64);
-                    state.push_number(a as i64);
-                })?;
+                let color = pop_integer(ctx)? as u32;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_FILLCOLOR);
+                append_number(&mut blob, color as i64);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::FONT => {
-                let name = match ctx.pop() {
-                    Ok(Value::String(s)) => s.to_string(),
-                    Ok(_) => return Err("FONT: expected string".to_string()),
-                    Err(e) => return Err(e),
-                };
+                let name = pop_string(ctx)?;
                 let size = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_FONT);
-                    state.push_coord(size);
-                    state.push_string(&name);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_FONT);
+                append_coord(&mut blob, size);
+                append_string(&mut blob, &name);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::IDENTITY => {
-                with_plot_state(|state| state.push_byte(CMD_IDENTITY))?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_IDENTITY);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
@@ -475,65 +389,65 @@ impl Library for PlotLib {
                 let c = pop_number(ctx)?;
                 let b = pop_number(ctx)?;
                 let a = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_TRANSFORM);
-                    state.push_coord(a);
-                    state.push_coord(b);
-                    state.push_coord(c);
-                    state.push_coord(d);
-                    state.push_coord(e);
-                    state.push_coord(f);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_TRANSFORM);
+                append_coord(&mut blob, a);
+                append_coord(&mut blob, b);
+                append_coord(&mut blob, c);
+                append_coord(&mut blob, d);
+                append_coord(&mut blob, e);
+                append_coord(&mut blob, f);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::SCALE => {
                 let sy = pop_number(ctx)?;
                 let sx = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_SCALE);
-                    state.push_coord(sx);
-                    state.push_coord(sy);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_SCALE);
+                append_coord(&mut blob, sx);
+                append_coord(&mut blob, sy);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::ROTATE => {
                 let angle = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_ROTATE);
-                    state.push_coord(angle);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_ROTATE);
+                append_coord(&mut blob, angle);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::TRANSLATE => {
                 let dy = pop_number(ctx)?;
                 let dx = pop_number(ctx)?;
-                with_plot_state(|state| {
-                    state.push_byte(CMD_TRANSLATE);
-                    state.push_coord(dx);
-                    state.push_coord(dy);
-                })?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_TRANSLATE);
+                append_coord(&mut blob, dx);
+                append_coord(&mut blob, dy);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::PUSHSTATE => {
-                with_plot_state(|state| state.push_byte(CMD_PUSH))?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_PUSH);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::POPSTATE => {
-                with_plot_state(|state| state.push_byte(CMD_POP))?;
-                Ok(())
-            }
-
-            cmd::CLIP => {
-                with_plot_state(|state| state.push_byte(CMD_CLIP))?;
+                let mut blob = pop_blob(ctx)?;
+                append_byte(&mut blob, CMD_POP);
+                push_blob(ctx, blob)?;
                 Ok(())
             }
 
             cmd::RGBA => {
+                // Pure function: a b c d -> Int (no blob involved)
                 let a = pop_color(ctx)?;
                 let b = pop_color(ctx)?;
                 let g = pop_color(ctx)?;
@@ -550,5 +464,110 @@ impl Library for PlotLib {
 
 /// Register the plot library with a session.
 pub fn register_plot_lib(session: &mut rpl::Session) {
-    session.registry_mut().add(PlotLib);
+    session.registry_mut().add_interface(interface().clone());
+    session.registry_mut().add_impl(PlotLib);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpl::libs::LibraryInterface;
+    use rpl::types::CStack;
+
+    #[test]
+    fn plot_lib_id() {
+        assert_eq!(interface().id(), 88);
+    }
+
+    #[test]
+    fn plot_lib_name() {
+        assert_eq!(interface().name(), "Plot");
+    }
+
+    #[test]
+    fn plot_lib_has_expected_commands() {
+        let commands = interface().commands();
+        let names: Vec<&str> = commands
+            .iter()
+            .flat_map(|c| c.names.iter().map(|s| s.as_str()))
+            .collect();
+
+        assert!(names.contains(&"NEWPLOT"));
+        assert!(names.contains(&"CIRCLE"));
+        assert!(names.contains(&"RECT"));
+        assert!(names.contains(&"FILL"));
+        assert!(names.contains(&"STROKE"));
+        assert!(names.contains(&"RGBA"));
+    }
+
+    #[test]
+    fn plot_lib_command_count() {
+        let commands = interface().commands();
+        // 25 commands total
+        assert_eq!(commands.len(), 25);
+    }
+
+    #[test]
+    fn test_pack_rgba() {
+        assert_eq!(pack_rgba(0xFF, 0x00, 0x00, 0xFF), 0xFF0000FF); // Red
+        assert_eq!(pack_rgba(0x00, 0xFF, 0x00, 0xFF), 0x00FF00FF); // Green
+        assert_eq!(pack_rgba(0x00, 0x00, 0xFF, 0xFF), 0x0000FFFF); // Blue
+        assert_eq!(pack_rgba(0xAA, 0xBB, 0xCC, 0xDD), 0xAABBCCDD);
+    }
+
+    #[test]
+    fn test_unpack_rgba() {
+        let (r, g, b, a) = unpack_rgba(0xAABBCCDD);
+        assert_eq!(r, 0xAA);
+        assert_eq!(g, 0xBB);
+        assert_eq!(b, 0xCC);
+        assert_eq!(a, 0xDD);
+    }
+
+    #[test]
+    fn test_rgba_roundtrip() {
+        for rgba in [0x00000000, 0xFFFFFFFF, 0xFF0000FF, 0x12345678] {
+            let (r, g, b, a) = unpack_rgba(rgba);
+            assert_eq!(pack_rgba(r, g, b, a), rgba);
+        }
+    }
+
+    #[test]
+    fn test_real_to_color_fractional() {
+        assert_eq!(real_to_color(0.0), 0);
+        assert_eq!(real_to_color(1.0), 255);
+        assert_eq!(real_to_color(0.5), 127);
+    }
+
+    #[test]
+    fn test_real_to_color_byte_range() {
+        assert_eq!(real_to_color(128.0), 128);
+        assert_eq!(real_to_color(255.0), 255);
+        assert_eq!(real_to_color(300.0), 255); // Clamped
+    }
+
+    #[test]
+    fn test_command_effects() {
+        let empty_stack = CStack::new();
+
+        // NEWPLOT: 0 in, 1 out (Blob)
+        let effect = interface().command_effect(cmd::NEWPLOT, &empty_stack);
+        assert_eq!(effect.consumes(), Some(0));
+        assert_eq!(effect.produces(), Some(1));
+
+        // CIRCLE: 4 in (Blob + 3 args), 1 out (Blob)
+        let effect = interface().command_effect(cmd::CIRCLE, &empty_stack);
+        assert_eq!(effect.consumes(), Some(4));
+        assert_eq!(effect.produces(), Some(1));
+
+        // FILL: 1 in (Blob), 1 out (Blob)
+        let effect = interface().command_effect(cmd::FILL, &empty_stack);
+        assert_eq!(effect.consumes(), Some(1));
+        assert_eq!(effect.produces(), Some(1));
+
+        // RGBA: 4 in, 1 out (Int) - no blob
+        let effect = interface().command_effect(cmd::RGBA, &empty_stack);
+        assert_eq!(effect.consumes(), Some(4));
+        assert_eq!(effect.produces(), Some(1));
+    }
 }

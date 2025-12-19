@@ -24,9 +24,23 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Create a new server state with core libraries only.
     pub fn new() -> Self {
+        Self::with_session(Session::new())
+    }
+
+    /// Create a server state with a pre-configured session.
+    ///
+    /// Use this to add application-specific libraries:
+    ///
+    /// ```ignore
+    /// let mut session = Session::new();
+    /// session.registry_mut().add(MyCustomLib);
+    /// let state = ServerState::with_session(session);
+    /// ```
+    pub fn with_session(session: Session) -> Self {
         Self {
-            session: Session::new(),
+            session,
             documents: HashMap::new(),
             verbose_hover: false,
         }

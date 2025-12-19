@@ -168,21 +168,24 @@ pub enum Opcode {
 
     /// Call a library command. Followed by lib_id (u16) and cmd_id (u16).
     CallLib = 0xC0,
-    /// Push a string constant. Followed by length (LEB128) and UTF-8 bytes.
+    /// Push a string constant from rodata. Followed by offset (LEB128) and length (LEB128).
     StringConst = 0xC1,
-    /// Evaluate a name at runtime. Followed by length (LEB128) and name bytes.
+    /// Evaluate a name at runtime. Followed by offset (LEB128) and length (LEB128) into rodata.
     EvalName = 0xC2,
     /// Create a list from N items on stack. Followed by count (LEB128).
     MakeList = 0xC3,
-    /// Create a program object. Followed by length (LEB128) and bytecode.
+    /// Create a program object. Followed by param_count (LEB128), rodata_len (LEB128),
+    /// rodata bytes, code_len (LEB128), code bytes, span_count (u16), spans.
     MakeProgram = 0xC4,
-    /// Push a symbolic expression constant. Followed by length (LEB128) and UTF-8 string.
+    /// Push a symbolic expression constant from rodata. Followed by offset (LEB128) and length (LEB128).
     SymbolicConst = 0xC5,
     /// Push a local name scope. Followed by count (LEB128), then for each:
-    /// string_idx (LEB128, index into string table), local_idx (LEB128).
+    /// offset (LEB128), length (LEB128), local_idx (LEB128).
     PushLocalScope = 0xC6,
     /// Pop a local name scope.
     PopLocalScope = 0xC7,
+    /// Push a blob constant from rodata. Followed by offset (LEB128) and length (LEB128).
+    BlobConst = 0xC8,
 }
 
 impl Opcode {
@@ -278,6 +281,7 @@ impl Opcode {
             0xC5 => Some(Opcode::SymbolicConst),
             0xC6 => Some(Opcode::PushLocalScope),
             0xC7 => Some(Opcode::PopLocalScope),
+            0xC8 => Some(Opcode::BlobConst),
 
             _ => None,
         }
@@ -572,6 +576,7 @@ mod tests {
             Opcode::SymbolicConst,
             Opcode::PushLocalScope,
             Opcode::PopLocalScope,
+            Opcode::BlobConst,
         ];
 
         for op in opcodes {

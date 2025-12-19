@@ -4,16 +4,27 @@
 //! - DUP, DROP, SWAP, ROT, OVER
 //! - PICK, ROLL, DEPTH
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
     vm::bytecode::Opcode,
 };
+
+/// Interface declaration for the Stack library.
+const INTERFACE: &str = include_str!("interfaces/stack.rpli");
+
+/// Get the interface specification (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid stack interface"))
+}
 
 /// Stack library ID (matches rpl-stdlib).
 pub const STACK_LIB: LibId = 72;
@@ -45,46 +56,13 @@ pub mod cmd {
     pub const IFTE: u16 = 21;
 }
 
-/// Stack operations library.
+/// Stack operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct StackLib;
 
-impl Library for StackLib {
+impl LibraryImpl for StackLib {
     fn id(&self) -> LibId {
         STACK_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Stack"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            CommandInfo::with_effect("DUP", STACK_LIB, cmd::DUP, 1, 2),
-            CommandInfo::with_effect("DROP", STACK_LIB, cmd::DROP, 1, 0),
-            CommandInfo::with_effect("SWAP", STACK_LIB, cmd::SWAP, 2, 2),
-            CommandInfo::with_effect("ROT", STACK_LIB, cmd::ROT, 3, 3),
-            CommandInfo::new("PICK", STACK_LIB, cmd::PICK), // Dynamic
-            CommandInfo::new("ROLL", STACK_LIB, cmd::ROLL), // Dynamic
-            CommandInfo::with_effect("DEPTH", STACK_LIB, cmd::DEPTH, 0, 1),
-            CommandInfo::with_effect("OVER", STACK_LIB, cmd::OVER, 2, 3),
-            // Additional stack operations
-            CommandInfo::with_effect("DUP2", STACK_LIB, cmd::DUP2, 2, 4),
-            CommandInfo::with_effect("DROP2", STACK_LIB, cmd::DROP2, 2, 0),
-            CommandInfo::new("DUPN", STACK_LIB, cmd::DUPN),   // Dynamic
-            CommandInfo::new("DROPN", STACK_LIB, cmd::DROPN), // Dynamic
-            CommandInfo::with_effect("DUPDUP", STACK_LIB, cmd::DUPDUP, 1, 3),
-            CommandInfo::new("NDUPN", STACK_LIB, cmd::NDUPN), // Dynamic
-            CommandInfo::with_effect("NIP", STACK_LIB, cmd::NIP, 2, 1),
-            CommandInfo::with_effect("UNROT", STACK_LIB, cmd::UNROT, 3, 3),
-            CommandInfo::with_effect("PICK3", STACK_LIB, cmd::PICK3, 3, 4),
-            CommandInfo::new("ROLLD", STACK_LIB, cmd::ROLLD), // Dynamic
-            CommandInfo::new("REVN", STACK_LIB, cmd::REVN),   // Dynamic
-            CommandInfo::new("UNPICK", STACK_LIB, cmd::UNPICK), // Dynamic
-            CommandInfo::with_effect("IFT", STACK_LIB, cmd::IFT, 2, 0), // 0 or 1 results
-            CommandInfo::with_effect("IFTE", STACK_LIB, cmd::IFTE, 3, 1),
-        ]
     }
 
     fn lower_command(
@@ -409,43 +387,6 @@ impl Library for StackLib {
             _ => Err(format!("Unknown stack command: {}", ctx.cmd)),
         }
     }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        // Stack operations use permutations that preserve types.
-        // These match the effects returned by lower_command.
-        match cmd {
-            cmd::DUP => StackEffect::dup(),
-            cmd::DROP => StackEffect::drop(),
-            cmd::SWAP => StackEffect::swap(),
-            cmd::ROT => StackEffect::rot(),
-            cmd::OVER => StackEffect::over(),
-            cmd::DEPTH => StackEffect::depth(),
-            cmd::NIP => StackEffect::nip(),
-            // UNROT (a b c -- c a b) is inverse of ROT
-            cmd::UNROT => StackEffect::permutation(3, &[2, 0, 1]),
-            // DUP2 (a b -- a b a b)
-            cmd::DUP2 => StackEffect::permutation(2, &[0, 1, 0, 1]),
-            // DROP2 (a b --)
-            cmd::DROP2 => StackEffect::permutation(2, &[]),
-            // DUPDUP (a -- a a a)
-            cmd::DUPDUP => StackEffect::permutation(1, &[0, 0, 0]),
-            // PICK3 (a b c -- a b c a)
-            cmd::PICK3 => StackEffect::permutation(3, &[0, 1, 2, 0]),
-            // PICK consumes n, produces unknown type
-            cmd::PICK => StackEffect::fixed(1, &[None]),
-            // ROLL permutes unpredictably
-            cmd::ROLL => StackEffect::Dynamic,
-            // Other dynamic operations
-            cmd::DUPN | cmd::DROPN | cmd::NDUPN | cmd::ROLLD | cmd::REVN | cmd::UNPICK => {
-                StackEffect::Dynamic
-            }
-            // IFT (obj flag -- obj | nothing) - dynamic
-            cmd::IFT => StackEffect::Dynamic,
-            // IFTE (true false flag -- result) - 3 in, 1 out but type unknown
-            cmd::IFTE => StackEffect::fixed(3, &[None]),
-            _ => StackEffect::Dynamic,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -454,11 +395,11 @@ mod tests {
 
     #[test]
     fn stack_lib_id() {
-        assert_eq!(StackLib.id(), 72);
+        assert_eq!(interface().id(), 72);
     }
 
     #[test]
     fn stack_lib_name() {
-        assert_eq!(StackLib.name(), "Stack");
+        assert_eq!(interface().name(), "Stack");
     }
 }

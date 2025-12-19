@@ -31,7 +31,7 @@
 //! use rpl::parse::parse;
 //! use rpl::registry::Registry;
 //!
-//! let registry = Registry::with_core();
+//! let registry = Registry::new();
 //! let mut interner = Interner::new();
 //! let nodes = parse("42 \"x\" STO x", &registry, &mut interner).unwrap();
 //! let result = analyze(&nodes, &registry, &interner);

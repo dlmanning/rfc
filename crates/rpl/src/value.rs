@@ -12,13 +12,14 @@ use std::sync::Arc;
 use crate::serialize::SourceMap;
 use crate::symbolic::SymExpr;
 
-/// Compiled program data with bytecode, string table, and optional debug info.
+/// Compiled program data with bytecode, rodata, and optional debug info.
 #[derive(Clone, Debug)]
 pub struct ProgramData {
     /// The bytecode.
     pub code: Arc<[u8]>,
-    /// String table (data section) for local variable names, etc.
-    pub strings: Arc<[String]>,
+    /// Read-only data section for strings, blobs, and other constant data.
+    /// Referenced by offset/length from bytecode.
+    pub rodata: Arc<[u8]>,
     /// Optional source map for debugging (maps bytecode offsets to source spans).
     pub source_map: Option<SourceMap>,
     /// Number of parameters (0 for regular programs, N for functions).
@@ -28,66 +29,84 @@ pub struct ProgramData {
 }
 
 impl ProgramData {
-    /// Create a new program with just bytecode (empty string table, no debug info).
+    /// Create a new program with just bytecode (empty rodata, no debug info).
     pub fn new(code: impl Into<Arc<[u8]>>) -> Self {
         Self {
             code: code.into(),
-            strings: Arc::new([]),
+            rodata: Arc::new([]),
             source_map: None,
             param_count: 0,
         }
     }
 
-    /// Create a new program with bytecode and string table (no debug info).
-    pub fn with_strings(code: impl Into<Arc<[u8]>>, strings: impl Into<Arc<[String]>>) -> Self {
+    /// Create a new program with bytecode and rodata (no debug info).
+    pub fn with_rodata(code: impl Into<Arc<[u8]>>, rodata: impl Into<Arc<[u8]>>) -> Self {
         Self {
             code: code.into(),
-            strings: strings.into(),
+            rodata: rodata.into(),
             source_map: None,
             param_count: 0,
         }
     }
 
-    /// Create a new program with bytecode, string table, and source map.
+    /// Create a new program with bytecode, rodata, and source map.
     pub fn with_source_map(
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
         source_map: SourceMap,
     ) -> Self {
         Self {
             code: code.into(),
-            strings: strings.into(),
+            rodata: rodata.into(),
             source_map: Some(source_map),
             param_count: 0,
         }
     }
 
-    /// Create a function with bytecode, string table, and parameter count.
+    /// Create a function with bytecode, rodata, and parameter count.
     pub fn function(
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
         param_count: u16,
     ) -> Self {
         Self {
             code: code.into(),
-            strings: strings.into(),
+            rodata: rodata.into(),
             source_map: None,
             param_count,
         }
     }
 
-    /// Create a function with bytecode, string table, source map, and parameter count.
+    /// Create a function with bytecode, rodata, source map, and parameter count.
     pub fn function_with_source_map(
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
         source_map: SourceMap,
         param_count: u16,
     ) -> Self {
         Self {
             code: code.into(),
-            strings: strings.into(),
+            rodata: rodata.into(),
             source_map: Some(source_map),
             param_count,
+        }
+    }
+
+    /// Get a string from rodata at the given offset and length.
+    pub fn get_string(&self, offset: usize, len: usize) -> Option<&str> {
+        if offset + len <= self.rodata.len() {
+            std::str::from_utf8(&self.rodata[offset..offset + len]).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Get bytes from rodata at the given offset and length.
+    pub fn get_bytes(&self, offset: usize, len: usize) -> Option<&[u8]> {
+        if offset + len <= self.rodata.len() {
+            Some(&self.rodata[offset..offset + len])
+        } else {
+            None
         }
     }
 
@@ -124,8 +143,8 @@ pub struct LibraryCommand {
     pub name: String,
     /// Compiled bytecode.
     pub code: Arc<[u8]>,
-    /// String table for local variables, etc.
-    pub strings: Arc<[String]>,
+    /// Read-only data section for strings, blobs, and other constant data.
+    pub rodata: Arc<[u8]>,
 }
 
 impl LibraryCommand {
@@ -133,12 +152,12 @@ impl LibraryCommand {
     pub fn new(
         name: impl Into<String>,
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
     ) -> Self {
         Self {
             name: name.into(),
             code: code.into(),
-            strings: strings.into(),
+            rodata: rodata.into(),
         }
     }
 }
@@ -221,26 +240,26 @@ impl Value {
         Value::List(items.into())
     }
 
-    /// Create a program value with just bytecode (empty string table).
+    /// Create a program value with just bytecode (empty rodata).
     pub fn program(code: impl Into<Arc<[u8]>>) -> Self {
         Value::Program(Arc::new(ProgramData::new(code)))
     }
 
-    /// Create a program value with bytecode and string table.
-    pub fn program_with_strings(
+    /// Create a program value with bytecode and rodata.
+    pub fn program_with_rodata(
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
     ) -> Self {
-        Value::Program(Arc::new(ProgramData::with_strings(code, strings)))
+        Value::Program(Arc::new(ProgramData::with_rodata(code, rodata)))
     }
 
-    /// Create a program value with bytecode, string table, and source map.
+    /// Create a program value with bytecode, rodata, and source map.
     pub fn program_with_source_map(
         code: impl Into<Arc<[u8]>>,
-        strings: impl Into<Arc<[String]>>,
+        rodata: impl Into<Arc<[u8]>>,
         source_map: SourceMap,
     ) -> Self {
-        Value::Program(Arc::new(ProgramData::with_source_map(code, strings, source_map)))
+        Value::Program(Arc::new(ProgramData::with_source_map(code, rodata, source_map)))
     }
 
     /// Create a symbolic expression value.

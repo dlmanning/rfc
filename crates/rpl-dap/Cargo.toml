@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 rpl = {path = "../rpl"}
+rpl-stdlib = {path = "../rpl-stdlib"}
 dap = "0.4.1-alpha1"
 serde_json = "1.0"
 log = "0.4"

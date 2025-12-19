@@ -255,77 +255,64 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             }
         }
 
-        // String operands - length (LEB128) + UTF-8 bytes
+        // Rodata references - offset (LEB128) + length (LEB128)
+        // The actual data is in the rodata section, not inline in bytecode
         Opcode::StringConst => {
-            if let Some(len) = read_leb128_u32(code, &mut offset) {
-                let len = len as usize;
-                if offset + len <= code.len() {
-                    let s = String::from_utf8_lossy(&code[offset..offset + len]);
-                    offset += len;
-                    (format!("StringConst {:?}", s), offset)
-                } else {
-                    ("StringConst ???".into(), code.len())
-                }
+            if let (Some(str_offset), Some(len)) = (
+                read_leb128_u32(code, &mut offset),
+                read_leb128_u32(code, &mut offset),
+            ) {
+                (format!("StringConst @{}:{}", str_offset, len), offset)
             } else {
                 ("StringConst ???".into(), code.len())
             }
         }
         Opcode::SymbolicConst => {
-            if let Some(len) = read_leb128_u32(code, &mut offset) {
-                let len = len as usize;
-                if offset + len <= code.len() {
-                    let s = String::from_utf8_lossy(&code[offset..offset + len]);
-                    offset += len;
-                    (format!("SymbolicConst '{}'", s), offset)
-                } else {
-                    ("SymbolicConst ???".into(), code.len())
-                }
+            if let (Some(sym_offset), Some(len)) = (
+                read_leb128_u32(code, &mut offset),
+                read_leb128_u32(code, &mut offset),
+            ) {
+                (format!("SymbolicConst @{}:{}", sym_offset, len), offset)
             } else {
                 ("SymbolicConst ???".into(), code.len())
             }
         }
+        Opcode::BlobConst => {
+            if let (Some(blob_offset), Some(len)) = (
+                read_leb128_u32(code, &mut offset),
+                read_leb128_u32(code, &mut offset),
+            ) {
+                (format!("BlobConst @{}:{}", blob_offset, len), offset)
+            } else {
+                ("BlobConst ???".into(), code.len())
+            }
+        }
 
-        // EvalName - length (LEB128) + name bytes
+        // EvalName - offset (LEB128) + length (LEB128) into rodata
         Opcode::EvalName => {
-            if let Some(len) = read_leb128_u32(code, &mut offset) {
-                let len = len as usize;
-                if offset + len <= code.len() {
-                    let name = String::from_utf8_lossy(&code[offset..offset + len]);
-                    offset += len;
-                    (format!("EvalName '{}'", name), offset)
-                } else {
-                    ("EvalName ???".into(), code.len())
-                }
+            if let (Some(name_offset), Some(len)) = (
+                read_leb128_u32(code, &mut offset),
+                read_leb128_u32(code, &mut offset),
+            ) {
+                (format!("EvalName @{}:{}", name_offset, len), offset)
             } else {
                 ("EvalName ???".into(), code.len())
             }
         }
 
-        // MakeProgram - format: <param_count> <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
+        // MakeProgram - format: <param_count> <rodata_len> <rodata_bytes> <code_len> <code_bytes>
         //                       <span_count:u16> [<offset:u16> <start:LEB128> <end:LEB128>]*
         Opcode::MakeProgram => {
             // Read param count
             if let Some(param_count) = read_leb128_u32(code, &mut offset) {
-                // Read string table
-                if let Some(str_count) = read_leb128_u32(code, &mut offset) {
-                    let mut valid = true;
-                    for _ in 0..str_count {
-                        if let Some(slen) = read_leb128_u32(code, &mut offset) {
-                            if offset + slen as usize <= code.len() {
-                                offset += slen as usize;
-                            } else {
-                                valid = false;
-                                break;
-                            }
-                        } else {
-                            valid = false;
-                            break;
-                        }
+                // Read rodata section
+                if let Some(rodata_len) = read_leb128_u32(code, &mut offset) {
+                    let rodata_len = rodata_len as usize;
+                    if offset + rodata_len > code.len() {
+                        return ("MakeProgram ???".into(), code.len());
                     }
-                    if !valid {
-                        return ("MakeProgram ???".into(), code.len().min(offset));
-                    }
-                    // Read code
+                    offset += rodata_len;
+                    // Read code section
                     if let Some(code_len) = read_leb128_u32(code, &mut offset) {
                         let code_len = code_len as usize;
                         if offset + code_len <= code.len() {
@@ -342,7 +329,7 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                                     let _ = read_leb128_u32(code, &mut offset);
                                 }
                                 let kind = if param_count > 0 { "Function" } else { "Program" };
-                                (format!("Make{} <{} bytes, {} strings, {} params>", kind, code_len, str_count, param_count), offset.min(code.len()))
+                                (format!("Make{} <{} bytes, {} rodata, {} params>", kind, code_len, rodata_len, param_count), offset.min(code.len()))
                             } else {
                                 (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()))
                             }
@@ -391,11 +378,13 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             }
         }
 
-        // PushLocalScope - count (LEB128), then for each: string_idx (LEB128), local_idx (LEB128)
+        // PushLocalScope - count (LEB128), then for each: offset (LEB128), len (LEB128), local_idx (LEB128)
         Opcode::PushLocalScope => {
             if let Some(count) = read_leb128_u32(code, &mut offset) {
                 for _ in 0..count {
-                    // string_idx (index into string table)
+                    // offset (into rodata)
+                    let _ = read_leb128_u32(code, &mut offset);
+                    // len
                     let _ = read_leb128_u32(code, &mut offset);
                     // local_idx
                     let _ = read_leb128_u32(code, &mut offset);
@@ -491,12 +480,13 @@ mod tests {
 
     #[test]
     fn disassemble_string_const() {
-        // StringConst "hi"
-        let code = vec![0xC1, 0x02, b'h', b'i'];
+        // StringConst with offset=0, len=2 (rodata format)
+        // 0xC1, offset (LEB128 0), len (LEB128 2)
+        let code = vec![0xC1, 0x00, 0x02];
         let result = disassemble(&code, 0, 10);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].text, "StringConst \"hi\"");
-        assert_eq!(result[0].size, 4);
+        assert_eq!(result[0].text, "StringConst @0:2");
+        assert_eq!(result[0].size, 3);
     }
 
     #[test]
@@ -545,27 +535,28 @@ mod tests {
 
     #[test]
     fn disassemble_eval_name() {
-        // EvalName 'is_prime' = C2 08 69 73 5F 70 72 69 6D 65
-        let code = vec![0xC2, 0x08, b'i', b's', b'_', b'p', b'r', b'i', b'm', b'e'];
+        // EvalName with offset=5, len=8 (rodata format)
+        // 0xC2, offset (LEB128 5), len (LEB128 8)
+        let code = vec![0xC2, 0x05, 0x08];
         let result = disassemble(&code, 0, 10);
         assert_eq!(result.len(), 1, "Should be exactly one instruction");
         assert_eq!(result[0].pc, 0);
-        assert_eq!(result[0].size, 10, "EvalName 'is_prime' should be 10 bytes");
-        assert_eq!(result[0].text, "EvalName 'is_prime'");
+        assert_eq!(result[0].size, 3, "EvalName should be 3 bytes");
+        assert_eq!(result[0].text, "EvalName @5:8");
     }
 
     #[test]
     fn disassemble_eval_name_followed_by_other() {
-        // EvalName 'test' followed by I64Add
-        // C2 04 74 65 73 74 7C
-        let code = vec![0xC2, 0x04, b't', b'e', b's', b't', 0x7C];
+        // EvalName with offset=0, len=4 followed by I64Add
+        // 0xC2, offset (LEB128 0), len (LEB128 4), 0x7C (I64Add)
+        let code = vec![0xC2, 0x00, 0x04, 0x7C];
         let result = disassemble(&code, 0, 10);
         assert_eq!(result.len(), 2, "Should be two instructions");
-        assert_eq!(result[0].text, "EvalName 'test'");
-        assert_eq!(result[0].size, 6);
+        assert_eq!(result[0].text, "EvalName @0:4");
+        assert_eq!(result[0].size, 3);
         assert_eq!(result[0].pc, 0);
         assert_eq!(result[1].text, "I64Add");
-        assert_eq!(result[1].pc, 6, "I64Add should be at PC 6");
+        assert_eq!(result[1].pc, 3, "I64Add should be at PC 3");
     }
 
     // === Integration tests with compiled programs ===
@@ -575,7 +566,7 @@ mod tests {
 
     /// Compile source code and return the bytecode.
     fn compile(source: &str) -> Vec<u8> {
-        let registry = Registry::with_core();
+        let registry = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse(source, &registry, &mut interner).expect("parse failed");
         let program = lower(&nodes, &registry, &interner).expect("lower failed");
@@ -623,18 +614,21 @@ mod tests {
 
     #[test]
     fn disassemble_simple_arithmetic() {
-        let code = compile("1 2 +");
+        // Compile literals only: "1 2 3"
+        let code = compile("1 2 3");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
-        // Should have at least: I64Const 1, I64Const 2, CallLib (for +)
-        assert!(instructions.len() >= 3, "Expected at least 3 instructions, got {}", instructions.len());
+        // Should have: I64Const 1, I64Const 2, I64Const 3
+        assert_eq!(instructions.len(), 3, "Expected 3 instructions, got {}", instructions.len());
         assert!(instructions[0].text.contains("I64Const"));
         assert!(instructions[1].text.contains("I64Const"));
+        assert!(instructions[2].text.contains("I64Const"));
     }
 
     #[test]
     fn disassemble_with_string() {
-        let code = compile("\"hello\" \"world\" +");
+        // Compile string literals only
+        let code = compile("\"hello\" \"world\"");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have string constants
@@ -644,7 +638,16 @@ mod tests {
 
     #[test]
     fn disassemble_conditional() {
-        let code = compile("1 IF 2 THEN 3 ELSE 4 END");
+        // Use raw bytecode for If/Else/End structure:
+        // I64Const 1, If, I64Const 2, Else, I64Const 3, End
+        let code = vec![
+            0x42, 0x01, // I64Const 1
+            0x04, 0x40, // If []
+            0x42, 0x02, // I64Const 2
+            0x05,       // Else
+            0x42, 0x03, // I64Const 3
+            0x0B,       // End
+        ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have If, Else, End
@@ -657,17 +660,26 @@ mod tests {
     }
 
     #[test]
-    fn disassemble_loop() {
-        let code = compile("1 10 FOR i i NEXT");
+    fn disassemble_loop_bytecode() {
+        // Use raw bytecode for Loop/End structure:
+        // Loop, I64Const 1, End
+        let code = vec![
+            0x03, 0x40, // Loop []
+            0x42, 0x01, // I64Const 1
+            0x0B,       // End
+        ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Just verify it parses without errors
         assert!(!instructions.is_empty());
+        let has_loop = instructions.iter().any(|i| i.text.starts_with("Loop"));
+        assert!(has_loop, "Expected Loop instruction");
     }
 
     #[test]
     fn disassemble_program_literal() {
-        let code = compile("<< 1 2 + >>");
+        // Compile empty program: "<< >>"
+        let code = compile("<< >>");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have MakeProgram
@@ -676,97 +688,22 @@ mod tests {
     }
 
     #[test]
-    fn disassemble_local_variables() {
-        let code = compile("<< -> a b << a b + >> >>");
+    fn disassemble_nested_program() {
+        // Compile nested programs: "<< << 1 2 >> >>"
+        let code = compile("<< << 1 2 >> >>");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
-        // The outer program should have MakeProgram
-        let has_make_program = instructions.iter().any(|i| i.text.contains("MakeProgram"));
-        assert!(has_make_program, "Expected MakeProgram instruction");
+        // Should have MakeProgram for both programs
+        let make_program_count = instructions.iter()
+            .filter(|i| i.text.contains("MakeProgram"))
+            .count();
+        assert!(make_program_count >= 1, "Expected at least 1 MakeProgram instruction");
     }
 
     #[test]
-    fn disassemble_factorial() {
-        let source = r#"
-            << -> n <<
-                IF n 0 ==
-                THEN
-                    1
-                ELSE
-                    n 1 - fact n *
-                END
-            >> >>
-            "fact" STO
-            5 fact
-        "#;
-        let code = compile(source);
-        let instructions = verify_disassembly(&code).expect("disassembly failed");
-
-        // Main program: MakeProgram, StringConst, CallLib STO, I64Const, EvalName
-        assert!(instructions.len() >= 5, "Expected at least 5 instructions, got {}", instructions.len());
-        // Should have MakeProgram for the function
-        assert!(instructions.iter().any(|i| i.text.contains("MakeProgram")));
-        // Should have the function name
-        assert!(instructions.iter().any(|i| i.text.contains("fact")));
-    }
-
-    #[test]
-    fn disassemble_gcd() {
-        let source = r#"
-            << -> a b <<
-                IF b 0 ==
-                THEN
-                    a
-                ELSE
-                    b
-                    a b MOD
-                    gcd
-                END
-            >> >>
-            "gcd" STO
-            48 18 gcd
-        "#;
-        let code = compile(source);
-        let instructions = verify_disassembly(&code).expect("disassembly failed");
-
-        // Main program: MakeProgram, StringConst, CallLib STO, I64Const, I64Const, EvalName
-        assert!(instructions.len() >= 6, "Expected at least 6 instructions, got {}", instructions.len());
-        // Should have MakeProgram for the function
-        assert!(instructions.iter().any(|i| i.text.contains("MakeProgram")));
-        // Should have the function name
-        assert!(instructions.iter().any(|i| i.text.contains("gcd")));
-    }
-
-    #[test]
-    fn disassemble_fibonacci() {
-        let source = r#"
-            << -> n <<
-                n 1 <=
-                IF THEN
-                    n
-                ELSE
-                    n 1 - fib
-                    n 2 - fib
-                    +
-                END
-            >> >>
-            "fib" STO
-            10 fib
-        "#;
-        let code = compile(source);
-        let instructions = verify_disassembly(&code).expect("disassembly failed");
-
-        // Main program: MakeProgram, StringConst, CallLib STO, I64Const, EvalName
-        assert!(instructions.len() >= 5, "Expected at least 5 instructions, got {}", instructions.len());
-        // Should have MakeProgram for the function
-        assert!(instructions.iter().any(|i| i.text.contains("MakeProgram")));
-        // Should have the function name
-        assert!(instructions.iter().any(|i| i.text.contains("fib")));
-    }
-
-    #[test]
-    fn disassemble_list_operations() {
-        let code = compile("{ 1 2 3 } DUP SIZE");
+    fn disassemble_list() {
+        // Compile list literal: "{ 1 2 3 }"
+        let code = compile("{ 1 2 3 }");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have MakeList
@@ -776,11 +713,16 @@ mod tests {
 
     #[test]
     fn disassemble_symbolic() {
-        let code = compile("'X' 'Y' +");
+        // Compile symbolic literals: "'X' 'Y'"
+        let code = compile("'X' 'Y'");
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have SymbolicConst
         let has_symbolic = instructions.iter().any(|i| i.text.contains("SymbolicConst"));
         assert!(has_symbolic, "Expected SymbolicConst instruction");
     }
+
+    // Note: Complex integration tests (factorial, fibonacci, gcd) that use
+    // stdlib commands (IF/THEN/ELSE, STO, arithmetic operators) are in the
+    // integration test suite (tests/pipeline/) which uses rpl-stdlib.
 }

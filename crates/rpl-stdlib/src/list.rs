@@ -10,16 +10,26 @@
 //! - TAIL: Get all but first element
 //! - REVLIST: Reverse list
 
-use crate::{
-    core::{Span, TypeId},
+use std::sync::OnceLock;
+
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
+    core::Span,
     ir::LibId,
-    libs::{
-        ExecuteContext, ExecuteResult, Library, StackEffect,
-    },
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the List library.
+const INTERFACE: &str = include_str!("interfaces/list.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid list interface"))
+}
 
 /// List library ID.
 pub const LIST_LIB: LibId = 88;
@@ -44,43 +54,13 @@ pub mod cmd {
     pub const REVLIST: u16 = 7;
 }
 
-/// List operations library.
+/// List operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct ListLib;
 
-impl Library for ListLib {
+impl LibraryImpl for ListLib {
     fn id(&self) -> LibId {
         LIST_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "List"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // →LIST: (items... n -- { items })
-            CommandInfo::new("→LIST", LIST_LIB, cmd::TO_LIST),
-            CommandInfo::new("->LIST", LIST_LIB, cmd::TO_LIST), // ASCII arrow
-            // LIST→: ({ items } -- items... n)
-            CommandInfo::new("LIST→", LIST_LIB, cmd::LIST_TO),
-            CommandInfo::new("LIST->", LIST_LIB, cmd::LIST_TO), // ASCII arrow
-            CommandInfo::new("OBJ→", LIST_LIB, cmd::LIST_TO),   // HP alias
-            CommandInfo::new("OBJ->", LIST_LIB, cmd::LIST_TO),  // HP alias ASCII
-            // SIZE: ({ items } -- n)
-            CommandInfo::with_effect("SIZE", LIST_LIB, cmd::SIZE, 1, 1),
-            // GET: ({ items } n -- item)
-            CommandInfo::with_effect("GET", LIST_LIB, cmd::GET, 2, 1),
-            // PUT: ({ items } n item -- { new_items })
-            CommandInfo::with_effect("PUT", LIST_LIB, cmd::PUT, 3, 1),
-            // HEAD: ({ items } -- item)
-            CommandInfo::with_effect("HEAD", LIST_LIB, cmd::HEAD, 1, 1),
-            // TAIL: ({ items } -- { rest })
-            CommandInfo::with_effect("TAIL", LIST_LIB, cmd::TAIL, 1, 1),
-            // REVLIST: ({ items } -- { reversed })
-            CommandInfo::with_effect("REVLIST", LIST_LIB, cmd::REVLIST, 1, 1),
-        ]
     }
 
     fn lower_command(
@@ -93,17 +73,6 @@ impl Library for ListLib {
         Ok(())
     }
 
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::SIZE => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            cmd::GET => StackEffect::fixed(2, &[None]), // list + index -> element
-            cmd::HEAD => StackEffect::fixed(1, &[None]), // list -> element
-            cmd::PUT => StackEffect::fixed(3, &[Some(TypeId::LIST)]),
-            cmd::TAIL | cmd::REVLIST => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
-            cmd::TO_LIST | cmd::LIST_TO => StackEffect::Dynamic,
-            _ => StackEffect::Dynamic,
-        }
-    }
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::TO_LIST => {
@@ -283,15 +252,14 @@ impl Library for ListLib {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn list_lib_id() {
-        assert_eq!(ListLib.id(), 88);
+        assert_eq!(interface().id(), 88);
     }
 
     #[test]
     fn list_lib_name() {
-        assert_eq!(ListLib.name(), "List");
+        assert_eq!(interface().name(), "List");
     }
 }

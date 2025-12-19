@@ -1,0 +1,12 @@
+library UserLib 102
+
+-- Library private data
+0: a Str Sym -> LIBSTO    ->
+1: Str Sym   -> LIBRCL    -> a
+2: a Str Sym -> LIBDEFRCL -> a
+3: Str       -> LIBCLEAR  ->
+
+-- Library management
+4: List Str  -> CRLIB  -> a
+5: a         -> ATTACH ->
+6: Str       -> DETACH ->

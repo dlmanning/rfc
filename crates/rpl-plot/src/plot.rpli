@@ -1,0 +1,40 @@
+library Plot 88
+
+-- Plot construction
+0:              -> NEWPLOT  -> Blob
+
+-- Path commands (Blob in, Blob out)
+1:      Blob a b -> MOVETO    -> Blob
+2:      Blob a b -> LINETO    -> Blob
+3:    Blob a b c -> CIRCLE    -> Blob
+4:  Blob a b c d -> RECT      -> Blob
+5:  Blob a b c d -> ELLIPSE   -> Blob
+6: Blob a b c d e -> ARC      -> Blob
+7: Blob a b c d e f -> BEZIER -> Blob
+8:      Blob a b -> PIXEL     -> Blob
+9:  Blob a b Str -> TEXT      -> Blob
+
+-- Rendering operations
+10:         Blob -> FILL      -> Blob
+11:         Blob -> STROKE    -> Blob
+12:         Blob -> CLIP      -> Blob
+
+-- Style
+13:       Blob a -> LINEWIDTH -> Blob
+14:     Blob Int -> COLOR     -> Blob
+15:     Blob Int -> FILLCOLOR -> Blob
+16:   Blob a Str -> FONT      -> Blob
+
+-- Transforms
+17:         Blob -> IDENTITY  -> Blob
+18: Blob a b c d e f -> TRANSFORM -> Blob
+19:     Blob a b -> SCALE     -> Blob
+20:       Blob a -> ROTATE    -> Blob
+21:     Blob a b -> TRANSLATE -> Blob
+
+-- State management
+22:         Blob -> PUSHSTATE -> Blob
+23:         Blob -> POPSTATE  -> Blob
+
+-- Color utilities (pure function, no blob)
+24: a b c d -> RGBA -> Int

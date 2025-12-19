@@ -1,0 +1,3 @@
+library Comments 20
+
+0: Prog -> STRIPCOMMENTS -> Prog

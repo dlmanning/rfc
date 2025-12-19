@@ -1,0 +1,23 @@
+library Directory 28
+
+-- Variable storage
+0: a Sym -> STO ->
+1: Sym -> RCL -> a
+2: Sym -> PURGE ->
+3: -> VARS -> List
+4: -> CLVAR ->
+5: Sym -> INCR -> a
+6: Sym -> DECR -> a
+7: Sym Sym -> RENAME ->
+
+-- Directory navigation
+8: Sym -> CRDIR ->
+9: Sym -> PGDIR ->
+10: -> UPDIR ->
+11: -> HOME ->
+12: -> PATH -> List
+
+-- Serialization (dynamic)
+13: -> PACKDIR -> ...
+14: List -> UNPACKDIR -> ...
+15: List -> PACKINFO -> List

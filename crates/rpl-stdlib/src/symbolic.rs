@@ -4,17 +4,26 @@
 //! - →NUM: Convert symbolic to numeric (if no free variables)
 //! - SYMEVAL: Evaluate symbolic expression to a value
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::LibId,
-    libs::{
-        ExecuteContext, ExecuteResult, Library, StackEffect,
-    },
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the Symbolic library.
+const INTERFACE: &str = include_str!("interfaces/symbolic.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid symbolic interface"))
+}
 
 /// Symbolic library ID.
 pub const SYMBOLIC_LIB: LibId = 80;
@@ -27,29 +36,13 @@ pub mod cmd {
     pub const SYM_EVAL: u16 = 1;
 }
 
-/// Symbolic operations library.
+/// Symbolic operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct SymbolicLib;
 
-impl Library for SymbolicLib {
+impl LibraryImpl for SymbolicLib {
     fn id(&self) -> LibId {
         SYMBOLIC_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Symbolic"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // →NUM: (symbolic -- number)
-            CommandInfo::with_effect("→NUM", SYMBOLIC_LIB, cmd::TO_NUM, 1, 1),
-            CommandInfo::with_effect("->NUM", SYMBOLIC_LIB, cmd::TO_NUM, 1, 1), // ASCII arrow
-            CommandInfo::with_effect("TONUM", SYMBOLIC_LIB, cmd::TO_NUM, 1, 1), // Alternative name
-            // SYMEVAL: (symbolic -- value)
-            CommandInfo::with_effect("SYMEVAL", SYMBOLIC_LIB, cmd::SYM_EVAL, 1, 1),
-        ]
     }
 
     fn lower_command(
@@ -126,30 +119,19 @@ impl Library for SymbolicLib {
             _ => Err(format!("Unknown symbolic command: {}", ctx.cmd)),
         }
     }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            // Result could be Integer or Real
-            cmd::TO_NUM => StackEffect::fixed(1, &[None]),
-            // Result could be any type
-            cmd::SYM_EVAL => StackEffect::fixed(1, &[None]),
-            _ => StackEffect::Dynamic,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn symbolic_lib_id() {
-        assert_eq!(SymbolicLib.id(), 80);
+        assert_eq!(interface().id(), 80);
     }
 
     #[test]
     fn symbolic_lib_name() {
-        assert_eq!(SymbolicLib.name(), "Symbolic");
+        assert_eq!(interface().name(), "Symbolic");
     }
 }

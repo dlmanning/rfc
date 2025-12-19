@@ -19,18 +19,27 @@
 //! - `HOME` - Move to root directory (--)
 //! - `PATH` - Get current directory path (-- {path})
 
-use crate::core::{Span, TypeId};
+use std::sync::OnceLock;
 
-use crate::{
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::LibId,
-    libs::{
-        CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect,
-    },
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
     serialize::{pack_directory, packinfo, unpack_directory_checked},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the Directory library.
+const INTERFACE: &str = include_str!("interfaces/directory.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid directory interface"))
+}
 
 /// Directory library ID (matches rpl-stdlib).
 pub const DIRECTORY_LIB: LibId = 28;
@@ -58,41 +67,13 @@ pub mod cmd {
     pub const PACKINFO: u16 = 15;
 }
 
-/// Directory library.
+/// Directory library (implementation only).
 #[derive(Clone, Copy)]
 pub struct DirectoryLib;
 
-impl Library for DirectoryLib {
+impl LibraryImpl for DirectoryLib {
     fn id(&self) -> LibId {
         DIRECTORY_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Directory"
-    }
-
-    fn commands(&self) -> Vec<CommandInfo> {
-        vec![
-            // Variable operations
-            CommandInfo::with_effect("STO", DIRECTORY_LIB, cmd::STO, 2, 0),
-            CommandInfo::with_effect("RCL", DIRECTORY_LIB, cmd::RCL, 1, 1),
-            CommandInfo::with_effect("PURGE", DIRECTORY_LIB, cmd::PURGE, 1, 0),
-            CommandInfo::with_effect("VARS", DIRECTORY_LIB, cmd::VARS, 0, 1),
-            CommandInfo::with_effect("CLVAR", DIRECTORY_LIB, cmd::CLVAR, 0, 0),
-            CommandInfo::with_effect("INCR", DIRECTORY_LIB, cmd::INCR, 1, 1),
-            CommandInfo::with_effect("DECR", DIRECTORY_LIB, cmd::DECR, 1, 1),
-            CommandInfo::with_effect("RENAME", DIRECTORY_LIB, cmd::RENAME, 2, 0),
-            // Directory navigation
-            CommandInfo::with_effect("CRDIR", DIRECTORY_LIB, cmd::CRDIR, 1, 0),
-            CommandInfo::with_effect("PGDIR", DIRECTORY_LIB, cmd::PGDIR, 1, 0),
-            CommandInfo::with_effect("UPDIR", DIRECTORY_LIB, cmd::UPDIR, 0, 0),
-            CommandInfo::with_effect("HOME", DIRECTORY_LIB, cmd::HOME, 0, 0),
-            CommandInfo::with_effect("PATH", DIRECTORY_LIB, cmd::PATH, 0, 1),
-            // Directory packing - stack effects are dynamic
-            CommandInfo::new("PACKDIR", DIRECTORY_LIB, cmd::PACKDIR),
-            CommandInfo::new("UNPACKDIR", DIRECTORY_LIB, cmd::UNPACKDIR),
-            CommandInfo::with_effect("PACKINFO", DIRECTORY_LIB, cmd::PACKINFO, 1, 1),
-        ]
     }
 
     fn lower_command(
@@ -103,29 +84,6 @@ impl Library for DirectoryLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(DIRECTORY_LIB, cmd);
         Ok(())
-    }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            // Variable operations
-            cmd::STO => StackEffect::fixed(2, &[]),
-            cmd::RCL => StackEffect::fixed(1, &[None]),
-            cmd::PURGE => StackEffect::fixed(1, &[]),
-            cmd::VARS => StackEffect::fixed(0, &[Some(TypeId::LIST)]),
-            cmd::CLVAR => StackEffect::fixed(0, &[]),
-            cmd::INCR | cmd::DECR => StackEffect::fixed(1, &[None]),
-            cmd::RENAME => StackEffect::fixed(2, &[]),
-            // Directory navigation
-            cmd::CRDIR => StackEffect::fixed(1, &[]),
-            cmd::PGDIR => StackEffect::fixed(1, &[]),
-            cmd::UPDIR => StackEffect::fixed(0, &[]),
-            cmd::HOME => StackEffect::fixed(0, &[]),
-            cmd::PATH => StackEffect::fixed(0, &[Some(TypeId::LIST)]),
-            // Directory packing
-            cmd::PACKDIR | cmd::UNPACKDIR => StackEffect::Dynamic,
-            cmd::PACKINFO => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
-            _ => StackEffect::Dynamic,
-        }
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -424,7 +382,7 @@ fn extract_name(value: &Value) -> Option<String> {
         Value::String(s) => Some(s.to_string()),
         Value::Symbolic(expr) => {
             // If it's just a variable name (like 'x'), extract it
-            if let crate::symbolic::SymExpr::Var(name) = expr.as_ref() {
+            if let rpl::symbolic::SymExpr::Var(name) = expr.as_ref() {
                 Some(name.to_string())
             } else {
                 None
@@ -437,21 +395,20 @@ fn extract_name(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn directory_lib_id() {
-        assert_eq!(DirectoryLib.id(), 28);
+        assert_eq!(interface().id(), 28);
     }
 
     #[test]
     fn directory_lib_name() {
-        assert_eq!(DirectoryLib.name(), "Directory");
+        assert_eq!(interface().name(), "Directory");
     }
 
     #[test]
     fn commands_registered() {
-        let cmds = DirectoryLib.commands();
+        let cmds = interface().to_command_infos();
         let names: Vec<_> = cmds.iter().map(|c| c.name).collect();
         // Variable operations
         assert!(names.contains(&"STO"));

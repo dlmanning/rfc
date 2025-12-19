@@ -248,14 +248,14 @@ impl Vm {
         &mut self,
         code: &[u8],
         registry: &Registry,
-        strings: &[String],
+        rodata: &[u8],
     ) -> Result<(), VmError> {
         let saved_pc = self.pc;
         self.pc = 0;
         self.control_stack.clear();
 
         while self.pc < code.len() {
-            match self.step(code, registry, strings, None)? {
+            match self.step(code, registry, rodata, None)? {
                 Flow::Continue => {}
                 Flow::Return => break,
                 Flow::Branch(target) => self.pc = target,
@@ -283,7 +283,7 @@ impl Vm {
             } = self.return_stack.last().unwrap().clone();
 
             if let Some(event) =
-                self.execute_inner_debug(&prog.code, registry, &prog.strings, debug, |pc| {
+                self.execute_inner_debug(&prog.code, registry, &prog.rodata, debug, |pc| {
                     prog.source_offset_for_pc(pc)
                 })?
             {
@@ -300,7 +300,7 @@ impl Vm {
         if let Some(event) = self.execute_inner_debug(
             &program.code,
             registry,
-            &program.string_table,
+            &program.rodata,
             debug,
             |pc| program.source_offset_for_pc(pc),
         )? {
@@ -314,7 +314,7 @@ impl Vm {
         &mut self,
         code: &[u8],
         registry: &Registry,
-        strings: &[String],
+        rodata: &[u8],
         debug: &mut DebugState,
         source_fn: impl Fn(usize) -> Option<u32>,
     ) -> Result<Option<DebugEvent>, VmError> {
@@ -327,7 +327,7 @@ impl Vm {
                 return Ok(Some(event));
             }
 
-            match self.step(code, registry, strings, Some(debug))? {
+            match self.step(code, registry, rodata, Some(debug))? {
                 Flow::Continue => {}
                 Flow::Return => break,
                 Flow::Branch(target) => self.pc = target,
@@ -346,13 +346,13 @@ impl Vm {
         &mut self,
         code: &[u8],
         registry: &Registry,
-        strings: &[String],
+        rodata: &[u8],
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         let op_byte = code[self.pc];
         self.pc += 1;
         let op = Opcode::from_byte(op_byte).ok_or(VmError::InvalidOpcode(op_byte))?;
-        self.dispatch(op, code, registry, strings, debug)
+        self.dispatch(op, code, registry, rodata, debug)
     }
 
     // --- Stack helpers ---
@@ -431,7 +431,7 @@ impl Vm {
     fn call_nested(
         &mut self,
         code: &[u8],
-        strings: &[String],
+        rodata: &[u8],
         name: Option<String>,
         program_data: Arc<ProgramData>,
         source_fn: impl Fn(usize) -> Option<u32>,
@@ -465,7 +465,7 @@ impl Vm {
         let result = if let Some(debug) = debug {
             let saved_pc = self.pc;
             self.pc = 0;
-            match self.execute_inner_debug(code, registry, strings, debug, source_fn)? {
+            match self.execute_inner_debug(code, registry, rodata, debug, source_fn)? {
                 Some(event) => return Ok(Flow::DebugPause(event)),
                 None => {
                     self.pc = saved_pc;
@@ -473,7 +473,7 @@ impl Vm {
                 }
             }
         } else {
-            self.execute(code, registry, strings)
+            self.execute(code, registry, rodata)
         };
 
         self.return_stack.pop();
@@ -490,12 +490,12 @@ impl Vm {
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         // Special case: EVAL
-        if lib_id == crate::libs::PROG_LIB && cmd_id == crate::libs::prog::cmd::EVAL {
+        if lib_id == crate::libs::PROG_LIB && cmd_id == crate::libs::prog_cmd::EVAL {
             return self.eval_program(registry, debug);
         }
 
         let library = registry
-            .get(lib_id)
+            .get_impl(lib_id)
             .ok_or(VmError::UnknownLibrary(lib_id))?;
         let last_error = self.last_error.clone();
         let mut ctx = ExecuteContext::new(&mut self.stack, &mut self.directory, cmd_id, last_error);
@@ -503,13 +503,13 @@ impl Vm {
         Ok(Flow::Continue)
     }
 
-    fn lookup_library_command(&self, name: &str) -> Option<(Vec<u8>, Vec<String>)> {
+    fn lookup_library_command(&self, name: &str) -> Option<(Vec<u8>, Vec<u8>)> {
         let name_upper = name.to_uppercase();
         for (_lib_name, value) in self.directory.vars_at_path(&["SETTINGS", "LIB"]) {
             if let Some(lib_data) = value.as_library() {
                 for cmd in &lib_data.commands {
                     if cmd.name == name_upper {
-                        return Some((cmd.code.to_vec(), cmd.strings.to_vec()));
+                        return Some((cmd.code.to_vec(), cmd.rodata.to_vec()));
                     }
                 }
             }
@@ -526,11 +526,11 @@ impl Vm {
         match value {
             Value::Program(prog) => {
                 let code = prog.code.clone();
-                let strings = prog.strings.clone();
+                let rodata = prog.rodata.clone();
                 let prog_clone = prog.clone();
                 self.call_nested(
                     &code,
-                    &strings,
+                    &rodata,
                     None,
                     prog,
                     move |pc| prog_clone.source_offset_for_pc(pc),
@@ -566,7 +566,7 @@ impl Vm {
         op: Opcode,
         code: &[u8],
         registry: &Registry,
-        strings: &[String],
+        rodata: &[u8],
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
         use Opcode::*;
@@ -583,14 +583,18 @@ impl Vm {
                 self.stack.push(Value::Real(n))?;
             }
             StringConst => {
-                let s = self.read_string(code)?;
+                let s = self.read_string_from_rodata(code, rodata)?;
                 self.stack.push(Value::string(s))?;
             }
             SymbolicConst => {
-                let s = self.read_string(code)?;
+                let s = self.read_string_from_rodata(code, rodata)?;
                 let expr = crate::parse::infix::InfixParser::parse_str(s)
                     .map_err(|e| VmError::TypeError(format!("invalid symbolic: {}", e)))?;
                 self.stack.push(Value::symbolic(expr))?;
+            }
+            BlobConst => {
+                let bytes = self.read_bytes_from_rodata(code, rodata)?;
+                self.stack.push(Value::bytes(bytes.to_vec()))?;
             }
 
             // === Locals ===
@@ -754,15 +758,15 @@ impl Vm {
                 return self.call_library(lib_id, cmd_id, registry, debug);
             }
             EvalName => {
-                let name = self.read_string(code)?;
+                let name = self.read_string_from_rodata(code, rodata)?;
                 if let Some(value) = self.directory.lookup(name).cloned() {
                     if let Value::Program(prog) = value {
                         let code_bytes = prog.code.clone();
-                        let prog_strings = prog.strings.clone();
+                        let prog_rodata = prog.rodata.clone();
                         let prog_clone = prog.clone();
                         return self.call_nested(
                             &code_bytes,
-                            &prog_strings,
+                            &prog_rodata,
                             Some(name.to_string()),
                             prog,
                             move |pc| prog_clone.source_offset_for_pc(pc),
@@ -772,14 +776,14 @@ impl Vm {
                     } else {
                         self.stack.push(value)?;
                     }
-                } else if let Some((lib_code, lib_strings)) = self.lookup_library_command(name) {
-                    let prog = Arc::new(ProgramData::with_strings(
+                } else if let Some((lib_code, lib_rodata)) = self.lookup_library_command(name) {
+                    let prog = Arc::new(ProgramData::with_rodata(
                         lib_code.clone(),
-                        lib_strings.clone(),
+                        lib_rodata.clone(),
                     ));
                     return self.call_nested(
                         &lib_code,
-                        &lib_strings,
+                        &lib_rodata,
                         Some(name.to_string()),
                         prog,
                         |_| None,
@@ -803,12 +807,15 @@ impl Vm {
                 // Read param count (0 for regular programs, N for functions)
                 let param_count =
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as u16;
-                let string_count =
+                // Read rodata section
+                let rodata_len =
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
-                let mut prog_strings = Vec::with_capacity(string_count);
-                for _ in 0..string_count {
-                    prog_strings.push(self.read_string(code)?.to_string());
+                if self.pc + rodata_len > code.len() {
+                    return Err(VmError::UnexpectedEnd);
                 }
+                let prog_rodata = code[self.pc..self.pc + rodata_len].to_vec();
+                self.pc += rodata_len;
+                // Read code section
                 let code_len =
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 if self.pc + code_len > code.len() {
@@ -843,11 +850,11 @@ impl Vm {
                         offsets,
                         spans,
                     };
-                    ProgramData::function_with_source_map(prog_code, prog_strings, source_map, param_count)
+                    ProgramData::function_with_source_map(prog_code, prog_rodata, source_map, param_count)
                 } else if param_count > 0 {
-                    ProgramData::function(prog_code, prog_strings, param_count)
+                    ProgramData::function(prog_code, prog_rodata, param_count)
                 } else {
-                    ProgramData::with_strings(prog_code, prog_strings)
+                    ProgramData::with_rodata(prog_code, prog_rodata)
                 };
 
                 self.stack.push(Value::Program(Arc::new(program_data)))?;
@@ -859,11 +866,19 @@ impl Vm {
                     read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                 let mut names = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let str_idx =
+                    let offset =
+                        read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
+                    let len =
                         read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
                     let local_idx =
                         read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)?;
-                    let name = strings.get(str_idx).cloned().unwrap_or_default();
+                    let name = if offset + len <= rodata.len() {
+                        std::str::from_utf8(&rodata[offset..offset + len])
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        String::new()
+                    };
                     names.push((name, local_idx));
                 }
                 self.push_local_names(names);
@@ -1085,15 +1100,25 @@ impl Vm {
         Ok(Flow::Continue)
     }
 
-    fn read_string<'a>(&mut self, code: &'a [u8]) -> Result<&'a str, VmError> {
+    /// Read a string from rodata. The bytecode contains offset and length as LEB128.
+    fn read_string_from_rodata<'a>(&mut self, code: &[u8], rodata: &'a [u8]) -> Result<&'a str, VmError> {
+        let offset = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
         let len = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
-        if self.pc + len > code.len() {
+        if offset + len > rodata.len() {
             return Err(VmError::UnexpectedEnd);
         }
-        let s = std::str::from_utf8(&code[self.pc..self.pc + len])
-            .map_err(|_| VmError::TypeError("invalid UTF-8".into()))?;
-        self.pc += len;
-        Ok(s)
+        std::str::from_utf8(&rodata[offset..offset + len])
+            .map_err(|_| VmError::TypeError("invalid UTF-8".into()))
+    }
+
+    /// Read bytes from rodata. The bytecode contains offset and length as LEB128.
+    fn read_bytes_from_rodata<'a>(&mut self, code: &[u8], rodata: &'a [u8]) -> Result<&'a [u8], VmError> {
+        let offset = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
+        let len = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
+        if offset + len > rodata.len() {
+            return Err(VmError::UnexpectedEnd);
+        }
+        Ok(&rodata[offset..offset + len])
     }
 }
 
@@ -1223,29 +1248,27 @@ fn skip_operands(code: &[u8], mut pc: usize, op: Opcode) -> Result<usize, VmErro
             }
             pc += 4;
         }
-        StringConst | SymbolicConst | EvalName => {
-            let len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            if pc + len > code.len() {
-                return Err(VmError::UnexpectedEnd);
-            }
-            pc += len;
+        // Offset/len pairs (reference into rodata)
+        StringConst | SymbolicConst | EvalName | BlobConst => {
+            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // offset
+            read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // len
         }
         MakeProgram => {
             // param_count
             read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-            let str_count = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-            for _ in 0..str_count {
-                let len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
-                if pc + len > code.len() {
-                    return Err(VmError::UnexpectedEnd);
-                }
-                pc += len;
+            // rodata_len + rodata_bytes
+            let rodata_len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
+            if pc + rodata_len > code.len() {
+                return Err(VmError::UnexpectedEnd);
             }
+            pc += rodata_len;
+            // code_len + code_bytes
             let code_len = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
             if pc + code_len > code.len() {
                 return Err(VmError::UnexpectedEnd);
             }
             pc += code_len;
+            // span_count + spans
             let span_count = read_u16(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
             for _ in 0..span_count {
                 read_u16(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
@@ -1256,8 +1279,9 @@ fn skip_operands(code: &[u8], mut pc: usize, op: Opcode) -> Result<usize, VmErro
         PushLocalScope => {
             let count = read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)? as usize;
             for _ in 0..count {
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
-                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?;
+                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // offset
+                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // len
+                read_leb128_u32(code, &mut pc).ok_or(VmError::UnexpectedEnd)?; // local_idx
             }
         }
         _ => {}
@@ -1265,14 +1289,9 @@ fn skip_operands(code: &[u8], mut pc: usize, op: Opcode) -> Result<usize, VmErro
     Ok(pc)
 }
 
-/// Re-exported library modules for tests.
-pub mod libs {
-    pub use crate::libs::{ARITH_LIB, PROG_LIB, STACK_LIB, arith, prog, stack};
-}
-
 #[cfg(test)]
 mod tests {
-    use bytecode::{write_leb128_i64, write_u16};
+    use bytecode::write_leb128_i64;
 
     use super::*;
 
@@ -1285,7 +1304,7 @@ mod tests {
     #[test]
     fn push_integer() {
         let mut vm = Vm::new();
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let code = bytecode(|c| {
             c.push(Opcode::I64Const.as_byte());
             write_leb128_i64(42, c);
@@ -1294,20 +1313,5 @@ mod tests {
         assert_eq!(vm.stack.top().unwrap(), &Value::integer(42));
     }
 
-    #[test]
-    fn add_two() {
-        let mut vm = Vm::new();
-        let reg = Registry::with_core();
-        let code = bytecode(|c| {
-            c.push(Opcode::I64Const.as_byte());
-            write_leb128_i64(1, c);
-            c.push(Opcode::I64Const.as_byte());
-            write_leb128_i64(2, c);
-            c.push(Opcode::CallLib.as_byte());
-            write_u16(libs::ARITH_LIB, c);
-            write_u16(libs::arith::cmd::ADD, c);
-        });
-        vm.execute(&code, &reg, &[]).unwrap();
-        assert_eq!(vm.stack.top().unwrap(), &Value::integer(3));
-    }
+    // Note: Tests requiring stdlib (add_two, etc.) are in rpl-stdlib
 }

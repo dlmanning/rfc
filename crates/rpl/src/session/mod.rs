@@ -102,10 +102,21 @@ impl Session {
     }
 
     /// Create a new session with custom configuration.
+    ///
+    /// The registry starts empty. To use standard library commands, register
+    /// them using `rpl_stdlib`:
+    ///
+    /// ```ignore
+    /// use rpl::Session;
+    ///
+    /// let mut session = Session::new();
+    /// rpl_stdlib::register_interfaces(session.registry_mut());
+    /// rpl_stdlib::register_impls(session.registry_mut());
+    /// ```
     pub fn with_config(config: SessionConfig) -> Self {
         Self {
             sources: SourceCache::new(),
-            registry: Registry::with_core(),
+            registry: Registry::new(),
             interner: Interner::new(),
             analysis_cache: HashMap::new(),
             vm: Vm::new(),
@@ -190,7 +201,7 @@ impl Session {
         // Execute
         self.vm.reset();
         self.vm
-            .execute(&program.code, &self.registry, &program.string_table)
+            .execute(&program.code, &self.registry, &program.rodata)
             .map_err(|e| EvalError::Runtime(e.to_string()))?;
 
         // Collect results
@@ -211,7 +222,7 @@ impl Session {
 
         // Execute without reset
         self.vm
-            .execute(&program.code, &self.registry, &program.string_table)
+            .execute(&program.code, &self.registry, &program.rodata)
             .map_err(|e| EvalError::Runtime(e.to_string()))?;
 
         Ok(())
@@ -424,40 +435,31 @@ mod tests {
     #[test]
     fn session_set_source() {
         let mut session = Session::new();
-        let id = session.set_source("test.rpl", "1 2 +");
+        let id = session.set_source("test.rpl", "1 2 3");
 
         let source = session.get_source(id).unwrap();
-        assert_eq!(source.source(), "1 2 +");
+        assert_eq!(source.source(), "1 2 3");
     }
 
     #[test]
     fn session_set_source_updates_existing() {
         let mut session = Session::new();
-        let id1 = session.set_source("test.rpl", "1 2 +");
-        let id2 = session.set_source("test.rpl", "3 4 *");
+        let id1 = session.set_source("test.rpl", "1 2 3");
+        let id2 = session.set_source("test.rpl", "4 5 6");
 
         assert_eq!(id1, id2);
-        assert_eq!(session.get_source(id1).unwrap().source(), "3 4 *");
+        assert_eq!(session.get_source(id1).unwrap().source(), "4 5 6");
     }
 
     #[test]
-    fn session_eval_arithmetic() {
+    fn session_eval_literals() {
         let mut session = Session::new();
 
-        let result = session.eval("3 4 +").unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(7));
-    }
-
-    #[test]
-    fn session_eval_multiple_values() {
-        let mut session = Session::new();
-
-        let result = session.eval("1 2 3").unwrap();
+        let result = session.eval("3 4 5").unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], Value::integer(1));
-        assert_eq!(result[1], Value::integer(2));
-        assert_eq!(result[2], Value::integer(3));
+        assert_eq!(result[0], Value::integer(3));
+        assert_eq!(result[1], Value::integer(4));
+        assert_eq!(result[2], Value::integer(5));
     }
 
     #[test]
@@ -473,18 +475,19 @@ mod tests {
     }
 
     #[test]
-    fn session_analyze() {
+    fn session_analyze_literals() {
         let mut session = Session::new();
-        let id = session.set_source("test.rpl", "42 \"x\" STO");
+        let id = session.set_source("test.rpl", "42 \"hello\"");
 
         let analysis = session.analyze(id).unwrap();
-        assert_eq!(analysis.symbols.definition_count(), 1);
+        // Literals don't create symbol definitions
+        assert_eq!(analysis.symbols.definition_count(), 0);
     }
 
     #[test]
-    fn session_diagnostics_empty_for_valid_code() {
+    fn session_diagnostics_empty_for_literals() {
         let mut session = Session::new();
-        let id = session.set_source("test.rpl", "1 2 +");
+        let id = session.set_source("test.rpl", "1 2 3");
 
         let diags = session.diagnostics(id);
         let errors: Vec<_> = diags.iter()
@@ -493,71 +496,6 @@ mod tests {
         assert!(errors.is_empty());
     }
 
-    #[test]
-    fn session_eval_iferr_no_error() {
-        // When body succeeds, error handler is skipped
-        let mut session = Session::new();
-        let result = session.eval("IFERR 42 THEN 99 END").unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(42));
-    }
-
-    #[test]
-    fn session_eval_iferr_else_no_error() {
-        // When body succeeds, no-error-body runs, error handler is skipped
-        let mut session = Session::new();
-        let result = session.eval("IFERR 10 THEN 99 ELSE 20 END").unwrap();
-        // Result should be 10 from body, then 20 from no-error-body
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], Value::integer(10));
-        assert_eq!(result[1], Value::integer(20));
-    }
-
-    #[test]
-    fn session_eval_iferr_catches_doerr() {
-        // DOERR throws an error, IFERR catches it
-        let mut session = Session::new();
-        let result = session.eval("IFERR 42 DOERR THEN 99 END").unwrap();
-        // Error handler runs, pushes 99
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(99));
-    }
-
-    #[test]
-    fn session_eval_iferr_else_catches_doerr() {
-        // DOERR throws, error handler runs, no-error-body is skipped
-        let mut session = Session::new();
-        let result = session.eval("IFERR 42 DOERR THEN 99 ELSE 88 END").unwrap();
-        // Only error handler runs
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(99));
-    }
-
-    #[test]
-    fn session_eval_errn_gets_error_code() {
-        // ERRN should return the error code after IFERR catches it
-        let mut session = Session::new();
-        let result = session.eval("IFERR 123 DOERR THEN ERRN END").unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(123));
-    }
-
-    #[test]
-    fn session_eval_errn_zero_when_no_error() {
-        // ERRN returns 0 when there's no error
-        let mut session = Session::new();
-        let result = session.eval("ERRN").unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::integer(0));
-    }
-
-    #[test]
-    fn session_eval_errm_gets_error_message() {
-        // ERRM should return the error message after IFERR catches it
-        let mut session = Session::new();
-        let result = session.eval("IFERR 42 DOERR THEN ERRM END").unwrap();
-        assert_eq!(result.len(), 1);
-        // Message format is "Error #<code>"
-        assert_eq!(result[0].as_string(), Some("Error #42"));
-    }
+    // Note: Tests for IFERR, DOERR, ERRN, ERRM and other stdlib commands
+    // are in the integration test suite (tests/pipeline/) which uses rpl-stdlib.
 }

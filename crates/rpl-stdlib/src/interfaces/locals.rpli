@@ -1,0 +1,7 @@
+library Locals 32
+
+-- Local binding with Unicode delimiter
+0: -> (→) ( $name:Sym )* « body:Prog » ->
+
+-- Local binding with ASCII delimiter (same construct, different token)
+0: -> (->) ( $name:Sym )* << body:Prog >> ->

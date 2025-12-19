@@ -146,7 +146,7 @@ fn var_vars_returns_list() {
 fn var_clvar() {
     // CLVAR: Clears all variables
     // Store two vars, clear, try to RCL (should error)
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("10 \"a\" STO 20 \"b\" STO").unwrap();
     session.eval("CLVAR").unwrap();
     // After CLVAR, RCL should fail
@@ -173,7 +173,7 @@ fn var_rename() {
 #[test]
 fn var_rename_old_gone() {
     // After RENAME, old name should not exist
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session
         .eval("42 \"old\" STO \"old\" \"new\" RENAME")
         .unwrap();
@@ -192,7 +192,7 @@ fn var_rename_old_gone() {
 #[test]
 fn dir_crdir_basic() {
     // CRDIR creates a subdirectory
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("\"subdir\" CRDIR").unwrap();
     // No error means success
 }
@@ -200,7 +200,7 @@ fn dir_crdir_basic() {
 #[test]
 fn dir_crdir_duplicate_fails() {
     // Creating a directory that already exists should fail
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("\"subdir\" CRDIR").unwrap();
     assert!(
         session.eval("\"subdir\" CRDIR").is_err(),
@@ -211,7 +211,7 @@ fn dir_crdir_duplicate_fails() {
 #[test]
 fn dir_path_at_home() {
     // PATH at root should return empty list
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let result = session.eval("PATH").unwrap();
     assert_eq!(result.len(), 1, "PATH should push one value");
     // The value should be an empty list
@@ -224,7 +224,7 @@ fn dir_path_at_home() {
 #[test]
 fn dir_home_noop_at_root() {
     // HOME at root is a no-op, PATH should still be empty
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let result = session.eval("HOME PATH").unwrap();
     assert_eq!(result.len(), 1);
     match &result[0] {
@@ -236,7 +236,7 @@ fn dir_home_noop_at_root() {
 #[test]
 fn dir_updir_at_root_noop() {
     // UPDIR at root is a no-op (not an error), PATH should still be empty
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let result = session.eval("UPDIR PATH").unwrap();
     assert_eq!(result.len(), 1);
     match &result[0] {
@@ -248,7 +248,7 @@ fn dir_updir_at_root_noop() {
 #[test]
 fn dir_pgdir_basic() {
     // PGDIR removes an empty directory
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("\"subdir\" CRDIR").unwrap();
     session.eval("\"subdir\" PGDIR").unwrap();
     // Recreating should work now
@@ -258,7 +258,7 @@ fn dir_pgdir_basic() {
 #[test]
 fn dir_pgdir_nonexistent_fails() {
     // PGDIR on nonexistent directory should fail
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     assert!(
         session.eval("\"nonexistent\" PGDIR").is_err(),
         "PGDIR on nonexistent should fail"
@@ -268,7 +268,7 @@ fn dir_pgdir_nonexistent_fails() {
 #[test]
 fn dir_vars_isolation() {
     // Variables in different directories are isolated
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Store in root
     session.eval("42 \"x\" STO").unwrap();
@@ -289,7 +289,7 @@ fn dir_vars_isolation() {
 #[ignore = "PACKDIR not supported"]
 fn packdir_creates_object() {
     // PACKDIR should create a PackDir object
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("42 \"x\" STO").unwrap();
     let values = session.eval("PACKDIR").unwrap();
     assert_eq!(values.len(), 1);
@@ -301,7 +301,7 @@ fn packdir_creates_object() {
 fn packdir_roundtrip_single_var() {
     // Pack directory, clear, unpack, verify value restored
     // All in one eval to preserve stack between operations
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("42 \"x\" STO PACKDIR CLVAR UNPACKDIR").unwrap();
     let values = session.eval("\"x\" RCL").unwrap();
     assert_eq!(values.len(), 1);
@@ -315,7 +315,7 @@ fn packdir_roundtrip_single_var() {
 #[test]
 fn packdir_roundtrip_multiple_vars() {
     // Pack multiple variables of different types
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("42 \"num\" STO \"hello\" \"msg\" STO { 1 2 3 } \"lst\" STO").unwrap();
     session.eval("PACKDIR CLVAR UNPACKDIR").unwrap();
 
@@ -340,7 +340,7 @@ fn packdir_roundtrip_multiple_vars() {
 #[test]
 fn packdir_unpack_into_named_subdir() {
     // Unpack into a new named subdirectory
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     // Store, pack, clear in one eval to preserve stack
     session.eval("42 \"x\" STO PACKDIR CLVAR \"backup\" UNPACKDIR").unwrap();
 
@@ -358,7 +358,7 @@ fn packdir_unpack_into_named_subdir() {
 #[test]
 fn packdir_packinfo_returns_names() {
     // PACKINFO should return list of entry names
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("CLVAR").unwrap();
     session.eval("1 \"alpha\" STO").unwrap();
     session.eval("2 \"beta\" STO").unwrap();
@@ -379,7 +379,7 @@ fn packdir_packinfo_returns_names() {
 #[test]
 fn packdir_unpack_conflict_error() {
     // UNPACKDIR should error if a name already exists
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("42 \"x\" STO").unwrap();
     session.eval("PACKDIR").unwrap();
     // Don't clear - x still exists
@@ -392,7 +392,7 @@ fn packdir_pack_named_subdir() {
     // Pack a specific subdirectory by name
     // Note: We can only test packing an empty subdirectory since there's
     // no RPL command to enter a directory programmatically
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("\"mydir\" CRDIR").unwrap();
 
     // Pack "mydir" from parent and get PACKINFO in one eval
@@ -411,7 +411,7 @@ fn packdir_with_subdirectories() {
     // Pack directory that contains subdirectories
     // Note: We can only test with empty subdirectories since there's no
     // RPL command to enter a directory programmatically
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval("CLVAR 1 \"rootvar\" STO \"sub\" CRDIR").unwrap();
 
     // Pack root (includes empty subdirectory), clear, then unpack

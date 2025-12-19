@@ -1,0 +1,26 @@
+library Arithmetic 64
+
+-- Binary arithmetic (type-dependent result)
+0:  a b -> (+) -> Numeric a b
+1:  a b -> (-) -> Numeric a b
+2:  a b -> (*) -> Numeric a b
+3:  a b -> (/) -> Numeric a b
+4:    a -> NEG -> a
+5:    a -> INV -> Real
+6:  a b -> MOD -> Numeric a b
+7:    a -> ABS -> a
+
+-- Comparisons (return 0 or 1)
+8:  a b -> (==), SAME -> Int
+9:  a b -> (!=), (<>) -> Int
+10: a b -> (<)        -> Int
+11: a b -> (<=)       -> Int
+12: a b -> (>)        -> Int
+13: a b -> (>=)       -> Int
+
+-- Additional arithmetic
+14: a b -> (^)  -> Real
+15: a b -> MIN  -> Numeric a b
+16: a b -> MAX  -> Numeric a b
+17:   a -> SIGN -> Int
+18:   a -> SQ   -> a

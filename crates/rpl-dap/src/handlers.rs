@@ -99,6 +99,8 @@ pub fn handle_launch<R: Read, W: Write>(
 
     // Compile the program
     let mut rpl_session = Session::new();
+    rpl_stdlib::register_interfaces(rpl_session.registry_mut());
+    rpl_stdlib::register_impls(rpl_session.registry_mut());
     let source_id = rpl_session.set_source(
         path.file_name()
             .and_then(|s| s.to_str())

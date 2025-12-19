@@ -1,0 +1,10 @@
+[package]
+name = "rpl-stdlib"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rpl = { workspace = true }

@@ -7,7 +7,7 @@ use rpl::Session;
 
 /// Helper to get analysis results for code
 fn analyze(code: &str) -> rpl::analysis::AnalysisResult {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", code);
     session.analyze(source_id).unwrap().clone()
 }
@@ -141,7 +141,7 @@ fn multiple_locals_in_same_binding() {
 
 #[test]
 fn semantic_tokens_for_locals() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", "-> a b << a b + >>");
 
     // Verify analysis works
@@ -206,7 +206,7 @@ fn semantic_tokens_quicksort_fixture() {
     let code = fs::read_to_string("tests/programs/quicksort.rpl")
         .expect("Failed to read quicksort.rpl fixture");
 
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("quicksort.rpl", &code);
 
     // Get the analysis through session
@@ -351,7 +351,7 @@ fn semantic_tokens_quicksort_fixture() {
 
 #[test]
 fn hover_on_variable_definition() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", "42 \"x\" STO");
 
     // Position on "x" (the name being defined) - offset 4 is inside the string
@@ -369,7 +369,7 @@ fn hover_on_variable_definition() {
 
 #[test]
 fn hover_on_variable_reference() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", "42 \"x\" STO x");
 
     // Position on the reference to x at the end (offset 11)
@@ -383,7 +383,7 @@ fn hover_on_variable_reference() {
 
 #[test]
 fn hover_shows_inferred_type() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", "42 \"x\" STO");
 
     // Analyze to get type info
@@ -405,7 +405,7 @@ fn hover_shows_inferred_type() {
 
 #[test]
 fn hover_shows_function_arity() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     let source_id = session.set_source("test.rpl", "<< -> a b << a b + >> >> \"add\" STO");
 
     let _ = session.analyze(source_id);
@@ -508,7 +508,7 @@ fn local_parameters_have_mixed_types() {
 
 #[test]
 fn hover_shows_local_parameter_type() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     // Use << >> instead of → for more reliable parsing
     let source_id = session.set_source("test.rpl", "1 2 -> a b << a b + >>");
 

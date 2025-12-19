@@ -12,7 +12,6 @@ impl TypeId {
     pub const COMPLEX: TypeId = TypeId(30);
     pub const SYMBOLIC: TypeId = TypeId(56);
     pub const LIST: TypeId = TypeId(62);
-    pub const PLOT: TypeId = TypeId(88);
     pub const RENDER_STATUS: TypeId = TypeId(89);
     pub const LIBRARY: TypeId = TypeId(102);
     pub const LIBPTR: TypeId = TypeId(103);
@@ -43,7 +42,6 @@ impl TypeId {
             Self::COMPLEX => Some("Complex"),
             Self::SYMBOLIC => Some("Symbolic"),
             Self::LIST => Some("List"),
-            Self::PLOT => Some("Plot"),
             Self::RENDER_STATUS => Some("RenderStatus"),
             Self::LIBRARY => Some("Library"),
             Self::LIBPTR => Some("LibPtr"),

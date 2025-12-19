@@ -435,6 +435,11 @@ impl<'a> ParseContext<'a> {
         self.tokens.get(self.position)
     }
 
+    /// Peek at a token at an offset from current position.
+    pub fn peek_at(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.position + offset)
+    }
+
     /// Advance to the next token.
     pub fn advance(&mut self) -> Option<Token> {
         if self.position < self.tokens.len() {
@@ -627,7 +632,7 @@ fn parse_one(ctx: &mut ParseContext) -> Result<Node, ParseError> {
 
     // Check for token claims (library-defined syntax like IF, FOR, etc.)
     if let Some(claim) = ctx.registry.find_claim(&token.text, ClaimContext::Any)
-        && let Some(library) = ctx.registry.get(claim.lib_id)
+        && let Some(library) = ctx.registry.get_interface(claim.lib_id)
     {
         return library.parse(&token.text, ctx);
     }
@@ -903,7 +908,7 @@ mod tests {
 
     #[test]
     fn parse_integers() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("1 2 42", &reg, &mut interner).unwrap();
 
@@ -922,24 +927,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_command() {
-        use crate::libs::{ARITH_LIB, arith};
-        let reg = Registry::with_core();
-        let mut interner = Interner::new();
-        let nodes = parse("1 2 +", &reg, &mut interner).unwrap();
-
-        assert_eq!(nodes.len(), 3);
-        match &nodes[2].kind {
-            NodeKind::Atom(AtomKind::Command(lib, cmd))
-                if *lib == ARITH_LIB && *cmd == arith::cmd::ADD => {}
-            _ => panic!("expected + command"),
-        }
-    }
+    // Note: parse_command test moved to rpl-stdlib (requires stdlib registration)
 
     #[test]
     fn parse_hex() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("0xFF 0x10", &reg, &mut interner).unwrap();
 
@@ -956,7 +948,7 @@ mod tests {
 
     #[test]
     fn parse_hp_binary_hex() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("#FF #10 #FFh", &reg, &mut interner).unwrap();
 
@@ -977,7 +969,7 @@ mod tests {
 
     #[test]
     fn parse_hp_binary_formats() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         // Binary, octal, decimal
         let nodes = parse("#1010b #377o #255d", &reg, &mut interner).unwrap();
@@ -999,7 +991,7 @@ mod tests {
 
     #[test]
     fn parse_hp_single_hex_digit() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         // Single hex digit A = 10
         let nodes = parse("#A", &reg, &mut interner).unwrap();
@@ -1012,7 +1004,7 @@ mod tests {
 
     #[test]
     fn parse_hp_double_hex_ab() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("#AB", &reg, &mut interner).unwrap();
         assert_eq!(nodes.len(), 1);
@@ -1024,7 +1016,7 @@ mod tests {
 
     #[test]
     fn parse_program_chevrons() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< 1 2 + >>", &reg, &mut interner).unwrap();
 
@@ -1040,7 +1032,7 @@ mod tests {
 
     #[test]
     fn parse_program_guillemets() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("« 1 + »", &reg, &mut interner).unwrap();
 
@@ -1056,7 +1048,7 @@ mod tests {
 
     #[test]
     fn parse_list() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ 1 2 3 }", &reg, &mut interner).unwrap();
 
@@ -1072,7 +1064,7 @@ mod tests {
 
     #[test]
     fn parse_nested_lists() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ { 1 } { 2 3 } }", &reg, &mut interner).unwrap();
 
@@ -1087,7 +1079,7 @@ mod tests {
 
     #[test]
     fn parse_program_with_list() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< { 1 2 } >>", &reg, &mut interner).unwrap();
 
@@ -1106,7 +1098,7 @@ mod tests {
 
     #[test]
     fn parse_span_tracking() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ 1 2 }", &reg, &mut interner).unwrap();
 
@@ -1117,7 +1109,7 @@ mod tests {
 
     #[test]
     fn parse_unterminated_program() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let result = parse("<< 1 2", &reg, &mut interner);
 
@@ -1127,7 +1119,7 @@ mod tests {
 
     #[test]
     fn parse_unterminated_list() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let result = parse("{ 1 2", &reg, &mut interner);
 
@@ -1137,7 +1129,7 @@ mod tests {
 
     #[test]
     fn parse_empty_program() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("<< >>", &reg, &mut interner).unwrap();
 
@@ -1152,7 +1144,7 @@ mod tests {
 
     #[test]
     fn parse_list_with_program() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ << 42 >> }", &reg, &mut interner).unwrap();
 
@@ -1173,7 +1165,7 @@ mod tests {
 
     #[test]
     fn parse_empty_list() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let nodes = parse("{ }", &reg, &mut interner).unwrap();
 
@@ -1285,7 +1277,7 @@ mod tests {
 
     #[test]
     fn parse_with_source_map_returns_comments() {
-        let reg = Registry::with_core();
+        let reg = Registry::new();
         let mut interner = Interner::new();
         let (nodes, source_map) =
             parse_with_source_map("1 @ comment\n2 +", &reg, &mut interner).unwrap();

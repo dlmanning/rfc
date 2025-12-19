@@ -67,9 +67,9 @@ pub struct CompiledProgram {
     /// Bytecode offsets where new spans start.
     /// Parallel array with `spans`.
     pub span_offsets: Vec<usize>,
-    /// String table (data section) for local variable names, etc.
-    /// Referenced by index from bytecode.
-    pub string_table: Vec<String>,
+    /// Read-only data section for strings, blobs, and other constant data.
+    /// Referenced by offset/length from bytecode.
+    pub rodata: Vec<u8>,
     /// Number of parameters (0 for regular programs, N for functions).
     pub param_count: u16,
 }
@@ -81,8 +81,26 @@ impl CompiledProgram {
             code: Vec::new(),
             spans: Vec::new(),
             span_offsets: Vec::new(),
-            string_table: Vec::new(),
+            rodata: Vec::new(),
             param_count: 0,
+        }
+    }
+
+    /// Get a string from rodata at the given offset and length.
+    pub fn get_string(&self, offset: usize, len: usize) -> Option<&str> {
+        if offset + len <= self.rodata.len() {
+            std::str::from_utf8(&self.rodata[offset..offset + len]).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Get bytes from rodata at the given offset and length.
+    pub fn get_bytes(&self, offset: usize, len: usize) -> Option<&[u8]> {
+        if offset + len <= self.rodata.len() {
+            Some(&self.rodata[offset..offset + len])
+        } else {
+            None
         }
     }
 
@@ -158,8 +176,8 @@ pub struct BytecodeBuffer {
     span_offsets: Vec<usize>,
     /// Current span being emitted.
     current_span: Option<Span>,
-    /// String table (data section) for local variable names.
-    string_table: Vec<String>,
+    /// Read-only data section for strings, blobs, and other constant data.
+    rodata: Vec<u8>,
     /// Number of parameters (0 for regular programs, N for functions).
     param_count: u16,
 }
@@ -185,7 +203,7 @@ impl BytecodeBuffer {
             spans: Vec::with_capacity(code_capacity / 8),
             span_offsets: Vec::with_capacity(code_capacity / 8),
             current_span: None,
-            string_table: Vec::new(),
+            rodata: Vec::new(),
             param_count: 0,
         }
     }
@@ -195,16 +213,20 @@ impl BytecodeBuffer {
         self.param_count = count;
     }
 
-    /// Intern a string in the string table, returning its index.
-    /// If the string already exists, returns the existing index.
-    pub fn intern_string(&mut self, s: &str) -> u32 {
-        if let Some(idx) = self.string_table.iter().position(|existing| existing == s) {
-            idx as u32
-        } else {
-            let idx = self.string_table.len() as u32;
-            self.string_table.push(s.to_string());
-            idx
-        }
+    /// Add a string to rodata and return its (offset, length).
+    /// Strings are stored as raw UTF-8 bytes without length prefix.
+    pub fn add_string(&mut self, s: &str) -> (u32, u32) {
+        let offset = self.rodata.len() as u32;
+        let bytes = s.as_bytes();
+        self.rodata.extend_from_slice(bytes);
+        (offset, bytes.len() as u32)
+    }
+
+    /// Add bytes to rodata and return (offset, length).
+    pub fn add_bytes(&mut self, data: &[u8]) -> (u32, u32) {
+        let offset = self.rodata.len() as u32;
+        self.rodata.extend_from_slice(data);
+        (offset, data.len() as u32)
     }
 
     /// Set the current span for subsequent emissions.
@@ -274,11 +296,21 @@ impl BytecodeBuffer {
     }
 
     /// Emit a string constant.
+    /// Adds the string to rodata and emits offset/length reference.
     pub fn emit_string_const(&mut self, s: &str) {
+        let (offset, len) = self.add_string(s);
         self.emit_opcode(Opcode::StringConst);
-        let bytes = s.as_bytes();
-        write_leb128_u32(bytes.len() as u32, &mut self.code);
-        self.code.extend_from_slice(bytes);
+        write_leb128_u32(offset, &mut self.code);
+        write_leb128_u32(len, &mut self.code);
+    }
+
+    /// Emit a blob constant.
+    /// Adds the bytes to rodata and emits offset/length reference.
+    pub fn emit_blob_const(&mut self, data: &[u8]) {
+        let (offset, len) = self.add_bytes(data);
+        self.emit_opcode(Opcode::BlobConst);
+        write_leb128_u32(offset, &mut self.code);
+        write_leb128_u32(len, &mut self.code);
     }
 
     /// Emit make_list.
@@ -287,20 +319,17 @@ impl BytecodeBuffer {
         write_leb128_u32(count, &mut self.code);
     }
 
-    /// Emit make_program with embedded string table and source map.
-    /// Format: MakeProgram <param_count:leb128> <string_count> [<str_len> <str_bytes>]* <code_len> <code_bytes>
+    /// Emit make_program with embedded rodata and source map.
+    /// Format: MakeProgram <param_count:leb128> <rodata_len> <rodata_bytes>
+    ///         <code_len> <code_bytes>
     ///         <span_count> [<bytecode_offset:u16> <source_start:u32> <source_end:u32>]*
     pub fn emit_make_program(&mut self, program: &CompiledProgram) {
         self.emit_opcode(Opcode::MakeProgram);
         // Write param count (0 for regular programs, N for functions)
         write_leb128_u32(program.param_count as u32, &mut self.code);
-        // Write string table
-        write_leb128_u32(program.string_table.len() as u32, &mut self.code);
-        for s in &program.string_table {
-            let bytes = s.as_bytes();
-            write_leb128_u32(bytes.len() as u32, &mut self.code);
-            self.code.extend_from_slice(bytes);
-        }
+        // Write rodata section
+        write_leb128_u32(program.rodata.len() as u32, &mut self.code);
+        self.code.extend_from_slice(&program.rodata);
         // Write code
         write_leb128_u32(program.code.len() as u32, &mut self.code);
         self.code.extend_from_slice(&program.code);
@@ -317,29 +346,32 @@ impl BytecodeBuffer {
     }
 
     /// Emit symbolic_const.
+    /// Adds the expression string to rodata and emits offset/length reference.
     pub fn emit_symbolic_const(&mut self, expr_str: &str) {
+        let (offset, len) = self.add_string(expr_str);
         self.emit_opcode(Opcode::SymbolicConst);
-        let bytes = expr_str.as_bytes();
-        write_leb128_u32(bytes.len() as u32, &mut self.code);
-        self.code.extend_from_slice(bytes);
+        write_leb128_u32(offset, &mut self.code);
+        write_leb128_u32(len, &mut self.code);
     }
 
     /// Emit eval_name (runtime variable lookup).
+    /// Adds the name to rodata and emits offset/length reference.
     pub fn emit_eval_name(&mut self, name: &str) {
+        let (offset, len) = self.add_string(name);
         self.emit_opcode(Opcode::EvalName);
-        let bytes = name.as_bytes();
-        write_leb128_u32(bytes.len() as u32, &mut self.code);
-        self.code.extend_from_slice(bytes);
+        write_leb128_u32(offset, &mut self.code);
+        write_leb128_u32(len, &mut self.code);
     }
 
     /// Emit push_local_scope (for symbolic eval with locals).
-    /// Names are stored in the string table and referenced by index.
+    /// Names are stored in rodata and referenced by offset/length.
     pub fn emit_push_local_scope(&mut self, names_and_indices: &[(String, u32)]) {
         self.emit_opcode(Opcode::PushLocalScope);
         write_leb128_u32(names_and_indices.len() as u32, &mut self.code);
         for (name, local_idx) in names_and_indices {
-            let string_idx = self.intern_string(name);
-            write_leb128_u32(string_idx, &mut self.code);
+            let (offset, len) = self.add_string(name);
+            write_leb128_u32(offset, &mut self.code);
+            write_leb128_u32(len, &mut self.code);
             write_leb128_u32(*local_idx, &mut self.code);
         }
     }
@@ -461,7 +493,7 @@ impl BytecodeBuffer {
             code: self.code,
             spans: self.spans,
             span_offsets: self.span_offsets,
-            string_table: self.string_table,
+            rodata: self.rodata,
             param_count: self.param_count,
         }
     }
@@ -801,7 +833,7 @@ impl<'a> LowerContext<'a> {
 
         match &node.kind {
             NodeKind::Atom(atom) => self.lower_atom(atom),
-            NodeKind::Composite(kind, branches) => self.lower_composite(*kind, branches, node.span),
+            NodeKind::Composite(kind, branches) => self.lower_composite(kind, branches, node.span),
         }
     }
 
@@ -855,7 +887,7 @@ impl<'a> LowerContext<'a> {
     /// The library emits bytecode, then we query the effect from the
     /// analyzer (single source of truth) and apply it to the type stack.
     pub fn lower_command(&mut self, lib: u16, cmd: u16) -> Result<(), LowerError> {
-        if let Some(library) = self.registry.get(lib) {
+        if let Some(library) = self.registry.get_impl(lib) {
             // Emit bytecode
             library.lower_command(cmd, crate::core::Span::default(), self)?;
             // Query effect from analyzer - single source of truth
@@ -873,7 +905,7 @@ impl<'a> LowerContext<'a> {
     /// Lower a composite structure.
     fn lower_composite(
         &mut self,
-        kind: CompositeKind,
+        kind: &CompositeKind,
         branches: &[Vec<Node>],
         span: crate::core::Span,
     ) -> Result<(), LowerError> {
@@ -907,10 +939,10 @@ impl<'a> LowerContext<'a> {
                 }
                 self.types.push(CType::list());
             }
-            CompositeKind::Extended(lib, id) => {
+            CompositeKind::Extended(lib, construct_id) => {
                 // Dispatch to library lowerer
-                if let Some(library) = self.registry.get(lib) {
-                    library.lower_composite(id, branches, span, self)?;
+                if let Some(library) = self.registry.get_impl(*lib) {
+                    library.lower_composite(*construct_id, branches, span, self)?;
                 } else {
                     return Err(LowerError {
                         message: format!("no library registered with id {}", lib),
@@ -959,20 +991,68 @@ pub fn lower_to_program(
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{Pos, Span};
+    use crate::core::{Pos, Span, TypeId};
+    use crate::ir::LibId;
 
     use super::*;
     use crate::{
         ir::Node,
-        libs::arith::{self, ARITH_LIB},
+        libs::{ARITH_LIB, arith_cmd, StackEffect, binary_numeric_effect},
     };
 
     fn dummy_span() -> Span {
         Span::new(Pos::new(0), Pos::new(1))
     }
 
+    use crate::vm::bytecode::Opcode;
+
+    /// Minimal ArithInterface for testing type-directed lowering.
+    struct MockArithInterface;
+
+    impl crate::libs::LibraryInterface for MockArithInterface {
+        fn id(&self) -> LibId { ARITH_LIB }
+        fn name(&self) -> &'static str { "Arith" }
+
+        fn command_effect(&self, cmd: u16, types: &crate::types::CStack) -> StackEffect {
+            match cmd {
+                arith_cmd::ADD | arith_cmd::SUB | arith_cmd::MUL | arith_cmd::DIV => {
+                    binary_numeric_effect(types)
+                }
+                arith_cmd::GT => StackEffect::fixed(2, &[Some(TypeId::BINT)]),
+                _ => StackEffect::Dynamic,
+            }
+        }
+    }
+
+    /// Minimal ArithImpl for testing type-directed lowering.
+    struct MockArithImpl;
+
+    impl crate::libs::LibraryImpl for MockArithImpl {
+        fn id(&self) -> LibId { ARITH_LIB }
+
+        fn lower_command(
+            &self,
+            cmd: u16,
+            _span: crate::core::Span,
+            ctx: &mut LowerContext,
+        ) -> Result<(), LowerError> {
+            match cmd {
+                arith_cmd::ADD => ctx.emit_binary_numeric(Opcode::I64Add, Opcode::F64Add, ARITH_LIB, cmd),
+                arith_cmd::SUB => ctx.emit_binary_numeric(Opcode::I64Sub, Opcode::F64Sub, ARITH_LIB, cmd),
+                arith_cmd::MUL => ctx.emit_binary_numeric(Opcode::I64Mul, Opcode::F64Mul, ARITH_LIB, cmd),
+                arith_cmd::DIV => ctx.emit_binary_numeric(Opcode::I64DivS, Opcode::F64Div, ARITH_LIB, cmd),
+                arith_cmd::GT => ctx.emit_binary_comparison(Opcode::I64GtS, Opcode::F64Gt, ARITH_LIB, cmd),
+                _ => ctx.output.emit_call_lib(ARITH_LIB, cmd),
+            }
+            Ok(())
+        }
+    }
+
     fn test_registry() -> Registry {
-        Registry::with_core()
+        let mut reg = Registry::new();
+        reg.add_interface(MockArithInterface);
+        reg.add_impl(MockArithImpl);
+        reg
     }
 
     fn test_interner() -> Interner {
@@ -1008,7 +1088,7 @@ mod tests {
         let nodes = vec![
             Node::integer(1, dummy_span()),
             Node::integer(2, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::ADD, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
         let program = lower(&nodes, &reg, &interner).unwrap();
 
@@ -1090,7 +1170,7 @@ mod tests {
         let nodes = vec![
             Node::integer(1, dummy_span()),
             Node::integer(2, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::ADD, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
         let program = lower(&nodes, &reg, &interner).unwrap();
 
@@ -1106,7 +1186,7 @@ mod tests {
         let nodes = vec![
             Node::real(1.5, dummy_span()),
             Node::real(2.5, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::ADD, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
         ];
         let program = lower(&nodes, &reg, &interner).unwrap();
 
@@ -1121,7 +1201,7 @@ mod tests {
         let nodes = vec![
             Node::integer(5, dummy_span()),
             Node::integer(3, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::GT, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::GT, dummy_span()),
         ];
         let program = lower(&nodes, &reg, &interner).unwrap();
 
@@ -1136,9 +1216,9 @@ mod tests {
         let nodes = vec![
             Node::integer(2, dummy_span()),
             Node::integer(3, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::MUL, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::MUL, dummy_span()),
             Node::integer(4, dummy_span()),
-            Node::command(ARITH_LIB, arith::cmd::MUL, dummy_span()),
+            Node::command(ARITH_LIB, arith_cmd::MUL, dummy_span()),
         ];
         let program = lower(&nodes, &reg, &interner).unwrap();
 

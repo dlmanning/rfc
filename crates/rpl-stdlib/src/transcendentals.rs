@@ -9,24 +9,33 @@
 //!
 //! Note: All trigonometric functions use radians.
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
-    core::TypeId,
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
     vm::bytecode::Opcode,
 };
 
+/// Interface declaration for the Transcendentals library.
+const INTERFACE: &str = include_str!("interfaces/transcendentals.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid transcendentals interface"))
+}
+
 /// Transcendentals library ID (matches rpl-stdlib).
 pub const TRANSCENDENTALS_LIB: LibId = 66;
 
-/// Transcendentals library command IDs.
+/// Transcendentals library command IDs (order matches INTERFACE declaration).
 pub mod cmd {
-    // Trigonometric
     pub const SIN: u16 = 0;
     pub const COS: u16 = 1;
     pub const TAN: u16 = 2;
@@ -34,90 +43,38 @@ pub mod cmd {
     pub const ACOS: u16 = 4;
     pub const ATAN: u16 = 5;
     pub const ATAN2: u16 = 6;
-
-    // Hyperbolic
-    pub const SINH: u16 = 10;
-    pub const COSH: u16 = 11;
-    pub const TANH: u16 = 12;
-    pub const ASINH: u16 = 13;
-    pub const ACOSH: u16 = 14;
-    pub const ATANH: u16 = 15;
-
-    // Logarithmic
-    pub const LN: u16 = 20;
-    pub const LOG: u16 = 21;
-    pub const LNP1: u16 = 22;
-
-    // Exponential
-    pub const EXP: u16 = 30;
-    pub const ALOG: u16 = 31;
-    pub const EXPM: u16 = 32;
-
-    // Other
-    pub const SQRT: u16 = 40;
-    pub const PI: u16 = 41;
-
-    // Rounding
-    pub const CEIL: u16 = 50;
-    pub const FLOOR: u16 = 51;
-    pub const IP: u16 = 52;  // Integer part (truncate toward zero)
-    pub const FP: u16 = 53;  // Fractional part
+    pub const SINH: u16 = 7;
+    pub const COSH: u16 = 8;
+    pub const TANH: u16 = 9;
+    pub const ASINH: u16 = 10;
+    pub const ACOSH: u16 = 11;
+    pub const ATANH: u16 = 12;
+    pub const LN: u16 = 13;
+    pub const LOG: u16 = 14;
+    pub const LNP1: u16 = 15;
+    pub const EXP: u16 = 16;
+    pub const ALOG: u16 = 17;
+    pub const EXPM: u16 = 18;
+    pub const SQRT: u16 = 19;
+    pub const PI: u16 = 20;
+    pub const CEIL: u16 = 21;
+    pub const FLOOR: u16 = 22;
+    pub const IP: u16 = 23;
+    pub const FP: u16 = 24;
 }
 
-/// Transcendentals library.
+/// Transcendentals library (implementation only).
 #[derive(Clone, Copy)]
 pub struct TranscendentalsLib;
 
-impl Library for TranscendentalsLib {
+impl LibraryImpl for TranscendentalsLib {
     fn id(&self) -> LibId {
         TRANSCENDENTALS_LIB
     }
 
-    fn name(&self) -> &'static str {
-        "Transcendentals"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // Trigonometric (1 -> 1)
-            CommandInfo::with_effect("SIN", TRANSCENDENTALS_LIB, cmd::SIN, 1, 1),
-            CommandInfo::with_effect("COS", TRANSCENDENTALS_LIB, cmd::COS, 1, 1),
-            CommandInfo::with_effect("TAN", TRANSCENDENTALS_LIB, cmd::TAN, 1, 1),
-            CommandInfo::with_effect("ASIN", TRANSCENDENTALS_LIB, cmd::ASIN, 1, 1),
-            CommandInfo::with_effect("ACOS", TRANSCENDENTALS_LIB, cmd::ACOS, 1, 1),
-            CommandInfo::with_effect("ATAN", TRANSCENDENTALS_LIB, cmd::ATAN, 1, 1),
-            CommandInfo::with_effect("ATAN2", TRANSCENDENTALS_LIB, cmd::ATAN2, 2, 1),
-            // Hyperbolic (1 -> 1)
-            CommandInfo::with_effect("SINH", TRANSCENDENTALS_LIB, cmd::SINH, 1, 1),
-            CommandInfo::with_effect("COSH", TRANSCENDENTALS_LIB, cmd::COSH, 1, 1),
-            CommandInfo::with_effect("TANH", TRANSCENDENTALS_LIB, cmd::TANH, 1, 1),
-            CommandInfo::with_effect("ASINH", TRANSCENDENTALS_LIB, cmd::ASINH, 1, 1),
-            CommandInfo::with_effect("ACOSH", TRANSCENDENTALS_LIB, cmd::ACOSH, 1, 1),
-            CommandInfo::with_effect("ATANH", TRANSCENDENTALS_LIB, cmd::ATANH, 1, 1),
-            // Logarithmic (1 -> 1)
-            CommandInfo::with_effect("LN", TRANSCENDENTALS_LIB, cmd::LN, 1, 1),
-            CommandInfo::with_effect("LOG", TRANSCENDENTALS_LIB, cmd::LOG, 1, 1),
-            CommandInfo::with_effect("LNP1", TRANSCENDENTALS_LIB, cmd::LNP1, 1, 1),
-            // Exponential (1 -> 1)
-            CommandInfo::with_effect("EXP", TRANSCENDENTALS_LIB, cmd::EXP, 1, 1),
-            CommandInfo::with_effect("ALOG", TRANSCENDENTALS_LIB, cmd::ALOG, 1, 1),
-            CommandInfo::with_effect("EXPM", TRANSCENDENTALS_LIB, cmd::EXPM, 1, 1),
-            // Other
-            CommandInfo::with_effect("SQRT", TRANSCENDENTALS_LIB, cmd::SQRT, 1, 1),
-            CommandInfo::with_effect("PI", TRANSCENDENTALS_LIB, cmd::PI, 0, 1),
-            CommandInfo::with_effect("π", TRANSCENDENTALS_LIB, cmd::PI, 0, 1),
-            // Rounding
-            CommandInfo::with_effect("CEIL", TRANSCENDENTALS_LIB, cmd::CEIL, 1, 1),
-            CommandInfo::with_effect("FLOOR", TRANSCENDENTALS_LIB, cmd::FLOOR, 1, 1),
-            CommandInfo::with_effect("IP", TRANSCENDENTALS_LIB, cmd::IP, 1, 1),
-            CommandInfo::with_effect("FP", TRANSCENDENTALS_LIB, cmd::FP, 1, 1),
-        ]
-    }
-
     fn lower_composite(
         &self,
-        _id: u16,
+        _construct_id: u16,
         _branches: &[Branch],
         _span: Span,
         _ctx: &mut LowerContext,
@@ -195,32 +152,6 @@ impl Library for TranscendentalsLib {
             }
         }
         Ok(())
-    }
-
-    fn command_effect(&self, cmd: u16, types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::PI => StackEffect::fixed(0, &[Some(TypeId::REAL)]),
-            cmd::ATAN2 => StackEffect::fixed(2, &[Some(TypeId::REAL)]),
-            // Rounding operations preserve integer type
-            cmd::CEIL | cmd::FLOOR | cmd::IP => {
-                let tos = types.top();
-                if tos.is_integer() {
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
-                } else {
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
-                }
-            }
-            cmd::FP => {
-                let tos = types.top();
-                if tos.is_integer() {
-                    StackEffect::fixed(1, &[Some(TypeId::BINT)])
-                } else {
-                    StackEffect::fixed(1, &[Some(TypeId::REAL)])
-                }
-            }
-            // All other transcendentals are unary (1 -> 1) and produce Real
-            _ => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
-        }
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -360,22 +291,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn transcendentals_lib_id() {
-        assert_eq!(TranscendentalsLib.id(), 66);
+        assert_eq!(interface().id(), 66);
     }
 
     #[test]
     fn transcendentals_lib_name() {
-        assert_eq!(TranscendentalsLib.name(), "Transcendentals");
+        assert_eq!(interface().name(), "Transcendentals");
     }
 
     #[test]
     fn commands_registered() {
-        let lib = TranscendentalsLib;
-        let commands = lib.commands();
+        let commands = interface().to_command_infos();
         let names: Vec<_> = commands.iter().map(|c| c.name).collect();
 
         // Check key commands are registered

@@ -14,6 +14,32 @@
 //! - **State commands**: `PUSH`, `POP`, `CLIP`
 
 // ============================================================================
+// Magic Header
+// ============================================================================
+
+/// Magic bytes identifying a Plot blob: "PLT" + version byte.
+pub const PLOT_MAGIC: [u8; 4] = [b'P', b'L', b'T', 0x01];
+
+/// Current plot format version.
+pub const PLOT_VERSION: u8 = 0x01;
+
+/// Check if bytes start with valid Plot magic header.
+pub fn is_plot_blob(bytes: &[u8]) -> bool {
+    bytes.starts_with(&PLOT_MAGIC)
+}
+
+/// Validate that bytes are a Plot blob, returning the command data (after header).
+pub fn validate_plot_blob(bytes: &[u8]) -> Result<&[u8], &'static str> {
+    if bytes.len() < PLOT_MAGIC.len() {
+        return Err("Blob too short to be a Plot");
+    }
+    if !bytes.starts_with(&PLOT_MAGIC) {
+        return Err("Not a Plot blob (invalid magic header)");
+    }
+    Ok(&bytes[PLOT_MAGIC.len()..])
+}
+
+// ============================================================================
 // Path Commands
 // ============================================================================
 

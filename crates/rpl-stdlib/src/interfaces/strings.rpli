@@ -1,0 +1,19 @@
+library Strings 24
+
+-- Conversion
+0: Str          -> NUM                         -> Real
+1: a            -> STR, (→STR), (->STR)        -> Str
+2: Int          -> CHR                         -> Str
+3: Str          -> ASC                         -> Int
+4: Str Int Int  -> SUB                         -> Str
+5: Str Str      -> POS                         -> Int
+6: Str          -> SREV                        -> Str
+7: Str          -> TRIM                        -> Str
+8: Str          -> RTRIM                       -> Str
+9: Str          -> STRLENCP                    -> Int
+10: Str         -> NTOKENS                     -> Int
+11: Str Int     -> NTHTOKEN                    -> Str
+12: Str Int     -> NTHTOKENPOS                 -> Int Int
+13: Str Str Str -> SREPL                       -> Str Int
+14: Str         -> (→UTF8), (->UTF8), TOUTF8   -> List
+15: List        -> (UTF8→), (UTF8->), FROMUTF8 -> Str

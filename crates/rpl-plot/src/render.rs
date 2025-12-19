@@ -114,14 +114,17 @@ pub trait PlotRenderer {
 ///
 /// # Errors
 ///
+/// Returns `DecodeError::InvalidMagic` if the blob doesn't have a valid Plot header.
 /// Returns `DecodeError::UnexpectedEnd` if the data ends mid-command.
 /// Returns `DecodeError::InvalidNumber` if number decoding fails.
 /// Returns `DecodeError::InvalidString` if string decoding fails.
 pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<(), DecodeError> {
+    // Validate and skip magic header
+    let commands = validate_plot_blob(bytes).map_err(|_| DecodeError::InvalidMagic)?;
     let mut offset = 0;
 
-    while offset < bytes.len() {
-        let cmd = bytes[offset];
+    while offset < commands.len() {
+        let cmd = commands[offset];
         offset += 1;
 
         match cmd {
@@ -129,85 +132,85 @@ pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<()
 
             CMD_MOVETO => {
                 let (x, y, consumed) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.move_to(x, y);
             }
 
             CMD_LINETO => {
                 let (x, y, consumed) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.line_to(x, y);
             }
 
             CMD_CIRCLE => {
                 let (cx, cy, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
-                let (r, c2) = decode_coord(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                let (r, c2) = decode_coord(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 renderer.circle(cx, cy, r);
             }
 
             CMD_RECT => {
                 let (x, y, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (w, h, c2) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 renderer.rect(x, y, w, h);
             }
 
             CMD_ELLIPSE => {
                 let (cx, cy, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (rx, ry, c2) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 renderer.ellipse(cx, cy, rx, ry);
             }
 
             CMD_ARC => {
                 let (cx, cy, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
-                let (r, c2) = decode_coord(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                let (r, c2) = decode_coord(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 let (start, end, c3) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c3;
                 renderer.arc(cx, cy, r, start, end);
             }
 
             CMD_BEZIER => {
                 let (x1, y1, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (x2, y2, c2) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 let (x3, y3, c3) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c3;
                 renderer.bezier(x1, y1, x2, y2, x3, y3);
             }
 
             CMD_PIXEL => {
                 let (x, y, consumed) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.pixel(x, y);
             }
 
             CMD_TEXT => {
                 let (x, y, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (text, c2) =
-                    decode_string(&bytes[offset..]).ok_or(DecodeError::InvalidString)?;
+                    decode_string(&commands[offset..]).ok_or(DecodeError::InvalidString)?;
                 offset += c2;
                 renderer.text(x, y, &text);
             }
@@ -222,14 +225,14 @@ pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<()
 
             CMD_LINEWIDTH => {
                 let (w, consumed) =
-                    decode_coord(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_coord(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.set_line_width(w);
             }
 
             CMD_COLOR => {
                 let (r, g, b, a, consumed) =
-                    decode_rgba(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_rgba(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 let color = Color::new(r, g, b, a);
                 renderer.set_stroke_color(color.to_packed());
@@ -237,7 +240,7 @@ pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<()
 
             CMD_FILLCOLOR => {
                 let (r, g, b, a, consumed) =
-                    decode_rgba(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_rgba(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 let color = Color::new(r, g, b, a);
                 renderer.set_fill_color(color.to_packed());
@@ -245,10 +248,10 @@ pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<()
 
             CMD_FONT => {
                 let (size, c1) =
-                    decode_coord(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_coord(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (name, c2) =
-                    decode_string(&bytes[offset..]).ok_or(DecodeError::InvalidString)?;
+                    decode_string(&commands[offset..]).ok_or(DecodeError::InvalidString)?;
                 offset += c2;
                 renderer.set_font(size, &name);
             }
@@ -259,34 +262,34 @@ pub fn render_plot<R: PlotRenderer>(bytes: &[u8], renderer: &mut R) -> Result<()
 
             CMD_TRANSFORM => {
                 let (a, b, c1) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c1;
                 let (c, d, c2) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c2;
                 let (e, f, c3) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += c3;
                 renderer.transform(a, b, c, d, e, f);
             }
 
             CMD_SCALE => {
                 let (sx, sy, consumed) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.scale(sx, sy);
             }
 
             CMD_ROTATE => {
                 let (angle, consumed) =
-                    decode_coord(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_coord(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.rotate(angle);
             }
 
             CMD_TRANSLATE => {
                 let (dx, dy, consumed) =
-                    decode_two_coords(&bytes[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
+                    decode_two_coords(&commands[offset..]).ok_or(DecodeError::UnexpectedEnd)?;
                 offset += consumed;
                 renderer.translate(dx, dy);
             }
@@ -423,14 +426,21 @@ mod tests {
         }
     }
 
+    /// Build a plot blob with magic header and given commands.
+    fn build_plot(commands: &[u8]) -> Vec<u8> {
+        let mut bytes = PLOT_MAGIC.to_vec();
+        bytes.extend_from_slice(commands);
+        bytes
+    }
+
     /// Build a simple plot with a circle.
     fn build_circle_plot(x: f64, y: f64, r: f64) -> Vec<u8> {
-        let mut bytes = vec![CMD_CIRCLE];
-        bytes.extend(encode_number(to_fixed_point(x) as i64));
-        bytes.extend(encode_number(to_fixed_point(y) as i64));
-        bytes.extend(encode_number(to_fixed_point(r) as i64));
-        bytes.push(CMD_END);
-        bytes
+        let mut commands = vec![CMD_CIRCLE];
+        commands.extend(encode_number(to_fixed_point(x) as i64));
+        commands.extend(encode_number(to_fixed_point(y) as i64));
+        commands.extend(encode_number(to_fixed_point(r) as i64));
+        commands.push(CMD_END);
+        build_plot(&commands)
     }
 
     #[test]
@@ -444,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_render_fill_stroke() {
-        let plot = vec![CMD_FILL, CMD_STROKE, CMD_END];
+        let plot = build_plot(&[CMD_FILL, CMD_STROKE, CMD_END]);
         let mut renderer = MockRenderer::default();
         render_plot(&plot, &mut renderer).unwrap();
         assert_eq!(renderer.calls, vec!["fill()", "stroke()"]);
@@ -452,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_render_state_commands() {
-        let plot = vec![CMD_PUSH, CMD_IDENTITY, CMD_POP, CMD_END];
+        let plot = build_plot(&[CMD_PUSH, CMD_IDENTITY, CMD_POP, CMD_END]);
         let mut renderer = MockRenderer::default();
         render_plot(&plot, &mut renderer).unwrap();
         assert_eq!(
@@ -463,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_render_empty_plot() {
-        let plot = vec![CMD_END];
+        let plot = build_plot(&[CMD_END]);
         let mut renderer = MockRenderer::default();
         render_plot(&plot, &mut renderer).unwrap();
         assert!(renderer.calls.is_empty());
@@ -472,7 +482,7 @@ mod tests {
     #[test]
     fn test_render_no_end_marker() {
         // Should handle gracefully without CMD_END
-        let plot = vec![CMD_FILL];
+        let plot = build_plot(&[CMD_FILL]);
         let mut renderer = MockRenderer::default();
         render_plot(&plot, &mut renderer).unwrap();
         assert_eq!(renderer.calls, vec!["fill()"]);
@@ -481,9 +491,26 @@ mod tests {
     #[test]
     fn test_render_truncated_data_fails() {
         // Circle command without any coordinate data
-        let plot = vec![CMD_CIRCLE];
+        let plot = build_plot(&[CMD_CIRCLE]);
         let mut renderer = MockRenderer::default();
         let result = render_plot(&plot, &mut renderer);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_render_invalid_magic_fails() {
+        // Random bytes without magic header
+        let plot = vec![0x00, 0x01, 0x02, 0x03, CMD_END];
+        let mut renderer = MockRenderer::default();
+        let result = render_plot(&plot, &mut renderer);
+        assert_eq!(result, Err(DecodeError::InvalidMagic));
+    }
+
+    #[test]
+    fn test_render_empty_blob_fails() {
+        let plot = vec![];
+        let mut renderer = MockRenderer::default();
+        let result = render_plot(&plot, &mut renderer);
+        assert_eq!(result, Err(DecodeError::InvalidMagic));
     }
 }

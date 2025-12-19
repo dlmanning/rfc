@@ -81,15 +81,29 @@ impl Notification {
     }
 }
 
-/// Run the LSP server on stdio.
+/// Run the LSP server on stdio with core libraries only.
 pub fn run() -> io::Result<()> {
+    run_with_state(ServerState::new())
+}
+
+/// Run the LSP server with a pre-configured session.
+///
+/// Use this to add application-specific libraries:
+///
+/// ```ignore
+/// use rpl::Session;
+/// use rpl_lsp::{ServerState, run_with_state};
+///
+/// let mut session = Session::new();
+/// session.registry_mut().add(MyCustomLib);
+/// run_with_state(ServerState::with_session(session))?;
+/// ```
+pub fn run_with_state(mut state: ServerState) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
 
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
-
-    let mut state = ServerState::new();
     let mut initialized = false;
     let mut shutdown_requested = false;
 

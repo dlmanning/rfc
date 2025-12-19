@@ -15,16 +15,26 @@
 //! - STRLENCP: String length in code points
 //! - UTF8 conversion commands
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
-    core::TypeId,
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the Strings library.
+const INTERFACE: &str = include_str!("interfaces/strings.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid strings interface"))
+}
 
 /// Strings library ID (matches rpl-stdlib).
 pub const STRINGS_LIB: LibId = 24;
@@ -49,56 +59,18 @@ pub mod cmd {
     pub const FROM_UTF8: u16 = 15;
 }
 
-/// Strings library.
+/// Strings library (implementation only).
 #[derive(Clone, Copy)]
 pub struct StringsLib;
 
-impl Library for StringsLib {
+impl LibraryImpl for StringsLib {
     fn id(&self) -> LibId {
         STRINGS_LIB
     }
 
-    fn name(&self) -> &'static str {
-        "Strings"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // Conversion
-            CommandInfo::with_effect("NUM", STRINGS_LIB, cmd::NUM, 1, 1),
-            CommandInfo::with_effect("STR", STRINGS_LIB, cmd::STR, 1, 1),
-            CommandInfo::with_effect("→STR", STRINGS_LIB, cmd::STR, 1, 1),
-            CommandInfo::with_effect("->STR", STRINGS_LIB, cmd::STR, 1, 1),
-            CommandInfo::with_effect("CHR", STRINGS_LIB, cmd::CHR, 1, 1),
-            CommandInfo::with_effect("ASC", STRINGS_LIB, cmd::ASC, 1, 1),
-            // Extraction
-            CommandInfo::with_effect("SUB", STRINGS_LIB, cmd::SUB, 3, 1),
-            CommandInfo::with_effect("POS", STRINGS_LIB, cmd::POS, 2, 1),
-            // Manipulation
-            CommandInfo::with_effect("SREV", STRINGS_LIB, cmd::SREV, 1, 1),
-            CommandInfo::with_effect("TRIM", STRINGS_LIB, cmd::TRIM, 1, 1),
-            CommandInfo::with_effect("RTRIM", STRINGS_LIB, cmd::RTRIM, 1, 1),
-            CommandInfo::with_effect("STRLENCP", STRINGS_LIB, cmd::STRLENCP, 1, 1),
-            // Token operations
-            CommandInfo::with_effect("NTOKENS", STRINGS_LIB, cmd::NTOKENS, 1, 1),
-            CommandInfo::with_effect("NTHTOKEN", STRINGS_LIB, cmd::NTHTOKEN, 2, 1),
-            CommandInfo::with_effect("NTHTOKENPOS", STRINGS_LIB, cmd::NTHTOKENPOS, 2, 2),
-            // Search and replace
-            CommandInfo::with_effect("SREPL", STRINGS_LIB, cmd::SREPL, 3, 2),
-            // UTF-8 conversion
-            CommandInfo::with_effect("→UTF8", STRINGS_LIB, cmd::TO_UTF8, 1, 1),
-            CommandInfo::with_effect("->UTF8", STRINGS_LIB, cmd::TO_UTF8, 1, 1),
-            CommandInfo::with_effect("TOUTF8", STRINGS_LIB, cmd::TO_UTF8, 1, 1),
-            CommandInfo::with_effect("UTF8→", STRINGS_LIB, cmd::FROM_UTF8, 1, 1),
-            CommandInfo::with_effect("UTF8->", STRINGS_LIB, cmd::FROM_UTF8, 1, 1),
-            CommandInfo::with_effect("FROMUTF8", STRINGS_LIB, cmd::FROM_UTF8, 1, 1),
-        ]
-    }
-
     fn lower_composite(
         &self,
-        _id: u16,
+        _construct_id: u16,
         _branches: &[Branch],
         _span: Span,
         _ctx: &mut LowerContext,
@@ -116,28 +88,6 @@ impl Library for StringsLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(STRINGS_LIB, cmd);
         Ok(())
-    }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::NUM => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
-            cmd::STR => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            cmd::CHR => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            cmd::ASC => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            cmd::SUB => StackEffect::fixed(3, &[Some(TypeId::STRING)]),
-            cmd::POS => StackEffect::fixed(2, &[Some(TypeId::BINT)]),
-            cmd::SREV => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            cmd::TRIM => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            cmd::RTRIM => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            cmd::STRLENCP => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            cmd::NTOKENS => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            cmd::NTHTOKEN => StackEffect::fixed(2, &[Some(TypeId::STRING)]),
-            cmd::NTHTOKENPOS => StackEffect::fixed(2, &[Some(TypeId::BINT), Some(TypeId::BINT)]),
-            cmd::SREPL => StackEffect::fixed(3, &[Some(TypeId::STRING), Some(TypeId::BINT)]),
-            cmd::TO_UTF8 => StackEffect::fixed(1, &[Some(TypeId::LIST)]),
-            cmd::FROM_UTF8 => StackEffect::fixed(1, &[Some(TypeId::STRING)]),
-            _ => StackEffect::Dynamic,
-        }
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -420,22 +370,20 @@ fn pop_integer(ctx: &mut ExecuteContext) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn strings_lib_id() {
-        assert_eq!(StringsLib.id(), 24);
+        assert_eq!(interface().id(), 24);
     }
 
     #[test]
     fn strings_lib_name() {
-        assert_eq!(StringsLib.name(), "Strings");
+        assert_eq!(interface().name(), "Strings");
     }
 
     #[test]
     fn commands_registered() {
-        let lib = StringsLib;
-        let commands = lib.commands();
+        let commands = interface().to_command_infos();
         let names: Vec<_> = commands.iter().map(|c| c.name).collect();
 
         assert!(names.contains(&"NUM"));

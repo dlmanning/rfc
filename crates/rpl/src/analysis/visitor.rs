@@ -28,7 +28,7 @@ pub trait Visitor {
     }
 
     /// Visit a composite.
-    fn visit_composite(&mut self, kind: CompositeKind, branches: &[Branch], node: &Node) {
+    fn visit_composite(&mut self, kind: &CompositeKind, branches: &[Branch], node: &Node) {
         let _ = (kind, branches, node);
     }
 
@@ -92,8 +92,8 @@ pub trait Visitor {
     }
 
     /// Visit an extended composite (library-defined construct).
-    fn visit_extended(&mut self, lib: crate::ir::LibId, id: u16, branches: &[Branch], node: &Node) {
-        let _ = (lib, id, branches, node);
+    fn visit_extended(&mut self, lib: crate::ir::LibId, construct_id: u16, branches: &[Branch], node: &Node) {
+        let _ = (lib, construct_id, branches, node);
     }
 }
 
@@ -117,8 +117,8 @@ pub fn walk_node<V: Visitor>(visitor: &mut V, node: &Node) {
             walk_atom(visitor, atom, node);
         }
         NodeKind::Composite(kind, branches) => {
-            visitor.visit_composite(*kind, branches, node);
-            walk_composite(visitor, *kind, branches, node);
+            visitor.visit_composite(kind, branches, node);
+            walk_composite(visitor, kind, branches, node);
         }
     }
 
@@ -141,7 +141,7 @@ fn walk_atom<V: Visitor>(visitor: &mut V, atom: &AtomKind, node: &Node) {
 }
 
 /// Walk a composite, calling specific visitor methods.
-fn walk_composite<V: Visitor>(visitor: &mut V, kind: CompositeKind, branches: &[Branch], node: &Node) {
+fn walk_composite<V: Visitor>(visitor: &mut V, kind: &CompositeKind, branches: &[Branch], node: &Node) {
     match kind {
         CompositeKind::Program => {
             if let Some(body) = branches.first() {
@@ -158,8 +158,8 @@ fn walk_composite<V: Visitor>(visitor: &mut V, kind: CompositeKind, branches: &[
                 walk_nodes(visitor, items);
             }
         }
-        CompositeKind::Extended(lib, id) => {
-            visitor.visit_extended(lib, id, branches, node);
+        CompositeKind::Extended(lib, construct_id) => {
+            visitor.visit_extended(*lib, *construct_id, branches, node);
             for branch in branches {
                 visitor.visit_branch(branch);
                 walk_nodes(visitor, branch);

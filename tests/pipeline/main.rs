@@ -6,6 +6,14 @@
 use rpl::value::Value;
 use rpl::Session;
 
+/// Create a session with the standard library registered.
+pub fn session_with_stdlib() -> Session {
+    let mut session = Session::new();
+    rpl_stdlib::register_interfaces(session.registry_mut());
+    rpl_stdlib::register_impls(session.registry_mut());
+    session
+}
+
 // Test modules
 mod analysis;
 mod arithmetic;
@@ -31,7 +39,7 @@ mod transcendentals;
 
 /// Helper to evaluate code and extract the stack as f64 values.
 pub fn eval_to_reals(code: &str) -> Vec<f64> {
-    let mut session = Session::new();
+    let mut session = session_with_stdlib();
     let values = session
         .eval(code)
         .unwrap_or_else(|e| panic!("eval failed for '{}': {:?}", code, e));
@@ -47,7 +55,7 @@ pub fn eval_to_reals(code: &str) -> Vec<f64> {
 
 /// Helper to evaluate code and return all values (not just reals).
 pub fn eval_to_values(code: &str) -> Vec<Value> {
-    let mut session = Session::new();
+    let mut session = session_with_stdlib();
     session
         .eval(code)
         .unwrap_or_else(|e| panic!("eval failed for '{}': {:?}", code, e))
@@ -84,7 +92,7 @@ pub fn assert_stack_approx(code: &str, expected: &[f64], epsilon: f64) {
 
 /// Helper to check that code produces an error containing a substring.
 pub fn assert_error(code: &str, expected_substring: &str) {
-    let mut session = Session::new();
+    let mut session = session_with_stdlib();
     match session.eval(code) {
         Ok(_) => panic!("Expected error for '{}', but succeeded", code),
         Err(e) => {

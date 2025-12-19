@@ -9,25 +9,31 @@
 //! - ==, != (equality)
 //! - <, <=, >, >= (ordering)
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::OnceLock};
 
-use crate::core::Span;
-
-use crate::{
-    core::TypeId,
+use rpl::{
+    core::Span,
+    interface::InterfaceSpec,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, Library, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the Arithmetic library.
+const INTERFACE: &str = include_str!("interfaces/arith.rpli");
+
+/// Get the interface spec (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid arith interface"))
+}
 
 /// Arithmetic library ID (matches rpl-stdlib).
 pub const ARITH_LIB: LibId = 64;
 
-/// Arithmetic library command IDs.
+/// Arithmetic library command IDs (order matches INTERFACE declaration).
 pub mod cmd {
-    // Arithmetic operations
     pub const ADD: u16 = 0;
     pub const SUB: u16 = 1;
     pub const MUL: u16 = 2;
@@ -36,64 +42,26 @@ pub mod cmd {
     pub const INV: u16 = 5;
     pub const MOD: u16 = 6;
     pub const ABS: u16 = 7;
-
-    // Comparison operations
-    pub const EQ: u16 = 10;
-    pub const NE: u16 = 11;
-    pub const LT: u16 = 12;
-    pub const LE: u16 = 13;
-    pub const GT: u16 = 14;
-    pub const GE: u16 = 15;
-
-    // Additional arithmetic operations
-    pub const POW: u16 = 16;
-    pub const MIN: u16 = 17;
-    pub const MAX: u16 = 18;
-    pub const SIGN: u16 = 19;
-    pub const SQ: u16 = 20;
+    pub const EQ: u16 = 8;
+    pub const NE: u16 = 9;
+    pub const LT: u16 = 10;
+    pub const LE: u16 = 11;
+    pub const GT: u16 = 12;
+    pub const GE: u16 = 13;
+    pub const POW: u16 = 14;
+    pub const MIN: u16 = 15;
+    pub const MAX: u16 = 16;
+    pub const SIGN: u16 = 17;
+    pub const SQ: u16 = 18;
 }
 
-/// Arithmetic operations library.
+/// Arithmetic operations library (implementation only).
 #[derive(Clone, Copy)]
 pub struct ArithLib;
 
-impl Library for ArithLib {
+impl LibraryImpl for ArithLib {
     fn id(&self) -> LibId {
         ARITH_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Arithmetic"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // Arithmetic operations (2 -> 1)
-            CommandInfo::with_effect("+", ARITH_LIB, cmd::ADD, 2, 1),
-            CommandInfo::with_effect("-", ARITH_LIB, cmd::SUB, 2, 1),
-            CommandInfo::with_effect("*", ARITH_LIB, cmd::MUL, 2, 1),
-            CommandInfo::with_effect("/", ARITH_LIB, cmd::DIV, 2, 1),
-            CommandInfo::with_effect("NEG", ARITH_LIB, cmd::NEG, 1, 1),
-            CommandInfo::with_effect("INV", ARITH_LIB, cmd::INV, 1, 1),
-            CommandInfo::with_effect("MOD", ARITH_LIB, cmd::MOD, 2, 1),
-            CommandInfo::with_effect("ABS", ARITH_LIB, cmd::ABS, 1, 1),
-            // Comparison operations (2 -> 1)
-            CommandInfo::with_effect("==", ARITH_LIB, cmd::EQ, 2, 1),
-            CommandInfo::with_effect("!=", ARITH_LIB, cmd::NE, 2, 1),
-            CommandInfo::with_effect("<", ARITH_LIB, cmd::LT, 2, 1),
-            CommandInfo::with_effect("<=", ARITH_LIB, cmd::LE, 2, 1),
-            CommandInfo::with_effect(">", ARITH_LIB, cmd::GT, 2, 1),
-            CommandInfo::with_effect(">=", ARITH_LIB, cmd::GE, 2, 1),
-            CommandInfo::with_effect("SAME", ARITH_LIB, cmd::EQ, 2, 1), // HP-style alias
-            CommandInfo::with_effect("<>", ARITH_LIB, cmd::NE, 2, 1),   // HP-style not equal
-            // Additional arithmetic
-            CommandInfo::with_effect("^", ARITH_LIB, cmd::POW, 2, 1),
-            CommandInfo::with_effect("MIN", ARITH_LIB, cmd::MIN, 2, 1),
-            CommandInfo::with_effect("MAX", ARITH_LIB, cmd::MAX, 2, 1),
-            CommandInfo::with_effect("SIGN", ARITH_LIB, cmd::SIGN, 1, 1),
-            CommandInfo::with_effect("SQ", ARITH_LIB, cmd::SQ, 1, 1),
-        ]
     }
 
     fn lower_command(
@@ -102,7 +70,7 @@ impl Library for ArithLib {
         _span: Span,
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        use crate::vm::bytecode::Opcode;
+        use rpl::vm::bytecode::Opcode;
 
         // Emit bytecode based on command - effect is determined by command_effect
         match cmd {
@@ -157,37 +125,6 @@ impl Library for ArithLib {
             cmd::SIGN => sign_op(ctx),
             cmd::SQ => unary_numeric_op(ctx, |a| a * a, |a| a * a),
             _ => Err(format!("Unknown arith command: {}", ctx.cmd)),
-        }
-    }
-
-    fn command_effect(&self, cmd: u16, types: &CStack) -> StackEffect {
-        // Use shared effect computation helpers from libs/mod.rs
-        use super::{binary_numeric_effect, unary_preserving_effect};
-
-        match cmd {
-            // Binary numeric: int+int→int, otherwise→real
-            cmd::ADD | cmd::SUB | cmd::MUL | cmd::DIV => {
-                binary_numeric_effect(types)
-            }
-            // Comparisons always produce integer (0 or 1)
-            cmd::EQ | cmd::NE | cmd::LT | cmd::LE | cmd::GT | cmd::GE => {
-                StackEffect::fixed(2, &[Some(TypeId::BINT)])
-            }
-            // Unary ops that preserve type
-            cmd::NEG | cmd::ABS | cmd::SQ => {
-                unary_preserving_effect(types)
-            }
-            // INV always produces real
-            cmd::INV => StackEffect::fixed(1, &[Some(TypeId::REAL)]),
-            // MOD preserves numeric type
-            cmd::MOD => binary_numeric_effect(types),
-            // POW always produces real
-            cmd::POW => StackEffect::fixed(2, &[Some(TypeId::REAL)]),
-            // MIN/MAX preserve type
-            cmd::MIN | cmd::MAX => binary_numeric_effect(types),
-            // SIGN always returns integer (-1, 0, 1)
-            cmd::SIGN => StackEffect::fixed(1, &[Some(TypeId::BINT)]),
-            _ => StackEffect::Dynamic,
         }
     }
 }
@@ -377,11 +314,11 @@ mod tests {
 
     #[test]
     fn arith_lib_id() {
-        assert_eq!(ArithLib.id(), 64);
+        assert_eq!(interface().id(), 64);
     }
 
     #[test]
     fn arith_lib_name() {
-        assert_eq!(ArithLib.name(), "Arithmetic");
+        assert_eq!(interface().name(), "Arithmetic");
     }
 }

@@ -107,7 +107,7 @@ mod tests {
     use crate::source::SourceId;
 
     fn compile_source(source: &str) -> (CompiledProgram, SourceFile) {
-        let registry = Registry::with_core();
+        let registry = Registry::new();
         let mut interner = Interner::new();
 
         let nodes = parse(source, &registry, &mut interner).unwrap();

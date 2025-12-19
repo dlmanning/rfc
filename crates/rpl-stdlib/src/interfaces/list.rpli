@@ -1,0 +1,13 @@
+library List 88
+
+-- Construction/destruction (dynamic)
+0: Int -> (→LIST), (->LIST) -> ...
+1: List -> (LIST→), (LIST->), (OBJ→), (OBJ->) -> ...
+
+-- List inspection
+2: a -> SIZE -> Int
+3: List Int -> GET -> a
+4: List Int a -> PUT -> List
+5: List -> HEAD -> a
+6: List -> TAIL -> List
+7: List -> REVLIST -> List

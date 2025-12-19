@@ -8,18 +8,26 @@
 //! Comments are skipped during tokenization and not stored in bytecode.
 //! Therefore, STRIPCOMMENTS is a no-op (returns program unchanged).
 
-use crate::core::Span;
+use std::sync::OnceLock;
 
-use crate::{
-    core::TypeId,
+use rpl::core::Span;
+use rpl::interface::InterfaceSpec;
+
+use rpl::{
     ir::LibId,
-    libs::{
-        ExecuteContext, ExecuteResult, Library, StackEffect,
-    },
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::Value,
 };
+
+/// Interface declaration for the Comments library.
+const INTERFACE: &str = include_str!("interfaces/comments.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid comments interface"))
+}
 
 /// Comments library ID (matches rpl-stdlib).
 pub const COMMENTS_LIB: LibId = 20;
@@ -29,26 +37,13 @@ pub mod cmd {
     pub const STRIPCOMMENTS: u16 = 0;
 }
 
-/// Comments library.
+/// Comments library (implementation only).
 #[derive(Clone, Copy)]
 pub struct CommentsLib;
 
-impl Library for CommentsLib {
+impl LibraryImpl for CommentsLib {
     fn id(&self) -> LibId {
         COMMENTS_LIB
-    }
-
-    fn name(&self) -> &'static str {
-        "Comments"
-    }
-
-    fn commands(&self) -> Vec<super::CommandInfo> {
-        use super::CommandInfo;
-        vec![
-            // STRIPCOMMENTS: (program -- program)
-            // Since comments are stripped during parsing, this is a no-op
-            CommandInfo::with_effect("STRIPCOMMENTS", COMMENTS_LIB, cmd::STRIPCOMMENTS, 1, 1),
-        ]
     }
 
     fn lower_command(
@@ -81,27 +76,19 @@ impl Library for CommentsLib {
             _ => Err(format!("Unknown comments command: {}", ctx.cmd)),
         }
     }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::STRIPCOMMENTS => StackEffect::fixed(1, &[Some(TypeId::PROGRAM)]),
-            _ => StackEffect::Dynamic,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn comments_lib_id() {
-        assert_eq!(CommentsLib.id(), 20);
+        assert_eq!(interface().id(), 20);
     }
 
     #[test]
     fn comments_lib_name() {
-        assert_eq!(CommentsLib.name(), "Comments");
+        assert_eq!(interface().name(), "Comments");
     }
 }

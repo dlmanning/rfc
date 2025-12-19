@@ -1,6 +1,7 @@
 //! Tests for user library system.
 
 use rpl::value::Value;
+#[allow(unused_imports)]
 use rpl::Session;
 
 // ============================================================================
@@ -11,7 +12,7 @@ use rpl::Session;
 fn library_crlib_creates_library() {
     // Create a library with a single named command that pushes 42
     // { { "ANSWER" << 42 >> } } "TEST" CRLIB
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // First, just verify CRLIB works and produces something
     let result = session.eval(r#"{ { "ANSWER" << 42 >> } } "TEST" CRLIB"#);
@@ -33,7 +34,7 @@ fn library_crlib_creates_library() {
 
 #[test]
 fn library_attach_stores_library() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create and attach a library
     let result = session.eval(r#"{ { "ANSWER" << 42 >> } } "MATH" CRLIB ATTACH"#);
@@ -49,7 +50,7 @@ fn library_attach_stores_library() {
 
 #[test]
 fn library_detach_removes_library() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create, attach, then detach
     let result = session.eval(r#"{ { "ANSWER" << 42 >> } } "TEST" CRLIB ATTACH "TEST" DETACH"#);
@@ -62,7 +63,7 @@ fn library_detach_removes_library() {
 
 #[test]
 fn library_libsto_librcl_roundtrip() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Store a value in library private namespace
     let result = session.eval(r#"42 "TEST" "myvar" LIBSTO"#);
@@ -83,7 +84,7 @@ fn library_libsto_librcl_roundtrip() {
 
 #[test]
 fn library_libdefrcl_returns_stored_value() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Store a value
     session.eval(r#"100 "MATH" "setting" LIBSTO"#).unwrap();
@@ -100,7 +101,7 @@ fn library_libdefrcl_returns_stored_value() {
 
 #[test]
 fn library_libdefrcl_returns_default() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Recall non-existent variable with default
     let result = session
@@ -116,7 +117,7 @@ fn library_libdefrcl_returns_default() {
 
 #[test]
 fn library_librcl_error_on_missing() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Try to recall non-existent variable
     let result = session.eval(r#""TEST" "missing" LIBRCL"#);
@@ -125,7 +126,7 @@ fn library_librcl_error_on_missing() {
 
 #[test]
 fn library_libclear_succeeds() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // LIBCLEAR should succeed (even though our implementation is a no-op)
     let result = session.eval(r#""TEST" LIBCLEAR"#);
@@ -134,7 +135,7 @@ fn library_libclear_succeeds() {
 
 #[test]
 fn library_libclear_actually_clears_data() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Store some values
     session.eval(r#"1 "TEST" "var1" LIBSTO"#).unwrap();
@@ -168,7 +169,7 @@ fn library_libclear_actually_clears_data() {
 /// 5. Clean up with DETACH and LIBCLEAR
 #[test]
 fn library_full_integration() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Step 1: Create a library with two named commands and attach it in one go
     // - DOUBLE: doubles a number (2 *)
@@ -253,7 +254,7 @@ fn library_full_integration() {
 /// Test that attached library commands can be called by name
 #[test]
 fn library_command_resolution() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create a library with a DOUBLE command that doubles a number (2 *)
     let result = session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#);
@@ -275,7 +276,7 @@ fn library_command_resolution() {
 /// Test multiple commands from the same library
 #[test]
 fn library_multiple_commands() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE (2 *) and SQUARE (DUP *)
     let result = session.eval(
@@ -303,7 +304,7 @@ fn library_multiple_commands() {
 /// Test that library commands are case-insensitive
 #[test]
 fn library_command_case_insensitive() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE
     session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
@@ -320,7 +321,7 @@ fn library_command_case_insensitive() {
 /// Test that detached library commands are no longer callable
 #[test]
 fn library_command_after_detach() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create and attach a library
     session.eval(r#"{ { "TRIPLE" << 3 * >> } } "TEST" CRLIB ATTACH"#).unwrap();
@@ -340,7 +341,7 @@ fn library_command_after_detach() {
 /// Test that directory variables take precedence over library commands
 #[test]
 fn library_command_precedence() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE
     session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
@@ -371,7 +372,7 @@ fn library_command_precedence() {
 /// Test that library data is isolated between different libraries
 #[test]
 fn library_data_isolation() {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
 
     // Store data in two different library namespaces
     session.eval(r#"100 "LIB1" "value" LIBSTO"#).unwrap();

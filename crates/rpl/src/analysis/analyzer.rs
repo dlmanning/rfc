@@ -14,12 +14,7 @@ use super::{
 use crate::{
     core::{Interner, Span, Symbol},
     ir::{AtomKind, Branch, CompositeKind, LibId, Node, NodeKind},
-    libs::{
-        StackEffect,
-        directory::{DIRECTORY_LIB, cmd as dir_cmd},
-        flow::{FLOW_LIB, constructs as flow_constructs},
-        locals::{LOCALS_LIB, constructs as local_constructs},
-    },
+    libs::{StackEffect, DIRECTORY_LIB, dir_cmd},
     registry::Registry,
     symbolic::SymExpr,
     types::{CStack, CType},
@@ -113,11 +108,6 @@ impl<'a> Analyzer<'a> {
             self.scope_definitions.pop();
             self.local_index_to_def.pop();
         }
-    }
-
-    /// Add a definition.
-    fn add_definition(&mut self, name: String, span: Span, kind: DefinitionKind) -> DefinitionId {
-        self.add_definition_with_type(name, span, kind, None)
     }
 
     /// Add a definition with an optional inferred value type.
@@ -386,11 +376,27 @@ impl<'a> Analyzer<'a> {
         self.type_stack.push(CType::Unknown);
     }
 
-    /// Handle a local binding.
-    fn handle_local_binding(&mut self, branches: &[Branch], span: Span) {
-        // branches[0] = Integer nodes (local indices)
-        // branches[1] = body
-        // branches[2] = String nodes (local names)
+    /// Handle bindings for any construct that creates local variables.
+    ///
+    /// This is a unified handler that works for any construct with bindings,
+    /// determined dynamically via `Registry::binding_branches()`.
+    ///
+    /// The `is_loop` parameter determines whether bindings are loop variables
+    /// (FOR loops) or local variables (-> syntax). Loop variables use a
+    /// different definition kind to enable reassignment warnings.
+    fn handle_bindings(
+        &mut self,
+        branches: &[Branch],
+        binding_indices: &[usize],
+        span: Span,
+        is_loop: bool,
+    ) {
+        // Determine scope kind and definition kind based on construct type
+        let (scope_kind, def_kind) = if is_loop {
+            (ScopeKind::Loop, DefinitionKind::LoopVar)
+        } else {
+            (ScopeKind::LocalBinding, DefinitionKind::Local)
+        };
 
         // Check if we're directly inside a Program scope (for arity tracking)
         // Only the outermost local binding in a program defines the function's arity
@@ -400,69 +406,41 @@ impl<'a> Analyzer<'a> {
             .map(|s| s.kind == ScopeKind::Program)
             .unwrap_or(false);
 
-        self.enter_scope(ScopeKind::LocalBinding, span);
+        self.enter_scope(scope_kind, span);
 
         // Track arity for function definitions - only for outermost local binding
-        if parent_is_program {
-            let arity = self.get_local_binding_arity(branches);
-            self.pending_arity = Some(arity);
+        if parent_is_program && def_kind == DefinitionKind::Local {
+            self.pending_arity = Some(binding_indices.len());
         }
 
-        // Extract local indices from branches[0]
-        let indices: Vec<usize> = branches
-            .first()
-            .map(|b| {
-                b.iter()
-                    .filter_map(|node| {
-                        if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
-                            Some(*n as usize)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+        // Collect parameter names from the binding branches
+        // Each binding branch has [index_node, name_node]
+        let param_names: Vec<(String, Span, Option<usize>)> = binding_indices
+            .iter()
+            .filter_map(|&idx| branches.get(idx))
+            .filter_map(|binding| {
+                if binding.len() >= 2 {
+                    let local_idx = if let NodeKind::Atom(AtomKind::Integer(n)) = &binding[0].kind {
+                        Some(*n as usize)
+                    } else {
+                        None
+                    };
+                    if let NodeKind::Atom(AtomKind::String(name)) = &binding[1].kind {
+                        Some((name.to_string(), binding[1].span, local_idx))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
-            .unwrap_or_default();
-
-        // Collect parameter names in order
-        let param_names: Vec<(String, Span, Option<usize>)> = if branches.len() >= 3 {
-            branches[2]
-                .iter()
-                .enumerate()
-                .filter_map(|(i, node)| {
-                    if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
-                        Some((name.to_string(), node.span, indices.get(i).copied()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else if branches.len() >= 2 {
-            branches[0]
-                .iter()
-                .enumerate()
-                .filter_map(|(i, node)| {
-                    if let NodeKind::Atom(AtomKind::Symbol(sym)) = &node.kind {
-                        let name = self.interner.resolve(*sym).to_string();
-                        Some((name, node.span, Some(i)))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+            .collect();
 
         // Infer types from stack for each parameter
         // Parameters bind in order: first param binds deepest, last param binds TOS
-        // So we collect types from stack in reverse order
         let param_count = param_names.len();
         let mut param_types: Vec<CType> = Vec::with_capacity(param_count);
         for i in 0..param_count {
-            // Get type at position (param_count - 1 - i) from top of stack
-            // i=0 -> deepest param (param_count-1 from top)
-            // i=param_count-1 -> TOS (0 from top)
             let stack_pos = param_count - 1 - i;
             let ty = self.type_stack.at(stack_pos);
             param_types.push(ty);
@@ -474,62 +452,14 @@ impl<'a> Analyzer<'a> {
         }
 
         // Add definitions with inferred types
-        for (i, (name, span, idx)) in param_names.into_iter().enumerate() {
+        for (i, (name, name_span, local_idx)) in param_names.into_iter().enumerate() {
             let ty = param_types.get(i).cloned();
-            let def_id = self.add_definition_with_type(name, span, DefinitionKind::Local, ty);
+            let def_id = self.add_definition_with_type(name, name_span, def_kind, ty);
             // Map local index to definition for LocalRef resolution
-            if let Some(idx) = idx
+            if let Some(idx) = local_idx
                 && let Some(map) = self.local_index_to_def.last_mut()
             {
                 map.insert(idx, def_id);
-            }
-        }
-    }
-
-    /// Get the arity (param count) from a local binding node.
-    fn get_local_binding_arity(&self, branches: &[Branch]) -> usize {
-        if branches.len() >= 3 {
-            branches[2].len()
-        } else if !branches.is_empty() {
-            branches[0].len()
-        } else {
-            0
-        }
-    }
-
-    /// Handle a FOR loop with variable.
-    fn handle_for_loop(&mut self, branches: &[Branch], span: Span, is_step_variant: bool) {
-        // FOR/NEXT: branches[0] = [index], branches[1] = body, branches[2] = [name]
-        // FOR/STEP: branches[0] = [index], branches[1] = body, branches[2] = [step], branches[3] = [name]
-        self.enter_scope(ScopeKind::Loop, span);
-
-        // Get the name branch index based on variant
-        let name_branch_idx = if is_step_variant { 3 } else { 2 };
-
-        // Get local index from branches[0]
-        let local_index = branches.first().and_then(|b| b.first()).and_then(|node| {
-            if let NodeKind::Atom(AtomKind::Integer(n)) = &node.kind {
-                Some(*n as usize)
-            } else {
-                None
-            }
-        });
-
-        // Get name from branches[2] or branches[3] (String node)
-        if let Some(name_branch) = branches.get(name_branch_idx) {
-            for node in name_branch {
-                if let NodeKind::Atom(AtomKind::String(name)) = &node.kind {
-                    // Use LoopVar to enable warnings for reassignment
-                    let def_id =
-                        self.add_definition(name.to_string(), node.span, DefinitionKind::LoopVar);
-                    // Map local index to definition for LocalRef resolution
-                    if let Some(idx) = local_index
-                        && let Some(map) = self.local_index_to_def.last_mut()
-                    {
-                        map.insert(idx, def_id);
-                    }
-                    break;
-                }
             }
         }
     }
@@ -591,43 +521,26 @@ impl Visitor for Analyzer<'_> {
         // List will be visited, then we push list type
     }
 
-    fn visit_extended(&mut self, lib: LibId, id: u16, branches: &[Branch], node: &Node) {
-        if lib == LOCALS_LIB && id == local_constructs::LOCAL_BINDING {
-            self.handle_local_binding(branches, node.span);
-        } else if lib == FLOW_LIB {
-            // Handle all FOR loop variants
-            match id {
-                flow_constructs::FOR_NEXT
-                | flow_constructs::FORUP_NEXT
-                | flow_constructs::FORDN_NEXT => {
-                    self.handle_for_loop(branches, node.span, false);
-                }
-                flow_constructs::FOR_STEP
-                | flow_constructs::FORUP_STEP
-                | flow_constructs::FORDN_STEP => {
-                    self.handle_for_loop(branches, node.span, true);
-                }
-                _ => {}
-            }
+    fn visit_extended(&mut self, lib: LibId, construct_id: u16, branches: &[Branch], node: &Node) {
+        // Query the registry to determine if this construct has bindings
+        let binding_indices = self.registry.binding_branches(lib, construct_id, branches.len());
+
+        if !binding_indices.is_empty() {
+            // Determine if this is a loop construct (FOR, FORUP, FORDN)
+            // Loop constructs create LoopVar bindings, others create Local bindings
+            // Use well-known construct IDs from the flow library
+            let is_loop = matches!(construct_id, 20..=23); // FOR, FORUP, FORDN, START
+            self.handle_bindings(branches, &binding_indices, node.span, is_loop);
         }
     }
 
     fn visit_node_post(&mut self, node: &Node) {
-        // Exit scopes for extended constructs
-        if let NodeKind::Composite(CompositeKind::Extended(lib, id), _) = &node.kind
-            && ((*lib == LOCALS_LIB && *id == local_constructs::LOCAL_BINDING)
-                || (*lib == FLOW_LIB
-                    && matches!(
-                        *id,
-                        flow_constructs::FOR_NEXT
-                            | flow_constructs::FOR_STEP
-                            | flow_constructs::FORUP_NEXT
-                            | flow_constructs::FORUP_STEP
-                            | flow_constructs::FORDN_NEXT
-                            | flow_constructs::FORDN_STEP
-                    )))
-        {
-            self.exit_scope();
+        // Exit scopes for extended constructs that have bindings
+        if let NodeKind::Composite(CompositeKind::Extended(lib, construct_id), branches) = &node.kind {
+            let binding_indices = self.registry.binding_branches(*lib, *construct_id, branches.len());
+            if !binding_indices.is_empty() {
+                self.exit_scope();
+            }
         }
 
         // After visiting a list, push list type
@@ -655,7 +568,7 @@ mod tests {
     }
 
     fn make_registry() -> Registry {
-        Registry::with_core()
+        Registry::new()
     }
 
     #[test]

@@ -5,6 +5,8 @@ use std::fmt;
 /// Errors that can occur when decoding plot data.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DecodeError {
+    /// Invalid or missing magic header (not a Plot blob).
+    InvalidMagic,
     /// Unexpected end of data while decoding.
     UnexpectedEnd,
     /// Unknown command byte encountered.
@@ -18,6 +20,7 @@ pub enum DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DecodeError::InvalidMagic => write!(f, "not a Plot blob (invalid magic header)"),
             DecodeError::UnexpectedEnd => write!(f, "unexpected end of plot data"),
             DecodeError::InvalidCommand(cmd) => write!(f, "invalid command byte: 0x{:02X}", cmd),
             DecodeError::InvalidString => write!(f, "invalid string encoding"),

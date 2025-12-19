@@ -41,14 +41,54 @@ pub struct DebugSession {
 }
 
 impl DebugSession {
-    /// Create a new debug session.
+    /// Create a registry with stdlib.
+    fn stdlib_registry() -> Registry {
+        let mut registry = Registry::new();
+        rpl_stdlib::register_interfaces(&mut registry);
+        rpl_stdlib::register_impls(&mut registry);
+        registry
+    }
+
+    /// Create a new debug session with standard libraries.
     pub fn new(program: CompiledProgram, source: SourceFile, source_path: PathBuf) -> Self {
-        Self::with_vm(Vm::new(), program, source, source_path)
+        Self::with_registry(Self::stdlib_registry(), program, source, source_path)
+    }
+
+    /// Create a new debug session with a pre-configured registry.
+    ///
+    /// Use this to add application-specific libraries:
+    ///
+    /// ```ignore
+    /// let mut registry = Registry::new();
+    /// rpl_stdlib::register_interfaces(&mut registry);
+    /// rpl_stdlib::register_impls(&mut registry);
+    /// registry.add_interface(MyCustomLib);
+    /// registry.add_impl(MyCustomLib);
+    /// let session = DebugSession::with_registry(registry, program, source, path);
+    /// ```
+    pub fn with_registry(
+        registry: Registry,
+        program: CompiledProgram,
+        source: SourceFile,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::with_vm_and_registry(Vm::new(), registry, program, source, source_path)
     }
 
     /// Create a new debug session with an existing VM.
     pub fn with_vm(
         vm: Vm,
+        program: CompiledProgram,
+        source: SourceFile,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::with_vm_and_registry(vm, Self::stdlib_registry(), program, source, source_path)
+    }
+
+    /// Create a new debug session with an existing VM and registry.
+    pub fn with_vm_and_registry(
+        vm: Vm,
+        registry: Registry,
         program: CompiledProgram,
         source: SourceFile,
         source_path: PathBuf,
@@ -62,7 +102,7 @@ impl DebugSession {
             debug,
             source,
             source_path,
-            registry: Registry::with_core(),
+            registry,
             breakpoint_map: HashMap::new(),
             next_breakpoint_id: 1,
             started: false,
@@ -219,6 +259,8 @@ mod tests {
         let source_file =
             SourceFile::new(SourceId::new(0), "test.rpl".to_string(), source.to_string());
         let mut rpl_session = Session::new();
+        rpl_stdlib::register_interfaces(rpl_session.registry_mut());
+        rpl_stdlib::register_impls(rpl_session.registry_mut());
         let program = rpl_session.compile(source).expect("Failed to compile");
         DebugSession::new(program, source_file, PathBuf::from("test.rpl"))
     }

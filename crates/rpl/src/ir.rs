@@ -75,9 +75,9 @@ impl Node {
     }
 
     /// Create an extended composite node.
-    pub fn extended(lib: LibId, id: u16, branches: Vec<Branch>, span: Span) -> Self {
+    pub fn extended(lib: LibId, construct_id: u16, branches: Vec<Branch>, span: Span) -> Self {
         Self::new(
-            NodeKind::Composite(CompositeKind::Extended(lib, id), branches),
+            NodeKind::Composite(CompositeKind::Extended(lib, construct_id), branches),
             span,
         )
     }
@@ -127,13 +127,13 @@ pub enum AtomKind {
 }
 
 /// Kinds of composite structures.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompositeKind {
     /// Program: `« ... »` or `<< ... >>`
     Program,
     /// List: `{ ... }`
     List,
-    /// Library-defined construct.
+    /// Library-defined construct with ID (lib_id, construct_id).
     Extended(LibId, u16),
 }
 

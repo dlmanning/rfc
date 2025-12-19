@@ -1,0 +1,4 @@
+library Symbolic 80
+
+0: a -> (→NUM), (->NUM), TONUM -> a
+1: Sym -> SYMEVAL -> a

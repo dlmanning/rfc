@@ -6,17 +6,25 @@
 //!
 //! Library private data is stored at `.SETTINGS.LIBDATA.<LIBID>.<VARNAME>`.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use crate::core::Span;
-
-use crate::{
+use rpl::{
+    core::Span,
+    interface::InterfaceSpec,
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteContext, ExecuteResult, Library, StackEffect},
+    libs::{ExecuteContext, ExecuteResult, LibraryImpl},
     lower::{LowerContext, LowerError},
-    types::CStack,
     value::{LibraryCommand, LibraryData, Value},
 };
+
+/// Interface declaration for the UserLib library.
+const INTERFACE: &str = include_str!("interfaces/userlib.rpli");
+
+/// Get the runtime library (lazily initialized).
+pub fn interface() -> &'static InterfaceSpec {
+    static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
+    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid userlib interface"))
+}
 
 /// User library ID (matches rpl-stdlib LIBPTR_LIB = 102).
 pub const USERLIB_LIB: LibId = 102;
@@ -39,46 +47,24 @@ pub mod cmd {
     pub const DETACH: u16 = 6;
 }
 
-/// User library support.
+/// User library support (implementation only).
 #[derive(Clone, Copy)]
 pub struct UserLibLib;
 
-impl Library for UserLibLib {
+impl LibraryImpl for UserLibLib {
     fn id(&self) -> LibId {
         USERLIB_LIB
     }
 
-    fn name(&self) -> &'static str {
-        "UserLib"
-    }
-
-    fn commands(&self) -> Vec<CommandInfo> {
-        vec![
-            // LIBSTO: (value libid varname --)
-            CommandInfo::with_effect("LIBSTO", USERLIB_LIB, cmd::LIBSTO, 3, 0),
-            // LIBRCL: (libid varname -- value)
-            CommandInfo::with_effect("LIBRCL", USERLIB_LIB, cmd::LIBRCL, 2, 1),
-            // LIBDEFRCL: (default libid varname -- value)
-            CommandInfo::with_effect("LIBDEFRCL", USERLIB_LIB, cmd::LIBDEFRCL, 3, 1),
-            // LIBCLEAR: (libid --)
-            CommandInfo::with_effect("LIBCLEAR", USERLIB_LIB, cmd::LIBCLEAR, 1, 0),
-            // CRLIB: (list libid -- library) - will be implemented in Phase 4
-            CommandInfo::with_effect("CRLIB", USERLIB_LIB, cmd::CRLIB, 2, 1),
-            // ATTACH: (library --) - will be implemented in Phase 6
-            CommandInfo::with_effect("ATTACH", USERLIB_LIB, cmd::ATTACH, 1, 0),
-            // DETACH: (libid --) - will be implemented in Phase 6
-            CommandInfo::with_effect("DETACH", USERLIB_LIB, cmd::DETACH, 1, 0),
-        ]
-    }
-
     fn lower_composite(
         &self,
-        _id: u16,
+        _construct_id: u16,
         _branches: &[Branch],
         _span: Span,
         _ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
+        Err(LowerError {
+            span: None,
             message: "UserLib has no composites".into(),
         })
     }
@@ -91,19 +77,6 @@ impl Library for UserLibLib {
     ) -> Result<(), LowerError> {
         ctx.output.emit_call_lib(USERLIB_LIB, cmd);
         Ok(())
-    }
-
-    fn command_effect(&self, cmd: u16, _types: &CStack) -> StackEffect {
-        match cmd {
-            cmd::LIBSTO => StackEffect::fixed(3, &[]),
-            cmd::LIBRCL => StackEffect::fixed(2, &[None]),
-            cmd::LIBDEFRCL => StackEffect::fixed(3, &[None]),
-            cmd::LIBCLEAR => StackEffect::fixed(1, &[]),
-            cmd::CRLIB => StackEffect::fixed(2, &[None]), // Returns Library
-            cmd::ATTACH => StackEffect::fixed(1, &[]),
-            cmd::DETACH => StackEffect::fixed(1, &[]),
-            _ => StackEffect::Dynamic,
-        }
     }
 
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -133,7 +106,10 @@ impl Library for UserLibLib {
                         ctx.push(value.clone())?;
                         Ok(())
                     }
-                    None => Err(format!("LIBRCL: variable '{}' not found in library '{}'", varname, libid)),
+                    None => Err(format!(
+                        "LIBRCL: variable '{}' not found in library '{}'",
+                        varname, libid
+                    )),
                 }
             }
 
@@ -216,7 +192,7 @@ impl Library for UserLibLib {
                     commands.push(LibraryCommand::new(
                         name.to_uppercase(),
                         prog.code.clone(),
-                        prog.strings.clone(),
+                        prog.rodata.clone(),
                     ));
                 }
 
@@ -283,21 +259,20 @@ fn validate_lib_id(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::Library;
 
     #[test]
     fn userlib_lib_id() {
-        assert_eq!(UserLibLib.id(), 102);
+        assert_eq!(interface().id(), 102);
     }
 
     #[test]
     fn userlib_lib_name() {
-        assert_eq!(UserLibLib.name(), "UserLib");
+        assert_eq!(interface().name(), "UserLib");
     }
 
     #[test]
     fn userlib_commands_registered() {
-        let cmds = UserLibLib.commands();
+        let cmds = interface().to_command_infos();
         let names: Vec<_> = cmds.iter().map(|c| c.name).collect();
         assert!(names.contains(&"LIBSTO"));
         assert!(names.contains(&"LIBRCL"));

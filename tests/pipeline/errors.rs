@@ -6,7 +6,7 @@ use rpl::Session;
 
 /// Helper to check if eval produces a runtime error.
 fn eval_produces_error(code: &str) -> bool {
-    let mut session = Session::new();
+    let mut session = crate::session_with_stdlib();
     session.eval(code).is_err()
 }
 

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-plot", "crates/rpl-sr5", "crates/rpl"]
-default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-plot", "crates/rpl"]
+members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-plot", "crates/rpl-sr5", "crates/rpl", "crates/rpl-stdlib"]
+default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-plot", "crates/rpl", "crates/rpl-stdlib"]
 
     [workspace.package]
     version = "0.1.0"
@@ -18,6 +18,7 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     rpl-plot = {path = "crates/rpl-plot"}
     rpl-sr5 = {path = "crates/rpl-sr5"}
     rpl = {path = "crates/rpl"}
+    rpl-stdlib = {path = "crates/rpl-stdlib"}
 
     # External dependencies
     smallvec = "1"
@@ -44,3 +45,4 @@ edition = "2024"
 [dev-dependencies]
 rpl-dap = {workspace = true}
 rpl = {workspace = true}
+rpl-stdlib = {workspace = true}

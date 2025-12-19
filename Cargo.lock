@@ -2126,6 +2126,7 @@ version = "0.1.0"
 dependencies = [
  "rpl",
  "rpl-dap",
+ "rpl-stdlib",
 ]
 
 [[package]]
@@ -2143,6 +2144,7 @@ dependencies = [
  "dap",
  "log",
  "rpl",
+ "rpl-stdlib",
  "serde_json",
 ]
 
@@ -2173,6 +2175,13 @@ dependencies = [
  "rpl-plot",
  "thiserror 2.0.17",
  "winit",
+]
+
+[[package]]
+name = "rpl-stdlib"
+version = "0.1.0"
+dependencies = [
+ "rpl",
 ]
 
 [[package]]
