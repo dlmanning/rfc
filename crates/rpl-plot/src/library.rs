@@ -77,16 +77,6 @@ fn pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
     ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32)
 }
 
-/// Unpack a 32-bit RGBA color into components.
-#[allow(dead_code)]
-fn unpack_rgba(rgba: u32) -> (u8, u8, u8, u8) {
-    let r = ((rgba >> 24) & 0xFF) as u8;
-    let g = ((rgba >> 16) & 0xFF) as u8;
-    let b = ((rgba >> 8) & 0xFF) as u8;
-    let a = (rgba & 0xFF) as u8;
-    (r, g, b, a)
-}
-
 /// Convert a Real color value to 0-255 range.
 fn real_to_color(r: f64) -> u8 {
     if r > 1.0 {
@@ -520,23 +510,6 @@ mod tests {
         assert_eq!(pack_rgba(0x00, 0xFF, 0x00, 0xFF), 0x00FF00FF); // Green
         assert_eq!(pack_rgba(0x00, 0x00, 0xFF, 0xFF), 0x0000FFFF); // Blue
         assert_eq!(pack_rgba(0xAA, 0xBB, 0xCC, 0xDD), 0xAABBCCDD);
-    }
-
-    #[test]
-    fn test_unpack_rgba() {
-        let (r, g, b, a) = unpack_rgba(0xAABBCCDD);
-        assert_eq!(r, 0xAA);
-        assert_eq!(g, 0xBB);
-        assert_eq!(b, 0xCC);
-        assert_eq!(a, 0xDD);
-    }
-
-    #[test]
-    fn test_rgba_roundtrip() {
-        for rgba in [0x00000000, 0xFFFFFFFF, 0xFF0000FF, 0x12345678] {
-            let (r, g, b, a) = unpack_rgba(rgba);
-            assert_eq!(pack_rgba(r, g, b, a), rgba);
-        }
     }
 
     #[test]

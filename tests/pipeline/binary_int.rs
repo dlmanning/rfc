@@ -3,7 +3,6 @@
 //! Tests HP-style binary integer literals and bitwise operations.
 
 use rpl::value::Value;
-use rpl::Session;
 
 /// Helper to evaluate code and extract the stack as i64 values.
 fn eval_to_ints(code: &str) -> Vec<i64> {

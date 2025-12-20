@@ -466,8 +466,6 @@ pub struct Session {
     lowerers: LowererRegistry,
     /// Runtime for execution.
     runtime: Runtime,
-    #[allow(dead_code)]
-    config: SessionConfig,
 }
 
 impl Session {
@@ -489,12 +487,12 @@ impl Session {
     /// rpl_stdlib::register_lowerers(session.lowerers_mut());
     /// rpl_stdlib::register_executors(session.executors_mut());
     /// ```
-    pub fn with_config(config: SessionConfig) -> Self {
+    pub fn with_config(_config: SessionConfig) -> Self {
+        // TODO: Wire up config.max_stack_depth to the runtime
         Self {
             analysis: AnalysisSession::new(),
             lowerers: LowererRegistry::new(),
             runtime: Runtime::new(),
-            config,
         }
     }
 

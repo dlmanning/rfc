@@ -32,23 +32,6 @@ pub fn format_value(value: &Value) -> String {
     }
 }
 
-/// Format a value in short form (for variable display).
-#[allow(dead_code)]
-pub fn format_value_short(value: &Value) -> String {
-    match value {
-        Value::Integer(i) => i.to_string(),
-        Value::Real(r) => format_real(*r),
-        Value::String(s) if s.len() <= 20 => format!("\"{}\"", escape_string(s)),
-        Value::String(s) => format!("\"{}...\"", escape_string(&s[..17])),
-        Value::List(items) if items.is_empty() => "{ }".to_string(),
-        Value::List(items) => format!("{{...}} ({})", items.len()),
-        Value::Program(data) => format!("<<{}>>", data.code.len()),
-        Value::Symbolic(expr) => format!("'{}", expr),
-        Value::Library(lib) => format!("<{}>", lib.id),
-        Value::Bytes(data) => format!("<{} bytes>", data.len()),
-    }
-}
-
 /// Get the style for a value type.
 pub fn value_style(value: &Value) -> Style {
     match value {

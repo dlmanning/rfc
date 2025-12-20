@@ -80,7 +80,7 @@
             0
         ELSE
             @ Compute two roots
-            disc SQRT -> sqrt_disc <<
+            disc sqrt -> sqrt_disc <<
                 @ root1 = (-b + sqrt_disc) / (2 * a)
                 b NEG sqrt_disc + a 2 * /
                 @ root2 = (-b - sqrt_disc) / (2 * a)

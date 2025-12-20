@@ -292,39 +292,6 @@ impl IncrementalAnalysis {
         self.result = super::analyze(&self.nodes, registry, interner);
         self.scope_cache = build_scope_cache(&self.result);
     }
-
-    /// Adjust spans in the result after an edit.
-    ///
-    /// This updates all spans that come after the edit point to account
-    /// for the change in text length.
-    #[allow(dead_code)]
-    fn adjust_spans(&mut self, edit: &SpanEdit) {
-        let delta = edit.offset_delta();
-        if delta == 0 {
-            return;
-        }
-
-        let edit_end = edit.span.end().offset();
-
-        // Adjust scope cache spans
-        for cache in &mut self.scope_cache {
-            if cache.span.start().offset() >= edit_end {
-                let new_start = (cache.span.start().offset() as i32 + delta) as u32;
-                let new_end = (cache.span.end().offset() as i32 + delta) as u32;
-                cache.span = Span::new(Pos::new(new_start), Pos::new(new_end));
-            } else if cache.span.end().offset() > edit_end {
-                let new_end = (cache.span.end().offset() as i32 + delta) as u32;
-                cache.span = Span::new(cache.span.start(), Pos::new(new_end));
-            }
-        }
-
-        // Note: In a full incremental implementation, we'd also need to
-        // adjust spans in:
-        // - IR nodes
-        // - Definitions
-        // - References
-        // - Diagnostics
-    }
 }
 
 /// Build the scope cache from an analysis result.
