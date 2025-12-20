@@ -168,6 +168,8 @@ impl std::fmt::Display for CType {
 pub struct CStack {
     slots: Vec<CType>,
     unknown_depth: bool,
+    /// How many items we tried to pop beyond empty (when depth is known).
+    underflow_amount: usize,
 }
 
 impl CStack {
@@ -176,6 +178,7 @@ impl CStack {
         Self {
             slots: Vec::new(),
             unknown_depth: false,
+            underflow_amount: 0,
         }
     }
 
@@ -191,11 +194,17 @@ impl CStack {
 
     /// Pop a type from the stack.
     /// Returns Unknown if stack is empty or has unknown depth.
+    /// Tracks underflow when stack is empty with known depth.
     pub fn pop(&mut self) -> CType {
-        if self.unknown_depth && self.slots.is_empty() {
+        if let Some(ty) = self.slots.pop() {
+            ty
+        } else if self.unknown_depth {
+            // Unknown depth - can't detect underflow
             CType::Unknown
         } else {
-            self.slots.pop().unwrap_or(CType::Unknown)
+            // Definite underflow - stack is empty and we know it
+            self.underflow_amount += 1;
+            CType::Unknown
         }
     }
 
@@ -229,6 +238,19 @@ impl CStack {
         self.unknown_depth
     }
 
+    /// Check and reset underflow counter.
+    /// Returns (needed, available) if underflow occurred.
+    pub fn take_underflow(&mut self, effect_consumes: usize) -> Option<(usize, usize)> {
+        if self.underflow_amount > 0 {
+            let needed = effect_consumes;
+            let available = effect_consumes.saturating_sub(self.underflow_amount);
+            self.underflow_amount = 0;
+            Some((needed, available))
+        } else {
+            None
+        }
+    }
+
     /// Mark the stack as having unknown depth.
     /// This happens after operations like CLEAR.
     pub fn mark_unknown_depth(&mut self) {
@@ -246,6 +268,7 @@ impl CStack {
     pub fn replace_with(&mut self, other: CStack) {
         self.slots = other.slots;
         self.unknown_depth = other.unknown_depth;
+        self.underflow_amount = other.underflow_amount;
     }
 
     /// Join with another stack (for control flow merge).

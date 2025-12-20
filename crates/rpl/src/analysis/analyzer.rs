@@ -57,6 +57,9 @@ struct Analyzer<'a> {
     /// Saved type stacks for program scopes.
     /// When entering a program, we save the outer stack and start fresh.
     saved_type_stacks: Vec<CStack>,
+    /// Set of spans that are binding metadata (index, name pairs).
+    /// Nodes with these spans should not affect the type stack.
+    binding_metadata_spans: std::collections::HashSet<Span>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -74,6 +77,7 @@ impl<'a> Analyzer<'a> {
             pending_arity: None,
             local_index_to_def: vec![HashMap::new()], // Root scope
             saved_type_stacks: Vec::new(),
+            binding_metadata_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -234,7 +238,7 @@ impl<'a> Analyzer<'a> {
     ///
     /// Uses the registry to determine if a command has a binding effect (Define, Read,
     /// Delete, Modify) and applies the stack effect from the registry.
-    fn handle_command(&mut self, lib: LibId, cmd: u16, _span: Span) {
+    fn handle_command(&mut self, lib: LibId, cmd: u16, span: Span) {
         // Check if this command has a binding effect
         let binding_effect = self.registry.get_binding_effect(lib, cmd);
 
@@ -248,7 +252,21 @@ impl<'a> Analyzer<'a> {
 
         // Apply the stack effect from the registry (single source of truth)
         let effect = self.registry.get_command_effect(lib, cmd, &self.type_stack);
+
+        // Get consume count for underflow reporting
+        let consumes = match &effect {
+            StackEffect::Fixed { consumes, .. } => *consumes as usize,
+            StackEffect::Permutation { inputs, .. } => *inputs as usize,
+            StackEffect::Dynamic => 0,
+        };
+
         self.type_stack.apply_effect(&effect);
+
+        // Check for stack underflow
+        if let Some((needed, available)) = self.type_stack.take_underflow(consumes) {
+            self.diagnostics
+                .push(Diagnostic::stack_underflow(span, needed, available));
+        }
 
         // Handle binding semantics (symbol tracking)
         if let Some(binding_kind) = binding_effect {
@@ -425,6 +443,24 @@ impl<'a> Analyzer<'a> {
             self.type_stack.pop();
         }
 
+        // Check for underflow from the pops above.
+        // This handles the case where a local binding construct (like `-> n <<...>>`)
+        // is used without enough values on the stack. The underflow should be reported
+        // here, not leaked to the first command inside the body.
+        //
+        // EXCEPTION: When the local binding is directly inside a Program scope, the
+        // pops represent function parameters, not stack underflow. The program expects
+        // callers to provide these values, so we don't report underflow.
+        if !parent_is_program {
+            if let Some((needed, available)) = self.type_stack.take_underflow(param_count) {
+                self.diagnostics
+                    .push(Diagnostic::stack_underflow(span, needed, available));
+            }
+        } else {
+            // Still clear the underflow counter to prevent it from leaking
+            self.type_stack.take_underflow(param_count);
+        }
+
         // Add definitions with inferred types
         for (i, (name, name_span, local_idx)) in param_names.into_iter().enumerate() {
             let ty = param_types.get(i).cloned();
@@ -444,8 +480,11 @@ impl Visitor for Analyzer<'_> {
         true // Always continue
     }
 
-    fn visit_integer(&mut self, value: i64, _node: &Node) {
-        self.handle_integer(value);
+    fn visit_integer(&mut self, value: i64, node: &Node) {
+        // Skip type effects for binding metadata (e.g., local indices in -> n <<>>)
+        if !self.binding_metadata_spans.contains(&node.span) {
+            self.handle_integer(value);
+        }
     }
 
     fn visit_real(&mut self, value: f64, _node: &Node) {
@@ -453,7 +492,10 @@ impl Visitor for Analyzer<'_> {
     }
 
     fn visit_string(&mut self, value: &str, node: &Node) {
-        self.handle_string(value, node.span);
+        // Skip type effects for binding metadata (e.g., local names in -> n <<>>)
+        if !self.binding_metadata_spans.contains(&node.span) {
+            self.handle_string(value, node.span);
+        }
     }
 
     fn visit_symbol(&mut self, sym: Symbol, node: &Node) {
@@ -500,6 +542,17 @@ impl Visitor for Analyzer<'_> {
         let binding_indices = self.registry.binding_branches(lib, construct_id, branches.len());
 
         if !binding_indices.is_empty() {
+            // Mark binding branch nodes as metadata (shouldn't affect type stack).
+            // Binding branches contain [Integer(index), String(name)] which are parsed
+            // metadata, not runtime values that should push onto the stack.
+            for &idx in &binding_indices {
+                if let Some(branch) = branches.get(idx) {
+                    for binding_node in branch {
+                        self.binding_metadata_spans.insert(binding_node.span);
+                    }
+                }
+            }
+
             // Determine if this is a loop construct (FOR, FORUP, FORDN)
             // Loop constructs create LoopVar bindings, others create Local bindings
             // Use well-known construct IDs from the flow library
@@ -536,6 +589,7 @@ impl Visitor for Analyzer<'_> {
 mod tests {
     use super::*;
     use crate::{
+        analysis::result::DiagnosticKind,
         core::Pos,
         interface::BindingKind,
         ir::{LibId, Node},
@@ -922,5 +976,348 @@ mod tests {
         assert!(def.value_type.is_some());
         let value_type = def.value_type.as_ref().unwrap();
         assert_eq!(value_type.as_known(), Some(TypeId::SYMBOLIC));
+    }
+
+    // === Stack Underflow Detection Tests ===
+
+    /// Mock stack interface with DROP (needs 1) and ROLL (dynamic).
+    struct MockStackInterface;
+
+    const MOCK_STACK_LIB: LibId = 72;
+    mod mock_stack_cmd {
+        pub const DROP: u16 = 1;
+        pub const ROLL: u16 = 5;
+    }
+
+    impl crate::libs::LibraryInterface for MockStackInterface {
+        fn id(&self) -> LibId {
+            MOCK_STACK_LIB
+        }
+        fn name(&self) -> &'static str {
+            "Stack"
+        }
+        fn commands(&self) -> Vec<CommandInfo> {
+            vec![
+                CommandInfo {
+                    name: "DROP",
+                    lib_id: MOCK_STACK_LIB,
+                    cmd_id: mock_stack_cmd::DROP,
+                    effect: StackEffect::fixed(1, &[]), // Consumes 1
+                },
+                CommandInfo {
+                    name: "ROLL",
+                    lib_id: MOCK_STACK_LIB,
+                    cmd_id: mock_stack_cmd::ROLL,
+                    effect: StackEffect::Dynamic, // Dynamic effect
+                },
+            ]
+        }
+        fn binding_effect(&self, _cmd: u16) -> Option<BindingKind> {
+            None
+        }
+    }
+
+    fn make_registry_with_stack() -> InterfaceRegistry {
+        let mut registry = InterfaceRegistry::new();
+        registry.add(MockDirectoryInterface);
+        registry.add(MockStackInterface);
+        registry
+    }
+
+    #[test]
+    fn detects_stack_underflow() {
+        let registry = make_registry_with_stack();
+        let interner = Interner::new();
+
+        // Just DROP on empty stack - needs 1, has 0
+        let nodes = vec![Node::command(
+            MOCK_STACK_LIB,
+            mock_stack_cmd::DROP,
+            make_span(0, 4),
+        )];
+
+        let result = analyze(&nodes, &registry, &interner);
+
+        assert!(
+            result.has_errors(),
+            "Expected underflow error, got no errors"
+        );
+        assert!(result.diagnostics.iter().any(|d| matches!(
+            d.kind,
+            DiagnosticKind::StackUnderflow
+        )));
+
+        // Check the message
+        let underflow_diag = result
+            .diagnostics
+            .iter()
+            .find(|d| matches!(d.kind, DiagnosticKind::StackUnderflow))
+            .unwrap();
+        assert!(underflow_diag.message.contains("1"));
+        assert!(underflow_diag.message.contains("0"));
+    }
+
+    #[test]
+    fn no_underflow_with_enough_items() {
+        let registry = make_registry_with_stack();
+        let interner = Interner::new();
+
+        // 42 DROP - has 1 item, DROP needs 1
+        let nodes = vec![
+            Node::integer(42, make_span(0, 2)),
+            Node::command(MOCK_STACK_LIB, mock_stack_cmd::DROP, make_span(3, 7)),
+        ];
+
+        let result = analyze(&nodes, &registry, &interner);
+
+        assert!(
+            !result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Expected no underflow, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn no_underflow_detection_after_dynamic() {
+        let registry = make_registry_with_stack();
+        let interner = Interner::new();
+
+        // 1 ROLL DROP - ROLL makes depth unknown, so we can't detect underflow
+        let nodes = vec![
+            Node::integer(1, make_span(0, 1)),
+            Node::command(MOCK_STACK_LIB, mock_stack_cmd::ROLL, make_span(2, 6)),
+            Node::command(MOCK_STACK_LIB, mock_stack_cmd::DROP, make_span(7, 11)),
+        ];
+
+        let result = analyze(&nodes, &registry, &interner);
+
+        // No underflow reported because ROLL set unknown_depth to true
+        assert!(
+            !result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Expected no underflow after dynamic op, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn partial_underflow_detected() {
+        let registry = make_registry_with_stack();
+        let interner = Interner::new();
+
+        // 42 STO on empty stack - STO needs 2, we only have 1
+        let nodes = vec![
+            Node::integer(42, make_span(0, 2)),
+            Node::string("x", make_span(3, 6)),
+            // Note: this pushes the string, so now stack has 2 items
+            Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(7, 10)),
+        ];
+
+        let result = analyze(&nodes, &registry, &interner);
+
+        // This should NOT have underflow - we have 2 items (42 and "x") and STO needs 2
+        assert!(
+            !result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Expected no underflow, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn underflow_with_one_item_missing() {
+        let registry = make_registry_with_stack();
+        let interner = Interner::new();
+
+        // Just "x" STO - STO needs 2, we only have 1
+        let nodes = vec![
+            Node::string("x", make_span(0, 3)),
+            Node::command(DIRECTORY_LIB, dir_cmd::STO, make_span(4, 7)),
+        ];
+
+        let result = analyze(&nodes, &registry, &interner);
+
+        // This SHOULD have underflow - STO needs 2, only have 1
+        assert!(
+            result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Expected underflow, got: {:?}",
+            result.diagnostics
+        );
+
+        let underflow_diag = result
+            .diagnostics
+            .iter()
+            .find(|d| matches!(d.kind, DiagnosticKind::StackUnderflow))
+            .unwrap();
+        assert!(underflow_diag.message.contains("2")); // needs 2
+        assert!(underflow_diag.message.contains("1")); // has 1
+    }
+
+    // === Local Binding Underflow Tests ===
+
+    // Locals library: lib 32, construct 0
+    // Branches: [binding_info...] + [body]
+    // Each binding_info is [Integer(index), String(name)]
+    const LOCALS_LIB: LibId = 32;
+    const LOCALS_ARROW: u16 = 0;
+
+    /// Mock Locals interface for binding tests.
+    struct MockLocalsInterface;
+
+    impl crate::libs::LibraryInterface for MockLocalsInterface {
+        fn id(&self) -> LibId {
+            LOCALS_LIB
+        }
+        fn name(&self) -> &'static str {
+            "Locals"
+        }
+        fn commands(&self) -> Vec<CommandInfo> {
+            vec![]
+        }
+        fn binding_branches(&self, _construct_id: u16, num_branches: usize) -> Vec<usize> {
+            // All branches except the last are bindings
+            if num_branches > 0 {
+                (0..num_branches - 1).collect()
+            } else {
+                vec![]
+            }
+        }
+    }
+
+    fn make_registry_with_locals() -> InterfaceRegistry {
+        let mut registry = InterfaceRegistry::new();
+        registry.add(MockDirectoryInterface);
+        registry.add(MockStackInterface);
+        registry.add(MockLocalsInterface);
+        registry
+    }
+
+    /// Helper to create a local binding Extended node: -> name << body >>
+    fn make_local_binding(name: &str, index: usize, body: Vec<Node>, span: Span) -> Node {
+        Node::extended(
+            LOCALS_LIB,
+            LOCALS_ARROW,
+            vec![
+                // Binding branch: [index, name]
+                vec![
+                    Node::integer(index as i64, span),
+                    Node::string(name, span),
+                ],
+                // Body branch
+                body,
+            ],
+            span,
+        )
+    }
+
+    #[test]
+    fn no_underflow_for_function_parameter() {
+        // << -> n << n 1 + >> >>
+        // The `-> n` is a function parameter, should NOT report underflow
+        let registry = make_registry_with_locals();
+        let interner = Interner::new();
+
+        let inner_body = vec![
+            Node::local_ref(0, make_span(10, 11)), // n
+            Node::integer(1, make_span(12, 13)),
+            // Would need + command but we don't have it, that's ok
+        ];
+
+        let locals_construct = make_local_binding("n", 0, inner_body, make_span(4, 20));
+
+        let program = Node::program(vec![locals_construct], make_span(0, 25));
+
+        let result = analyze(&[program], &registry, &interner);
+
+        // Should NOT have underflow - n is a function parameter
+        assert!(
+            !result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Function parameter should not cause underflow, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_binding_reports_underflow() {
+        // << -> a << -> b << a b >> >> >>
+        // The inner `-> b` is NOT a function parameter - it's nested inside `-> a`'s body.
+        // Since the stack is empty after `-> a` consumes its argument, `-> b` should error.
+        let registry = make_registry_with_locals();
+        let interner = Interner::new();
+
+        let innermost_body = vec![
+            Node::local_ref(0, make_span(20, 21)), // a
+            Node::local_ref(1, make_span(22, 23)), // b
+        ];
+
+        // -> b << a b >>
+        let inner_binding = make_local_binding("b", 1, innermost_body, make_span(12, 28));
+
+        // -> a << -> b << a b >> >>
+        let outer_binding = make_local_binding("a", 0, vec![inner_binding], make_span(4, 32));
+
+        let program = Node::program(vec![outer_binding], make_span(0, 36));
+
+        let result = analyze(&[program], &registry, &interner);
+
+        // SHOULD have underflow - the inner `-> b` needs a value but stack is empty
+        assert!(
+            result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Nested binding should report underflow when stack is empty, got: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_binding_no_underflow_when_value_provided() {
+        // << -> a << 42 -> b << a b >> >> >>
+        // Here `42` provides a value for `-> b`, so no underflow.
+        let registry = make_registry_with_locals();
+        let interner = Interner::new();
+
+        let innermost_body = vec![
+            Node::local_ref(0, make_span(25, 26)), // a
+            Node::local_ref(1, make_span(27, 28)), // b
+        ];
+
+        // -> b << a b >>
+        let inner_binding = make_local_binding("b", 1, innermost_body, make_span(15, 32));
+
+        // -> a << 42 -> b << a b >> >>
+        let outer_body = vec![
+            Node::integer(42, make_span(10, 12)), // This provides the value for -> b
+            inner_binding,
+        ];
+        let outer_binding = make_local_binding("a", 0, outer_body, make_span(4, 36));
+
+        let program = Node::program(vec![outer_binding], make_span(0, 40));
+
+        let result = analyze(&[program], &registry, &interner);
+
+        // Should NOT have underflow - 42 provides the value for -> b
+        assert!(
+            !result.diagnostics.iter().any(|d| matches!(
+                d.kind,
+                DiagnosticKind::StackUnderflow
+            )),
+            "Nested binding with value should not underflow, got: {:?}",
+            result.diagnostics
+        );
     }
 }

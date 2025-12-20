@@ -32,6 +32,8 @@ pub enum DiagnosticKind {
     WriteOnlyVariable,
     /// Duplicate definition in same scope.
     DuplicateDefinition,
+    /// Stack underflow - operation requires more items than available.
+    StackUnderflow,
 }
 
 impl DiagnosticKind {
@@ -40,6 +42,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::UndefinedVariable => Severity::Error,
             DiagnosticKind::DuplicateDefinition => Severity::Error,
+            DiagnosticKind::StackUnderflow => Severity::Error,
             DiagnosticKind::UnusedVariable => Severity::Warning,
             DiagnosticKind::ShadowedVariable => Severity::Warning,
             DiagnosticKind::WriteOnlyVariable => Severity::Warning,
@@ -134,6 +137,18 @@ impl Diagnostic {
             span,
             format!("Variable '{}' is already defined in this scope", name),
             original,
+        )
+    }
+
+    /// Create a stack underflow error.
+    pub fn stack_underflow(span: Span, needed: usize, available: usize) -> Self {
+        Self::new(
+            DiagnosticKind::StackUnderflow,
+            span,
+            format!(
+                "stack underflow: operation requires {} item(s) but stack has {}",
+                needed, available
+            ),
         )
     }
 
