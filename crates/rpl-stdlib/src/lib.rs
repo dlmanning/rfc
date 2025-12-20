@@ -8,6 +8,7 @@
 //! - List operations
 //! - Directory/variable storage
 //! - Transcendental functions (SIN, COS, etc.)
+//! - Statistics and random numbers (RAND, RDZ)
 //! - And more
 
 // Library modules
@@ -20,6 +21,7 @@ pub mod list;
 pub mod locals;
 pub mod prog;
 pub mod stack;
+pub mod statistics;
 pub mod strings;
 pub mod symbolic;
 pub mod transcendentals;
@@ -35,6 +37,7 @@ pub use list::ListLib;
 pub use locals::LocalsLib;
 pub use prog::ProgLib;
 pub use stack::StackLib;
+pub use statistics::StatisticsLib;
 pub use strings::StringsLib;
 pub use symbolic::SymbolicLib;
 pub use transcendentals::TranscendentalsLib;
@@ -50,6 +53,7 @@ pub use list::LIST_LIB;
 pub use locals::LOCALS_LIB;
 pub use prog::PROG_LIB;
 pub use stack::STACK_LIB;
+pub use statistics::STATISTICS_LIB;
 pub use strings::STRINGS_LIB;
 pub use symbolic::SYMBOLIC_LIB;
 pub use transcendentals::TRANSCENDENTALS_LIB;
@@ -102,6 +106,7 @@ pub fn register_interfaces(registry: &mut InterfaceRegistry) {
     registry.add(flow::interface().clone());
     registry.add(prog::interface().clone());
     registry.add(locals::interface().clone());
+    registry.add(statistics::interface().clone());
 }
 
 /// Register all standard library lowerers (for compilation).
@@ -121,6 +126,7 @@ pub fn register_lowerers(registry: &mut LowererRegistry) {
     registry.add(FlowLib);
     registry.add(ProgLib);
     registry.add(LocalsLib);
+    registry.add(StatisticsLib);
 }
 
 /// Register all standard library executors (for runtime).
@@ -143,4 +149,5 @@ pub fn register_executors(registry: &mut ExecutorRegistry) {
     registry.add(FlowLib);
     // ProgLib: no executor - EVAL is handled by VM directly
     registry.add(LocalsLib);
+    registry.add(StatisticsLib);
 }

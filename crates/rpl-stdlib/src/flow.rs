@@ -735,4 +735,40 @@ mod tests {
         assert!(tokens.contains(&"CASE"));
         assert!(tokens.contains(&"IFERR"));
     }
+
+    /// Regression test: EVAL inside START loop must preserve control stack.
+    /// Previously, EVAL would clear the control stack, causing "invalid branch depth"
+    /// errors when the loop tried to branch after the EVAL returned.
+    #[test]
+    fn eval_inside_start_loop_preserves_control_stack() {
+        let result = crate::eval(
+            r#"
+            << 1 + >> "inc" STO
+            0 "sum" STO
+            1 3 START
+                sum inc "sum" STO
+            NEXT
+            sum
+            "#,
+        );
+        assert_eq!(result, Ok(vec![Value::Integer(3)]));
+    }
+
+    /// Regression test: EVAL with IF/THEN/ELSE inside loop.
+    #[test]
+    fn eval_with_conditional_inside_loop() {
+        let result = crate::eval(
+            r#"
+            << 2 MOD 0 == >> "is_even" STO
+            0 "count" STO
+            1 5 FOR i
+                i is_even
+                IF THEN count 1 + "count" STO END
+            NEXT
+            count
+            "#,
+        );
+        // Loop counter 1-5: 2 and 4 are even
+        assert_eq!(result, Ok(vec![Value::Integer(2)]));
+    }
 }

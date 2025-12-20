@@ -717,35 +717,46 @@ impl<'a> LowerContext<'a> {
     // the StackEffect. They do NOT modify the type stack - the caller applies
     // the returned effect.
 
-    /// Coerce mixed int/real operands to real.
+    /// Coerce operands so both are real.
     ///
-    /// Returns `true` if coercion occurred (either operand was converted).
+    /// Returns `true` if successful (both operands are now real).
+    /// Returns `false` if coercion could not be done (unknown types that need
+    /// runtime type checking).
     fn coerce_to_real_if_mixed(&mut self) -> bool {
         let (tos, nos) = (self.types.top(), self.types.nos());
 
+        // Both already real - no coercion needed
+        if tos.is_real() && nos.is_real() {
+            return true;
+        }
+
+        // Both are known numeric - can coerce statically
         if tos.is_integer() && nos.is_real() {
             // TOS is int, NOS is real - convert TOS to real
             self.output.emit_f64_convert_i64_s();
-            true
-        } else if tos.is_real() && nos.is_integer() {
+            return true;
+        }
+        if tos.is_real() && nos.is_integer() {
             // TOS is real, NOS is int - need to convert NOS
             // Save TOS, convert NOS, restore TOS
             let tmp = self.scratch(0);
             self.output.emit_local_set(tmp);
             self.output.emit_f64_convert_i64_s();
             self.output.emit_local_get(tmp);
-            true
-        } else {
-            false
+            return true;
         }
+
+        // One or both types unknown - cannot coerce statically
+        // Caller should use library call for runtime type checking
+        false
     }
 
     /// Emit a binary numeric operation, choosing optimal opcode based on operand types.
     ///
     /// Uses `binary_numeric_effect` as single source of truth for type computation:
     /// - If both operands are integers: emits int_op
-    /// - If either is real (or mixed): coerces and emits real_op
-    /// - Otherwise: emits CallLib
+    /// - If both are known numeric and can be coerced to real: emits real_op
+    /// - Otherwise: emits CallLib for runtime type checking
     pub fn emit_binary_numeric(
         &mut self,
         int_op: Opcode,
@@ -767,9 +778,13 @@ impl<'a> LowerContext<'a> {
             StackEffect::Fixed { results, .. }
                 if results.first() == Some(&Some(TypeId::REAL)) =>
             {
-                // At least one real - coerce if needed and use real opcode
-                self.coerce_to_real_if_mixed();
-                self.output.emit_opcode(real_op);
+                // At least one real - try to coerce and use real opcode
+                if self.coerce_to_real_if_mixed() {
+                    self.output.emit_opcode(real_op);
+                } else {
+                    // Coercion failed (unknown type) - use library call
+                    self.output.emit_call_lib(lib, cmd);
+                }
             }
             _ => {
                 // Unknown types - use library call

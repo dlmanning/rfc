@@ -1,0 +1,5 @@
+library Statistics 98
+
+-- Random number generation
+0:     -> RAND -> Real
+1: Int -> RDZ  ->

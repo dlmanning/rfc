@@ -418,7 +418,8 @@ impl Vm {
             Vec::new()
         };
 
-        let saved = self.locals.save();
+        let saved_locals = self.locals.save();
+        let saved_control_stack = std::mem::take(&mut self.control_stack);
         self.locals.clear();
 
         // Bind parameters to locals 0..N
@@ -430,7 +431,7 @@ impl Vm {
             program: program_data,
             return_pc: self.pc,
             name,
-            saved_locals: saved.clone(),
+            saved_locals: saved_locals.clone(),
         });
 
         let result = if let Some(debug) = debug {
@@ -448,7 +449,8 @@ impl Vm {
         };
 
         self.return_stack.pop();
-        self.locals.restore(saved);
+        self.locals.restore(saved_locals);
+        self.control_stack = saved_control_stack;
         result?;
         Ok(Flow::Continue)
     }

@@ -327,4 +327,23 @@ mod tests {
     fn arith_lib_name() {
         assert_eq!(interface().name(), "Arithmetic");
     }
+
+    /// Regression test: division with unknown type operand and real literal.
+    /// Previously, when one operand was from a variable (unknown type at compile
+    /// time) and the other was a real literal, the lowerer would incorrectly try
+    /// to use native F64Div without proper type coercion, causing "expected real,
+    /// got integer" runtime errors.
+    #[test]
+    fn division_unknown_type_with_real() {
+        // Variable recall produces unknown type at compile time
+        let result = crate::eval("263 \"x\" STO x 500. /");
+        assert_eq!(result, Ok(vec![Value::Real(0.526)]));
+    }
+
+    /// Test that mixed int/real division still works when types are known.
+    #[test]
+    fn division_known_int_with_real() {
+        let result = crate::eval("263 500. /");
+        assert_eq!(result, Ok(vec![Value::Real(0.526)]));
+    }
 }
