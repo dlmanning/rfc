@@ -37,8 +37,10 @@ use crate::{
     libs::StackEffect,
     registry::{InterfaceRegistry, LowererRegistry},
     types::{CStack, CType},
-    vm::bytecode::{CatchKind, Opcode, write_leb128_i64, write_leb128_u32, write_u16},
 };
+
+// Use bytecode types from rpl-vm (the authority on the bytecode format)
+use rpl_vm::{CatchKind, Opcode, write_leb128_i64, write_leb128_u32, write_u16};
 
 /// Macro for generating simple opcode emitter methods.
 macro_rules! emit_simple {
@@ -1100,7 +1102,7 @@ mod tests {
         Span::new(Pos::new(0), Pos::new(1))
     }
 
-    use crate::vm::bytecode::Opcode;
+    use rpl_vm::Opcode;
 
     /// Minimal ArithInterface for testing type-directed lowering.
     struct MockArithInterface;

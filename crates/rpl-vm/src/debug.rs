@@ -530,4 +530,85 @@ mod tests {
         state.pause();
         assert_eq!(state.mode(), DebugMode::Paused);
     }
+
+    #[test]
+    fn debug_state_disabled_by_default() {
+        let state = DebugState::new();
+        assert!(!state.is_enabled());
+    }
+
+    #[test]
+    fn debug_state_enabled_constructor() {
+        let state = DebugState::enabled();
+        assert!(state.is_enabled());
+    }
+
+    #[test]
+    fn toggle_debug() {
+        let mut state = DebugState::new();
+        assert!(!state.is_enabled());
+
+        let enabled = state.toggle();
+        assert!(enabled);
+        assert!(state.is_enabled());
+
+        let enabled = state.toggle();
+        assert!(!enabled);
+        assert!(!state.is_enabled());
+    }
+
+    #[test]
+    fn enable_disable() {
+        let mut state = DebugState::new();
+
+        state.enable();
+        assert!(state.is_enabled());
+
+        state.disable();
+        assert!(!state.is_enabled());
+    }
+
+    #[test]
+    fn disabled_skips_breakpoints() {
+        let mut state = DebugState::new();
+        state.add_breakpoint(10);
+
+        // Disabled: should not hit breakpoint
+        let event = state.check(10, 0, None);
+        assert!(event.is_none());
+
+        // Enable and try again
+        state.enable();
+        let event = state.check(10, 0, None);
+        assert!(matches!(event, Some(DebugEvent::Breakpoint { pc: 10 })));
+    }
+
+    #[test]
+    fn disabled_skips_stepping() {
+        let mut state = DebugState::new();
+        state.step_into();
+        state.mark_executed();
+
+        // Disabled: should not step
+        let event = state.check(1, 0, None);
+        assert!(event.is_none());
+
+        // Enable and try again
+        state.enable();
+        let event = state.check(1, 0, None);
+        assert!(matches!(event, Some(DebugEvent::Step { pc: 1 })));
+    }
+
+    #[test]
+    fn is_debugging_respects_enabled() {
+        let mut state = DebugState::new();
+        state.add_breakpoint(10);
+
+        // Has breakpoint but disabled
+        assert!(!state.is_debugging());
+
+        // Enable - now is debugging
+        state.enable();
+        assert!(state.is_debugging());
+    }
 }

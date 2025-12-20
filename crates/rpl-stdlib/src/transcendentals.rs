@@ -11,16 +11,15 @@
 
 use std::sync::OnceLock;
 
-use rpl::core::Span;
-use rpl::interface::InterfaceSpec;
-
 use rpl::{
+    core::Span,
+    interface::InterfaceSpec,
     ir::{Branch, LibId},
     libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
-    vm::bytecode::Opcode,
 };
+use rpl_vm::Opcode;
 
 /// Interface declaration for the Transcendentals library.
 const INTERFACE: &str = include_str!("interfaces/transcendentals.rpli");
@@ -28,7 +27,9 @@ const INTERFACE: &str = include_str!("interfaces/transcendentals.rpli");
 /// Get the runtime library (lazily initialized).
 pub fn interface() -> &'static InterfaceSpec {
     static SPEC: OnceLock<InterfaceSpec> = OnceLock::new();
-    SPEC.get_or_init(|| InterfaceSpec::from_dsl(INTERFACE).expect("invalid transcendentals interface"))
+    SPEC.get_or_init(|| {
+        InterfaceSpec::from_dsl(INTERFACE).expect("invalid transcendentals interface")
+    })
 }
 
 /// Transcendentals library ID (matches rpl-stdlib).
@@ -79,7 +80,8 @@ impl LibraryLowerer for TranscendentalsLib {
         _span: Span,
         _ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
+        Err(LowerError {
+            span: None,
             message: "Transcendentals library has no composites".into(),
         })
     }

@@ -17,8 +17,8 @@ use rpl::{
     libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
-    vm::bytecode::Opcode,
 };
+use rpl_vm::Opcode;
 
 /// Interface declaration with explicit IDs.
 const INTERFACE: &str = include_str!("interfaces/flow.rpli");

@@ -70,7 +70,7 @@ impl LibraryLowerer for ArithLib {
         _span: Span,
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        use rpl::vm::bytecode::Opcode;
+        use rpl_vm::Opcode;
 
         // Emit bytecode based on command - effect is determined by command_effect
         match cmd {

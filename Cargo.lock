@@ -2133,6 +2133,7 @@ dependencies = [
 name = "rpl"
 version = "0.1.0"
 dependencies = [
+ "rpl-vm",
  "smallvec",
  "thiserror 2.0.17",
 ]
@@ -2183,6 +2184,7 @@ name = "rpl-stdlib"
 version = "0.1.0"
 dependencies = [
  "rpl",
+ "rpl-vm",
 ]
 
 [[package]]
@@ -2196,6 +2198,13 @@ dependencies = [
  "rpl-plot",
  "unicode-segmentation",
  "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "rpl-vm"
+version = "0.1.0"
+dependencies = [
+ "smallvec",
 ]
 
 [[package]]

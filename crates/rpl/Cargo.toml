@@ -7,5 +7,6 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+rpl-vm = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }

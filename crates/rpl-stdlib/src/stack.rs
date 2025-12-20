@@ -14,8 +14,8 @@ use rpl::{
     libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
-    vm::bytecode::Opcode,
 };
+use rpl_vm::Opcode;
 
 /// Interface declaration for the Stack library.
 const INTERFACE: &str = include_str!("interfaces/stack.rpli");

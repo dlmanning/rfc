@@ -101,7 +101,7 @@ impl DebugSession {
         source: SourceFile,
         source_path: PathBuf,
     ) -> Self {
-        let mut debug = DebugState::new();
+        let mut debug = DebugState::enabled();
         debug.pause(); // Start paused
 
         Self {

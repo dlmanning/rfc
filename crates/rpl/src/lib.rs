@@ -3,23 +3,26 @@
 //! This crate implements a clean two-pass compilation pipeline:
 //! - **Parse**: Tokens → IR (intermediate representation)
 //! - **Lower**: IR → Bytecode
-//! - **Execute**: Bytecode runs on our VM
+//! - **Execute**: Bytecode runs on the rpl-vm crate
 //!
 //! # Architecture
 //!
 //! ```text
-//! Tokens → IR → Bytecode → VM
-//!          ↑        ↑        ↑
-//!       Phase 1  Phase 2  Phase 3
-//!       (parse)  (lower)  (execute)
+//! Tokens → IR → Bytecode → VM (rpl-vm)
+//!          ↑        ↑           ↑
+//!       Phase 1  Phase 2     Runtime
+//!       (parse)  (lower)    (execute)
 //! ```
+//!
+//! The VM (rpl-vm crate) is the authority on the bytecode format.
+//! This crate is a client that produces bytecode by depending on rpl-vm.
 //!
 //! # Key Design Decisions
 //!
 //! 1. **Three grammar primitives**: Program `« »`, List `{ }`, Symbolic `' '`
 //! 2. **No complex literals**: Complex numbers via commands, not syntax
 //! 3. **No closures**: Variables in nested programs use runtime lookup
-//! 4. **Self-contained**: Own VM, Value type, and compilation infrastructure
+//! 4. **VM owns bytecode format**: rpl-vm defines Opcode, this crate emits it
 //!
 //! # Example
 //!
@@ -72,6 +75,14 @@ pub use session::{AnalysisSession, Runtime, Session, SessionConfig, EvalError};
 pub use session::lsp;
 pub use session::debug as debug_helpers;
 pub use vm::{DebugState, DebugMode, DebugEvent, ExecuteOutcome, ReturnEntry};
+
+// Re-export VM types from rpl-vm for convenience
+// These are the authoritative definitions; our local modules will transition to use these
+pub use rpl_vm::{
+    Opcode, BlockType, CatchKind,
+    read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
+    write_f64, write_leb128_i64, write_leb128_u32, write_u16, write_u32,
+};
 
 /// Evaluate RPL source code and return the resulting stack.
 ///

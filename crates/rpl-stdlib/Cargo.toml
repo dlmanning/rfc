@@ -12,3 +12,4 @@ path = "bin/rpl.rs"
 
 [dependencies]
 rpl = { workspace = true }
+rpl-vm = { workspace = true }

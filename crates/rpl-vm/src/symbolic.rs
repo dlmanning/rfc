@@ -15,42 +15,7 @@
 
 use std::{fmt, sync::Arc};
 
-// === Serialization helpers ===
-
-fn write_leb128_u32(mut value: u32, output: &mut Vec<u8>) {
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        output.push(byte);
-        if value == 0 {
-            break;
-        }
-    }
-}
-
-fn read_leb128_u32(bytes: &[u8], offset: &mut usize) -> Option<u32> {
-    let mut result: u32 = 0;
-    let mut shift = 0;
-    loop {
-        if *offset >= bytes.len() {
-            return None;
-        }
-        let byte = bytes[*offset];
-        *offset += 1;
-        result |= ((byte & 0x7F) as u32) << shift;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-        if shift >= 32 {
-            return None;
-        }
-    }
-    Some(result)
-}
+use crate::bytecode::{read_leb128_u32, write_leb128_u32};
 
 /// A symbolic expression node.
 #[derive(Clone, Debug, PartialEq)]

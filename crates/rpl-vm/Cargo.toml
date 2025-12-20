@@ -1,0 +1,11 @@
+[package]
+name = "rpl-vm"
+version = "0.1.0"
+edition = "2024"
+description = "RPL virtual machine and bytecode execution"
+
+[lints]
+workspace = true
+
+[dependencies]
+smallvec = "1.11"
