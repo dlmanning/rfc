@@ -59,16 +59,23 @@ pub fn collect_globals(
             params,
         } = pattern
         {
-            // Create parameter definitions
-            let param_def_ids = create_param_definitions(params, symbols);
+            // Create parameter definitions (each gets a TypeVar)
+            let param_def_ids = create_param_definitions(params, symbols, &mut next_type_var);
 
             // Create a fresh type variable for the return type
             let return_tv = TypeVar(next_type_var);
             next_type_var += 1;
 
             // Create preliminary signature
-            // Inputs are Unknown (will be narrowed by constraints)
-            let inputs: Vec<Type> = param_def_ids.iter().map(|_| Type::Unknown).collect();
+            // Inputs use the same TypeVars as parameter definitions
+            let inputs: Vec<Type> = param_def_ids
+                .iter()
+                .filter_map(|&def_id| {
+                    symbols
+                        .get_definition(def_id)
+                        .and_then(|d| d.value_type.clone())
+                })
+                .collect();
 
             // Output is a TypeVar (will be unified with actual return type)
             let outputs = vec![Type::TypeVar(return_tv)];
@@ -105,10 +112,20 @@ pub fn collect_globals(
 }
 
 /// Create parameter definitions from param info.
-fn create_param_definitions(params: &[ParamInfo], symbols: &mut SymbolTable) -> Vec<DefinitionId> {
+///
+/// Each parameter gets a fresh TypeVar so constraints can resolve its type.
+fn create_param_definitions(
+    params: &[ParamInfo],
+    symbols: &mut SymbolTable,
+    next_type_var: &mut u32,
+) -> Vec<DefinitionId> {
     params
         .iter()
         .map(|param| {
+            // Create a fresh type variable for this parameter
+            let param_tv = TypeVar(*next_type_var);
+            *next_type_var += 1;
+
             let mut def = Definition::new(
                 param.name.clone(),
                 param.span,
@@ -116,8 +133,8 @@ fn create_param_definitions(params: &[ParamInfo], symbols: &mut SymbolTable) -> 
                 ScopeId::root(), // Will be updated during traversal
             );
             def.local_index = Some(param.local_index);
-            // Type is Unknown initially; will be narrowed by constraints
-            def.value_type = Some(Type::Unknown);
+            // Use TypeVar so constraints can resolve the type
+            def.value_type = Some(Type::TypeVar(param_tv));
 
             symbols.add_definition(def)
         })
@@ -178,9 +195,10 @@ mod tests {
 
         let info = &globals["test"];
         assert_eq!(info.param_def_ids.len(), 2);
-        assert_eq!(info.return_type_var, TypeVar(0));
+        // Return TypeVar is after the 2 param TypeVars (0, 1)
+        assert_eq!(info.return_type_var, TypeVar(2));
 
-        // Next type var should be 1
-        assert_eq!(next_tv, 1);
+        // Next type var should be 3 (2 params + 1 return)
+        assert_eq!(next_tv, 3);
     }
 }

@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use smallvec::SmallVec;
+
 use super::{
     state::Substitution,
     types::{Constraint, Requirement, Type},
@@ -103,11 +105,12 @@ struct MustBeInfo {
 pub fn resolve_constraints(
     constraints: Vec<Constraint>,
     symbols: &mut SymbolTable,
-    _substitution: &mut Substitution,
+    substitution: &mut Substitution,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut uf = UnionFind::new();
     let mut must_be_constraints: Vec<MustBeInfo> = Vec::new();
+    let mut called_with_types: HashMap<DefinitionId, SmallVec<[TypeId; 4]>> = HashMap::new();
 
     // Step 1: Process constraints
     for constraint in constraints {
@@ -135,7 +138,35 @@ pub fn resolve_constraints(
                     operation,
                 });
             }
+            Constraint::CalledWith {
+                def_id,
+                type_id,
+                span: _,
+            } => {
+                uf.make_set(def_id);
+                // Collect all types this parameter is called with (union them)
+                let types = called_with_types.entry(def_id).or_default();
+                if !types.contains(&type_id) {
+                    types.push(type_id);
+                }
+            }
         }
+    }
+
+    // Step 1b: Convert CalledWith unions to MustBe constraints
+    // If a parameter is called with multiple types, it must accept all of them (OneOf)
+    for (def_id, types) in called_with_types {
+        let requirement = if types.len() == 1 {
+            Requirement::Exact(types[0])
+        } else {
+            Requirement::OneOf(types)
+        };
+        must_be_constraints.push(MustBeInfo {
+            def_id,
+            requirement,
+            span: Span::default(), // No specific span for unioned constraint
+            operation: "call".to_string(),
+        });
     }
 
     // Step 2: Group MustBe constraints by equivalence class root
@@ -147,6 +178,24 @@ pub fn resolve_constraints(
         class_constraints.entry(root).or_default().push(info);
     }
 
+    // Step 2b: Unify TypeVars within each equivalence class
+    // When definitions are linked by Equal constraints, their TypeVars should be unified
+    // so that resolving one resolves all of them
+    for members in classes.values() {
+        let mut representative_tv: Option<super::TypeVar> = None;
+        for &member in members {
+            if let Some(def) = symbols.get_definition(member)
+                && let Some(Type::TypeVar(tv)) = &def.value_type {
+                    if let Some(repr) = representative_tv {
+                        // Unify this TypeVar with the representative
+                        substitution.unify(*tv, Type::TypeVar(repr));
+                    } else {
+                        representative_tv = Some(*tv);
+                    }
+                }
+        }
+    }
+
     // Step 3: For each equivalence class, unify requirements
     for (root, constraints) in class_constraints {
         let members = classes.get(&root).cloned().unwrap_or_else(|| vec![root]);
@@ -154,7 +203,7 @@ pub fn resolve_constraints(
         match unify_requirements(&constraints) {
             Ok(final_req) => {
                 // Apply the unified requirement to all members of the class
-                apply_requirement_to_class(&members, &final_req, symbols);
+                apply_requirement_to_class(&members, &final_req, symbols, substitution);
             }
             Err((first, second)) => {
                 // Report type conflict
@@ -199,10 +248,13 @@ fn unify_requirements<'a>(
 }
 
 /// Apply a requirement to all definitions in a class.
+///
+/// Also updates the substitution for any TypeVars in the definitions.
 fn apply_requirement_to_class(
     members: &[DefinitionId],
     requirement: &Requirement,
     symbols: &mut SymbolTable,
+    substitution: &mut Substitution,
 ) {
     let new_type = match requirement {
         Requirement::Exact(t) => Some(Type::Known(*t)),
@@ -213,6 +265,11 @@ fn apply_requirement_to_class(
     if let Some(ty) = new_type {
         for &member in members {
             if let Some(def) = symbols.get_definition_mut(member) {
+                // If the definition had a TypeVar, record the substitution
+                if let Some(Type::TypeVar(tv)) = &def.value_type {
+                    substitution.unify(*tv, ty.clone());
+                }
+
                 // Intersect with existing type if present
                 def.value_type = Some(match &def.value_type {
                     Some(existing) => meet_types(existing, &ty),
@@ -318,8 +375,8 @@ pub fn finalize_signatures(
 
         // Now apply the updates with a mutable borrow
         if let Some((param_types, mut new_outputs)) = updates {
-            // If any output is Unknown, try to resolve from return origin
-            if new_outputs.iter().any(|o| o.is_unknown())
+            // If any output is Unknown or TypeVar, try to resolve from return origin
+            if new_outputs.iter().any(|o| o.is_unknown() || o.is_type_var())
                 && let Some(origin) = return_origins.get(&def_name)
             {
                 // Get all def_ids from the origin (handles Phi nodes)
@@ -344,9 +401,9 @@ pub fn finalize_signatures(
                             final_type = final_type.join(ty);
                         }
 
-                        // Replace Unknown outputs with the resolved type
+                        // Replace Unknown or TypeVar outputs with the resolved type
                         for output in &mut new_outputs {
-                            if output.is_unknown() {
+                            if output.is_unknown() || output.is_type_var() {
                                 *output = final_type.clone();
                             }
                         }

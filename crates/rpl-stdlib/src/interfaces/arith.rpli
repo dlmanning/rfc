@@ -13,12 +13,14 @@ library Arithmetic 64
 7:    a:(Int | Real) -> ABS -> a
 
 -- Comparisons (return 0 or 1)
+-- Equality works on any type
 8:  a b -> (==), SAME -> Int
 9:  a b -> (!=), (<>) -> Int
-10: a b -> (<)  -> Int
-11: a b -> (<=) -> Int
-12: a b -> (>)  -> Int
-13: a b -> (>=) -> Int
+-- Ordering requires comparable types (numeric or string)
+10: a:(Int | Real | Str) b:(Int | Real | Str) -> (<)  -> Int
+11: a:(Int | Real | Str) b:(Int | Real | Str) -> (<=) -> Int
+12: a:(Int | Real | Str) b:(Int | Real | Str) -> (>)  -> Int
+13: a:(Int | Real | Str) b:(Int | Real | Str) -> (>=) -> Int
 
 -- Additional arithmetic
 14: a:(Int | Real) b:(Int | Real) -> (^)  -> Real

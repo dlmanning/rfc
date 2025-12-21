@@ -354,11 +354,19 @@ impl fmt::Display for Requirement {
 #[derive(Clone, Debug)]
 pub enum Constraint {
     /// Definition must satisfy this requirement (from usage).
+    /// These constraints are INTERSECTED - the type must satisfy ALL usage requirements.
     MustBe {
         def_id: DefinitionId,
         requirement: Requirement,
         span: Span,
         operation: String,
+    },
+    /// Definition is called with this type at a call site.
+    /// These constraints are UNIONED - the type must accept ANY of the call site types.
+    CalledWith {
+        def_id: DefinitionId,
+        type_id: TypeId,
+        span: Span,
     },
     /// Two definitions must have the same type (for HM inference).
     Equal {
@@ -381,6 +389,15 @@ impl Constraint {
             requirement,
             span,
             operation: operation.into(),
+        }
+    }
+
+    /// Create a CalledWith constraint (for function call sites).
+    pub fn called_with(def_id: DefinitionId, type_id: TypeId, span: Span) -> Self {
+        Constraint::CalledWith {
+            def_id,
+            type_id,
+            span,
         }
     }
 

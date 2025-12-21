@@ -135,6 +135,22 @@ pub fn analyze(
     // Finalize signatures with resolved types
     finalize_signatures(&mut symbols, &substitution, &return_origins);
 
+    // Apply substitution to node_stacks so lowerer gets resolved types
+    let node_stacks = node_stacks
+        .into_iter()
+        .map(|(span, snapshot)| {
+            (
+                span,
+                StackSnapshot {
+                    tos: substitution.apply(&snapshot.tos),
+                    nos: substitution.apply(&snapshot.nos),
+                    depth: snapshot.depth,
+                    depth_known: snapshot.depth_known,
+                },
+            )
+        })
+        .collect();
+
     // Post-processing checks
     let post_diagnostics = post_analysis_checks(&symbols);
     diagnostics.extend(post_diagnostics);

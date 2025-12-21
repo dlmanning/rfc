@@ -19,6 +19,7 @@ pub fn session_with_stdlib() -> Session {
 mod analysis;
 mod arithmetic;
 mod binary_int;
+mod bytecode;
 mod comparison;
 mod complex;
 mod directory;

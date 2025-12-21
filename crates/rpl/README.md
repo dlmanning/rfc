@@ -81,7 +81,7 @@ let result = eval(r#"
 | `value` | Runtime value types (Integer, Real, String, List, Program, etc.) |
 | `libs` | Standard library implementations |
 | `registry` | Command registration and dispatch |
-| `analysis` | Static analysis, symbols, scopes, diagnostics |
+| `analysis` | 4-phase static analysis: patterns, globals, traversal, constraint resolution |
 | `session` | High-level API for applications |
 | `serialize` | Value serialization for PACKDIR and libraries |
 | `symbolic` | Symbolic expression representation and evaluation |

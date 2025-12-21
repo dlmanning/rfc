@@ -616,8 +616,6 @@ pub struct LowerContext<'a> {
     next_local: u32,
     /// Base index for scratch locals (0, 1, 2).
     scratch_base: u32,
-    /// Tracked types for local variables (indexed by local index).
-    local_types: Vec<Type>,
     /// Mapping from parsed user local indices to actual local indices.
     /// This avoids conflicts between user locals and dynamically allocated locals.
     user_local_map: HashMap<u32, u32>,
@@ -636,11 +634,6 @@ impl<'a> LowerContext<'a> {
         interner: &'a Interner,
         analysis: &'a AnalysisResult,
     ) -> Self {
-        // Pre-allocate scratch locals as Unknown type
-        let mut local_types = Vec::new();
-        for _ in 0..SCRATCH_LOCAL_COUNT {
-            local_types.push(Type::Unknown);
-        }
         Self {
             output: BytecodeBuffer::new(),
             interfaces,
@@ -652,7 +645,6 @@ impl<'a> LowerContext<'a> {
             // Reserve first 3 locals for scratch (stack ops)
             next_local: SCRATCH_LOCAL_COUNT,
             scratch_base: 0,
-            local_types,
             user_local_map: HashMap::new(),
         }
     }
@@ -673,9 +665,6 @@ impl<'a> LowerContext<'a> {
     /// Convert a user-defined local index (from parsing) to the actual local index.
     /// Uses a mapping to avoid conflicts between user locals and dynamically allocated locals.
     /// Each unique parsed index gets its own allocated local on first use.
-    ///
-    /// Looks up the inferred type for the local variable from analysis using
-    /// scope-aware lookup to handle same local indices in different functions.
     pub fn user_local(&mut self, parsed_idx: u32) -> u32 {
         // Check if we've already mapped this index
         if let Some(&actual_idx) = self.user_local_map.get(&parsed_idx) {
@@ -685,27 +674,6 @@ impl<'a> LowerContext<'a> {
         // Allocate a new local
         let actual_idx = self.next_local;
         self.next_local += 1;
-
-        // Look up the inferred type from analysis results using scope-aware lookup.
-        // Use the current span to find the definition in the correct scope.
-        let current_span = self.output.current_span();
-        let ty = if let Some(span) = current_span {
-            // Scope-aware lookup: find definition whose scope contains this span
-            self.analysis
-                .find_by_local_index_at_span(parsed_idx as usize, span)
-                .and_then(|def| def.value_type.clone())
-                .unwrap_or(Type::Unknown)
-        } else {
-            // Fallback if no span available
-            self.analysis
-                .symbols
-                .find_by_local_index(parsed_idx as usize)
-                .and_then(|def| def.value_type.clone())
-                .unwrap_or(Type::Unknown)
-        };
-
-        // Store the type directly
-        self.local_types.push(ty);
         self.user_local_map.insert(parsed_idx, actual_idx);
         actual_idx
     }
@@ -732,12 +700,10 @@ impl<'a> LowerContext<'a> {
     }
 
     /// Allocate a new local and return its index.
-    /// The local starts with Unknown type until a value is stored.
     #[must_use]
     pub fn alloc_local(&mut self) -> u32 {
         let idx = self.next_local;
         self.next_local += 1;
-        self.local_types.push(Type::Unknown);
         idx
     }
 
@@ -746,28 +712,7 @@ impl<'a> LowerContext<'a> {
     pub fn alloc_locals(&mut self, count: u32) -> u32 {
         let start = self.next_local;
         self.next_local += count;
-        for _ in 0..count {
-            self.local_types.push(Type::Unknown);
-        }
         start
-    }
-
-    /// Get the tracked type of a local variable.
-    #[must_use]
-    pub fn local_type(&self, index: u32) -> Type {
-        self.local_types
-            .get(index as usize)
-            .cloned()
-            .unwrap_or(Type::Unknown)
-    }
-
-    /// Set the tracked type of a local variable.
-    pub fn set_local_type(&mut self, index: u32, ty: Type) {
-        let idx = index as usize;
-        if idx >= self.local_types.len() {
-            self.local_types.resize(idx + 1, Type::Unknown);
-        }
-        self.local_types[idx] = ty;
     }
 
     /// Get the number of locals allocated so far (including scratch).
@@ -1041,15 +986,7 @@ impl<'a> LowerContext<'a> {
     }
 
     /// Emit local.set and decrement depth.
-    ///
-    /// Updates the local's tracked type from analysis if available.
     pub fn emit_local_set(&mut self, index: u32) {
-        // Try to get the type from analysis snapshot
-        let snapshot = self.stack_snapshot();
-        if !snapshot.tos.is_unknown()
-            && let Some(known) = snapshot.tos.as_known() {
-                self.set_local_type(index, Type::Known(known));
-            }
         self.output.emit_local_set(index);
         self.pop_depth();
     }
@@ -1064,6 +1001,79 @@ impl<'a> LowerContext<'a> {
     pub fn emit_f64_const(&mut self, value: f64) {
         self.output.emit_f64_const(value);
         self.push_depth();
+    }
+
+    // ========== Control flow wrappers with depth tracking ==========
+
+    /// Emit block (no depth change).
+    pub fn emit_block(&mut self) {
+        self.output.emit_block();
+    }
+
+    /// Emit loop (no depth change).
+    pub fn emit_loop(&mut self) {
+        self.output.emit_loop();
+    }
+
+    /// Emit if (consumes condition from stack).
+    pub fn emit_if(&mut self) {
+        self.pop_depth(); // IF consumes condition
+        self.output.emit_if();
+    }
+
+    /// Emit else (no depth change).
+    pub fn emit_else(&mut self) {
+        self.output.emit_else();
+    }
+
+    /// Emit end (no depth change).
+    pub fn emit_end(&mut self) {
+        self.output.emit_end();
+    }
+
+    /// Emit br (unconditional branch, no depth change).
+    pub fn emit_br(&mut self, depth: u32) {
+        self.output.emit_br(depth);
+    }
+
+    /// Emit br_if (consumes condition from stack).
+    pub fn emit_br_if(&mut self, depth: u32) {
+        self.pop_depth(); // br_if consumes condition
+        self.output.emit_br_if(depth);
+    }
+
+    /// Emit i64.eqz (1 -> 1, no depth change).
+    pub fn emit_i64_eqz(&mut self) {
+        self.output.emit_opcode(rpl_vm::Opcode::I64Eqz);
+    }
+
+    /// Emit throw (no depth change, aborts control flow).
+    pub fn emit_throw(&mut self, tag: u32) {
+        self.output.emit_throw(tag);
+    }
+
+    /// Emit try_table with catch_all (no depth change).
+    pub fn emit_try_table_catch_all(&mut self, label: u32) {
+        self.output.emit_try_table_catch_all(label);
+    }
+
+    /// Emit select (consumes 3, produces 1: condition, false_val, true_val -> result).
+    pub fn emit_select(&mut self) {
+        self.output.emit_opcode(rpl_vm::Opcode::Select);
+        self.pop_depth(); // condition
+        self.pop_depth(); // one of the values (other becomes result)
+    }
+
+    /// Merge multiple branch depths into a single result.
+    ///
+    /// Returns (min_depth, all_known) for use with restore_depth.
+    pub fn merge_depths(depths: &[(usize, bool)]) -> (usize, bool) {
+        if depths.is_empty() {
+            return (0, true);
+        }
+        let min = depths.iter().map(|(d, _)| *d).min().unwrap_or(0);
+        let known = depths.iter().all(|(_, k)| *k);
+        (min, known)
     }
 
     /// Lower a sequence of nodes.
@@ -1243,7 +1253,8 @@ pub fn lower(
 
 /// Lower IR nodes to bytecode and string table (for nested programs).
 ///
-/// Requires analysis results for type-directed code generation.
+/// This is an alias for `lower()` - both produce identical `CompiledProgram` output.
+#[inline]
 pub fn lower_to_program(
     nodes: &[Node],
     interfaces: &InterfaceRegistry,
@@ -1251,9 +1262,7 @@ pub fn lower_to_program(
     interner: &Interner,
     analysis: &AnalysisResult,
 ) -> Result<CompiledProgram, LowerError> {
-    let mut ctx = LowerContext::new(interfaces, lowerers, interner, analysis);
-    ctx.lower_all(nodes)?;
-    Ok(ctx.finish())
+    lower(nodes, interfaces, lowerers, interner, analysis)
 }
 
 #[cfg(test)]

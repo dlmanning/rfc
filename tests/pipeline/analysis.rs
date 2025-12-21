@@ -610,12 +610,13 @@ fn local_parameters_after_user_word_are_unknown() {
         .expect("Should find 'y' definition");
 
     // After calling 'myword', stack is unknown, so 'y' should have Unknown type
-    // (or None if value_type is not set)
+    // or TypeVar (unresolved type variable). The key is it shouldn't be a specific
+    // wrong type like String.
     if let Some(ref ty) = y_def.value_type {
-        // The type should be Unknown (not a specific wrong type like String)
+        // The type should be Unknown or TypeVar (not a specific wrong type like String)
         assert!(
-            ty.is_unknown(),
-            "Parameter 'y' should be Unknown after user word call, got {:?}",
+            ty.is_unknown() || ty.is_type_var(),
+            "Parameter 'y' should be Unknown or TypeVar after user word call, got {:?}",
             ty
         );
     }

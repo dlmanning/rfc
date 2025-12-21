@@ -257,15 +257,14 @@ impl<'a> Traverser<'a> {
                         self.constraints.push(Constraint::equal(arg_def_id, param_def_id, span));
                     }
 
-                // If argument has known type, constrain parameter
+                // If argument has known type, record call site type (unioned, not intersected)
                 let arg_ty = self.stack.type_at(stack_pos);
                 if let Type::Known(t) = arg_ty
                     && let Some(&param_def_id) = info.param_def_ids.get(i) {
-                        self.constraints.push(Constraint::must_be(
+                        self.constraints.push(Constraint::called_with(
                             param_def_id,
-                            Requirement::Exact(t),
+                            t,
                             span,
-                            name,
                         ));
                     }
             }
@@ -323,12 +322,21 @@ impl<'a> Traverser<'a> {
             .collect();
 
         // Infer types from stack BEFORE consuming values
+        // If stack type is Unknown (e.g., program parameters), use a TypeVar
+        // so constraint resolution can narrow it based on usage.
         let param_count = bindings.len();
         let param_types: Vec<Type> = if is_loop {
             vec![Type::Known(TypeId::BINT); param_count]
         } else {
             (0..param_count)
-                .map(|i| self.stack.type_at(param_count - 1 - i))
+                .map(|i| {
+                    let ty = self.stack.type_at(param_count - 1 - i);
+                    if ty.is_unknown() {
+                        Type::TypeVar(self.fresh_type_var())
+                    } else {
+                        ty
+                    }
+                })
                 .collect()
         };
 

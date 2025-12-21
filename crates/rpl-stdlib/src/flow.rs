@@ -89,31 +89,24 @@ impl LibraryLowerer for FlowLib {
                     });
                 }
                 ctx.lower_all(&branches[0])?;
-                ctx.pop_depth(); // condition consumed
                 let pre_branch = ctx.save_depth();
-                ctx.output.emit_if();
+                ctx.emit_if(); // consumes condition
                 ctx.lower_all(&branches[1])?;
 
                 if branches.len() >= 3 {
                     // Has ELSE branch
                     let then_depth = ctx.save_depth();
                     ctx.restore_depth(pre_branch);
-                    ctx.output.emit_else();
+                    ctx.emit_else();
                     ctx.lower_all(&branches[2])?;
                     let else_depth = ctx.save_depth();
-                    // Use minimum depth from both branches
-                    let min_depth = then_depth.0.min(else_depth.0);
-                    let known = then_depth.1 && else_depth.1;
-                    ctx.restore_depth((min_depth, known));
-                    ctx.output.emit_end();
+                    ctx.restore_depth(LowerContext::merge_depths(&[then_depth, else_depth]));
+                    ctx.emit_end();
                 } else {
                     // No ELSE
-                    ctx.output.emit_end();
+                    ctx.emit_end();
                     let then_depth = ctx.save_depth();
-                    // Use minimum depth from pre-branch and then-branch
-                    let min_depth = pre_branch.0.min(then_depth.0);
-                    let known = pre_branch.1 && then_depth.1;
-                    ctx.restore_depth((min_depth, known));
+                    ctx.restore_depth(LowerContext::merge_depths(&[pre_branch, then_depth]));
                 }
                 Ok(())
             }
@@ -161,17 +154,14 @@ impl LibraryLowerer for FlowLib {
                     });
                 }
                 let pre_loop = ctx.save_depth();
-                ctx.output.emit_loop();
+                ctx.emit_loop();
                 ctx.lower_all(&branches[0])?;
                 ctx.lower_all(&branches[1])?;
-                ctx.output.emit_i64_eqz();
-                ctx.pop_depth();
-                ctx.output.emit_br_if(0);
-                ctx.output.emit_end();
+                ctx.emit_i64_eqz();
+                ctx.emit_br_if(0); // consumes condition
+                ctx.emit_end();
                 let post_loop = ctx.save_depth();
-                let min_depth = pre_loop.0.min(post_loop.0);
-                let known = pre_loop.1 && post_loop.1;
-                ctx.restore_depth((min_depth, known));
+                ctx.restore_depth(LowerContext::merge_depths(&[pre_loop, post_loop]));
                 Ok(())
             }
 
@@ -183,20 +173,17 @@ impl LibraryLowerer for FlowLib {
                     });
                 }
                 let pre_loop = ctx.save_depth();
-                ctx.output.emit_block();
-                ctx.output.emit_loop();
+                ctx.emit_block();
+                ctx.emit_loop();
                 ctx.lower_all(&branches[0])?;
-                ctx.output.emit_i64_eqz();
-                ctx.pop_depth();
-                ctx.output.emit_br_if(1);
+                ctx.emit_i64_eqz();
+                ctx.emit_br_if(1); // consumes condition
                 ctx.lower_all(&branches[1])?;
-                ctx.output.emit_br(0);
-                ctx.output.emit_end();
-                ctx.output.emit_end();
+                ctx.emit_br(0);
+                ctx.emit_end();
+                ctx.emit_end();
                 let post_loop = ctx.save_depth();
-                let min_depth = pre_loop.0.min(post_loop.0);
-                let known = pre_loop.1 && post_loop.1;
-                ctx.restore_depth((min_depth, known));
+                ctx.restore_depth(LowerContext::merge_depths(&[pre_loop, post_loop]));
                 Ok(())
             }
 
@@ -211,27 +198,25 @@ impl LibraryLowerer for FlowLib {
                     });
                 }
                 let pre_try = ctx.save_depth();
-                ctx.output.emit_block();
-                ctx.output.emit_block();
-                ctx.output.emit_try_table_catch_all(1);
+                ctx.emit_block();
+                ctx.emit_block();
+                ctx.emit_try_table_catch_all(1);
                 ctx.lower_all(&branches[0])?;
-                ctx.output.emit_end();
+                ctx.emit_end();
 
                 if branches.len() >= 3 {
                     // Has ELSE (no-error) branch
                     ctx.lower_all(&branches[2])?;
                 }
                 let success_depth = ctx.save_depth();
-                ctx.output.emit_br(1);
-                ctx.output.emit_end();
+                ctx.emit_br(1);
+                ctx.emit_end();
                 ctx.restore_depth(pre_try);
                 ctx.mark_unknown_depth();
                 ctx.lower_all(&branches[1])?;
                 let error_depth = ctx.save_depth();
-                let min_depth = success_depth.0.min(error_depth.0);
-                let known = success_depth.1 && error_depth.1;
-                ctx.restore_depth((min_depth, known));
-                ctx.output.emit_end();
+                ctx.restore_depth(LowerContext::merge_depths(&[success_depth, error_depth]));
+                ctx.emit_end();
                 Ok(())
             }
 
@@ -250,7 +235,7 @@ impl LibraryLowerer for FlowLib {
     ) -> Result<(), LowerError> {
         match cmd_id {
             cmd::DOERR => {
-                ctx.output.emit_throw(0);
+                ctx.emit_throw(0);
             }
             cmd::ERRN | cmd::ERRM => {
                 ctx.output.emit_call_lib(FLOW_LIB, cmd_id);
@@ -344,31 +329,8 @@ impl FlowLib {
         // Save state before loop body (loop may execute 0+ times)
         let pre_loop = ctx.save_depth();
 
-        // block {
-        //   loop {
-        //     body
-        //     // increment: var = var + step
-        //     local.get var
-        //     local.get step
-        //     i64.add
-        //     local.set var
-        //     // check: if step > 0, continue while var <= end
-        //     //        if step < 0, continue while var >= end
-        //     local.get var
-        //     local.get end
-        //     i64.le_s
-        //     local.get var
-        //     local.get end
-        //     i64.ge_s
-        //     local.get step
-        //     i64.const 0
-        //     i64.gt_s
-        //     select
-        //     br_if 0  (continue if true)
-        //   }
-        // }
-        ctx.output.emit_block();
-        ctx.output.emit_loop();
+        ctx.emit_block();
+        ctx.emit_loop();
 
         // Execute body
         ctx.lower_all(&branches[1])?;
@@ -401,23 +363,16 @@ impl FlowLib {
         ctx.emit_i64_binop(Opcode::I64GtS);
 
         // Select: if step > 0 then (var <= end) else (var >= end)
-        // Select pops condition, false_val, true_val and pushes result
-        ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_depth(); // condition consumed
-        ctx.pop_depth(); // ge_result consumed
-        // le_result stays as the selected value (already tracked in depth)
+        ctx.emit_select(); // consumes 3, produces 1
 
-        ctx.pop_depth(); // br_if consumes condition
-        ctx.output.emit_br_if(0); // continue loop
+        ctx.emit_br_if(0); // continue loop, consumes condition
 
-        ctx.output.emit_end(); // end loop
-        ctx.output.emit_end(); // end block
+        ctx.emit_end(); // end loop
+        ctx.emit_end(); // end block
 
         // Join with pre-loop state (loop may execute multiple times)
         let post_loop = ctx.save_depth();
-        let min_depth = pre_loop.0.min(post_loop.0);
-        let known = pre_loop.1 && post_loop.1;
-        ctx.restore_depth((min_depth, known));
+        ctx.restore_depth(LowerContext::merge_depths(&[pre_loop, post_loop]));
 
         Ok(())
     }
@@ -484,7 +439,7 @@ impl FlowLib {
         // FORUP: skip if start > end
         // FORDN: skip if start < end
         // Wrap the loop in a block so we can br_if to skip it
-        ctx.output.emit_block(); // outer block for skip
+        ctx.emit_block(); // outer block for skip
 
         // Compute skip condition
         ctx.emit_local_get_int(start_local);
@@ -496,12 +451,11 @@ impl FlowLib {
             // FORDN: skip if start < end
             ctx.emit_i64_binop(Opcode::I64LtS);
         }
-        ctx.pop_depth(); // br_if consumes condition
-        ctx.output.emit_br_if(0); // skip to end of outer block if true
+        ctx.emit_br_if(0); // skip to end of outer block if true
 
         // The loop itself
-        ctx.output.emit_block();
-        ctx.output.emit_loop();
+        ctx.emit_block();
+        ctx.emit_loop();
 
         // Execute body
         ctx.lower_all(&branches[1])?;
@@ -529,22 +483,17 @@ impl FlowLib {
         ctx.emit_i64_binop(Opcode::I64GtS);
 
         // Select: if step > 0 then (var <= end) else (var >= end)
-        ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_depth(); // condition consumed
-        ctx.pop_depth(); // ge_result consumed
+        ctx.emit_select(); // consumes 3, produces 1
 
-        ctx.pop_depth(); // br_if consumes condition
-        ctx.output.emit_br_if(0); // continue loop
+        ctx.emit_br_if(0); // continue loop, consumes condition
 
-        ctx.output.emit_end(); // end loop
-        ctx.output.emit_end(); // end inner block
-        ctx.output.emit_end(); // end outer block (skip target)
+        ctx.emit_end(); // end loop
+        ctx.emit_end(); // end inner block
+        ctx.emit_end(); // end outer block (skip target)
 
         // Join with pre-loop state (loop may execute multiple times)
         let post_loop = ctx.save_depth();
-        let min_depth = pre_loop.0.min(post_loop.0);
-        let known = pre_loop.1 && post_loop.1;
-        ctx.restore_depth((min_depth, known));
+        ctx.restore_depth(LowerContext::merge_depths(&[pre_loop, post_loop]));
 
         Ok(())
     }
@@ -584,8 +533,8 @@ impl FlowLib {
         let pre_loop = ctx.save_depth();
 
         // Loop structure same as FOR
-        ctx.output.emit_block();
-        ctx.output.emit_loop();
+        ctx.emit_block();
+        ctx.emit_loop();
 
         // Execute body
         ctx.lower_all(&branches[0])?;
@@ -616,21 +565,16 @@ impl FlowLib {
         ctx.emit_i64_binop(Opcode::I64GtS);
 
         // Select: if step > 0 then (counter <= end) else (counter >= end)
-        ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_depth(); // condition consumed
-        ctx.pop_depth(); // ge_result consumed
+        ctx.emit_select(); // consumes 3, produces 1
 
-        ctx.pop_depth(); // br_if consumes condition
-        ctx.output.emit_br_if(0);
+        ctx.emit_br_if(0); // consumes condition
 
-        ctx.output.emit_end();
-        ctx.output.emit_end();
+        ctx.emit_end();
+        ctx.emit_end();
 
         // Join with pre-loop state (loop may execute multiple times)
         let post_loop = ctx.save_depth();
-        let min_depth = pre_loop.0.min(post_loop.0);
-        let known = pre_loop.1 && post_loop.1;
-        ctx.restore_depth((min_depth, known));
+        ctx.restore_depth(LowerContext::merge_depths(&[pre_loop, post_loop]));
 
         Ok(())
     }
@@ -678,8 +622,7 @@ impl FlowLib {
 
                 // Conditional case
                 ctx.lower_all(condition)?;
-                ctx.pop_depth(); // condition consumed by if
-                ctx.output.emit_if();
+                ctx.emit_if(); // consumes condition
                 ctx.lower_all(body)?;
 
                 // Save this branch's depth
@@ -690,7 +633,7 @@ impl FlowLib {
 
                 // If there are more branches, emit else and restore pre-branch depth
                 if i < branches.len() {
-                    ctx.output.emit_else();
+                    ctx.emit_else();
                     ctx.restore_depth(pre_branch);
                 }
             }
@@ -698,23 +641,16 @@ impl FlowLib {
 
         // Close all the if blocks
         for _ in 0..if_depth {
-            ctx.output.emit_end();
+            ctx.emit_end();
         }
 
         // Compute minimum depth from all branches
         if !branch_depths.is_empty() {
-            let mut min_depth = branch_depths[0].0;
-            let mut all_known = branch_depths[0].1;
-            for &(depth, known) in &branch_depths[1..] {
-                min_depth = min_depth.min(depth);
-                all_known = all_known && known;
-            }
-            // Also consider pre-case depth (if no default case, might not execute any branch)
+            // Also consider pre-case depth if no default case (might not execute any branch)
             if !has_default {
-                min_depth = min_depth.min(pre_case.0);
-                all_known = all_known && pre_case.1;
+                branch_depths.push(pre_case);
             }
-            ctx.restore_depth((min_depth, all_known));
+            ctx.restore_depth(LowerContext::merge_depths(&branch_depths));
         }
 
         Ok(())
