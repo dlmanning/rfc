@@ -52,6 +52,8 @@ pub mod cmd {
     pub const TAIL: u16 = 6;
     /// Reverse list (REVLIST).
     pub const REVLIST: u16 = 7;
+    /// List concatenation/append (ADD).
+    pub const ADD: u16 = 8;
 }
 
 /// List operations library (implementation only).
@@ -247,6 +249,44 @@ impl LibraryExecutor for ListLib {
                 };
                 let reversed: Vec<Value> = items.iter().rev().cloned().collect();
                 ctx.push(Value::list(reversed))?;
+                Ok(())
+            }
+
+            cmd::ADD => {
+                // ADD: list concatenation/append
+                // (list list -- list) concatenate
+                // (list elem -- list) append element
+                // (elem list -- list) prepend element
+                let b = ctx.pop()?;
+                let a = ctx.pop()?;
+                let result = match (a, b) {
+                    // List concatenation
+                    (Value::List(a), Value::List(b)) => {
+                        let mut result: Vec<Value> = a.iter().cloned().collect();
+                        result.extend(b.iter().cloned());
+                        Value::list(result)
+                    }
+                    // List append (list + element)
+                    (Value::List(a), elem) => {
+                        let mut result: Vec<Value> = a.iter().cloned().collect();
+                        result.push(elem);
+                        Value::list(result)
+                    }
+                    // List prepend (element + list)
+                    (elem, Value::List(b)) => {
+                        let mut result = vec![elem];
+                        result.extend(b.iter().cloned());
+                        Value::list(result)
+                    }
+                    (a, b) => {
+                        return Err(format!(
+                            "ADD: expected at least one list, got {} and {}",
+                            a.type_name(),
+                            b.type_name()
+                        ));
+                    }
+                };
+                ctx.push(result)?;
                 Ok(())
             }
 

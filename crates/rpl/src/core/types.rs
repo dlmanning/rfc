@@ -52,6 +52,27 @@ impl TypeId {
             _ => None,
         }
     }
+
+    /// Get the mathematical symbol for a well-known type, or None for unknown types.
+    ///
+    /// Uses Unicode mathematical symbols for compact display:
+    /// - ℤ for integers (from German "Zahlen", meaning numbers)
+    /// - ℝ for reals
+    /// - ℂ for complex
+    pub fn symbol(self) -> Option<&'static str> {
+        match self {
+            Self::BINT => Some("ℤ"),
+            Self::REAL => Some("ℝ"),
+            Self::COMPLEX => Some("ℂ"),
+            Self::STRING => Some("Str"),
+            Self::LIST => Some("List"),
+            Self::PROGRAM => Some("Prog"),
+            Self::SYMBOLIC => Some("Sym"),
+            Self::LIBRARY => Some("Lib"),
+            Self::BLOB => Some("Blob"),
+            _ => self.name(),
+        }
+    }
 }
 
 #[cfg(test)]

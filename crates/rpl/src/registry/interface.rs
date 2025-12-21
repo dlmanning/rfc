@@ -9,9 +9,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::core::TypeId;
 use crate::ir::LibId;
 use crate::libs::{ClaimContext, LibraryInterface, StackEffect, TokenClaim};
-use crate::types::CStack;
+use crate::types::TypeConstraint;
 
 /// Reference to a command in the registry.
 pub struct CommandRef {
@@ -119,6 +120,31 @@ impl InterfaceRegistry {
             .unwrap_or_default()
     }
 
+    /// Get alternative branch groups for a construct.
+    ///
+    /// Returns groups of branch indices that are mutually exclusive at runtime.
+    /// Used by the analyzer to properly merge type stacks for control flow.
+    pub fn alternative_branches(
+        &self,
+        lib_id: LibId,
+        construct_id: u16,
+        num_branches: usize,
+    ) -> Vec<Vec<usize>> {
+        self.interfaces
+            .get(&lib_id)
+            .map(|lib| lib.alternative_branches(construct_id, num_branches))
+            .unwrap_or_default()
+    }
+
+    /// Check if a construct is a loop (FOR, START, etc.).
+    ///
+    /// Used by the analyzer to determine scope and definition kinds.
+    pub fn is_loop_construct(&self, lib_id: LibId, construct_id: u16) -> bool {
+        self.interfaces
+            .get(&lib_id)
+            .is_some_and(|lib| lib.is_loop_construct(construct_id))
+    }
+
     /// Register a token claim.
     pub fn register_claim(&mut self, claim: TokenClaim) {
         self.claims.push(claim);
@@ -132,16 +158,30 @@ impl InterfaceRegistry {
     }
 
     /// Get the stack effect for a command given the current type stack.
-    pub fn get_command_effect(&self, lib_id: LibId, cmd_id: u16, types: &CStack) -> StackEffect {
+    ///
+    /// `tos` and `nos` are the top-of-stack and next-on-stack types if known.
+    pub fn get_command_effect(&self, lib_id: LibId, cmd_id: u16, tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
         // First try the library's analyzer
         if let Some(lib) = self.interfaces.get(&lib_id) {
-            let effect = lib.command_effect(cmd_id, types);
+            let effect = lib.command_effect(cmd_id, tos, nos);
             if !matches!(effect, StackEffect::Dynamic) {
                 return effect;
             }
         }
 
         // Fall back to static effect
+        self.command_effects
+            .get(&(lib_id, cmd_id))
+            .cloned()
+            .unwrap_or(StackEffect::Dynamic)
+    }
+
+    /// Get the static (declared) stack effect for a command.
+    ///
+    /// Unlike `get_command_effect`, this ignores the dynamic analyzer and returns
+    /// the effect declared in the command definition. Useful for getting consume
+    /// counts when the dynamic analyzer returns Dynamic due to unknown types.
+    pub fn get_static_effect(&self, lib_id: LibId, cmd_id: u16) -> StackEffect {
         self.command_effects
             .get(&(lib_id, cmd_id))
             .cloned()
@@ -162,15 +202,32 @@ impl InterfaceRegistry {
             .and_then(|lib| lib.binding_effect(cmd_id))
     }
 
-    /// Find a claim for a token in the given context.
+    /// Get the input type constraints for a command.
+    ///
+    /// Returns a vector of TypeConstraint, one per input. Used for constraint-based
+    /// type inference on local variables.
+    pub fn get_input_constraints(&self, lib_id: LibId, cmd_id: u16) -> Vec<TypeConstraint> {
+        self.interfaces
+            .get(&lib_id)
+            .map(|lib| lib.input_constraints(cmd_id))
+            .unwrap_or_default()
+    }
+
+    /// Get the name of a command by its library and command ID.
+    pub fn get_command_name(&self, lib_id: LibId, cmd_id: u16) -> &str {
+        // Search the commands map for a match
+        for (name, &(lib, cmd)) in &self.commands {
+            if lib == lib_id && cmd == cmd_id {
+                return name;
+            }
+        }
+        "unknown"
+    }
+
+    /// Find a claim for a token in the given context (case-sensitive).
     pub fn find_claim(&self, token: &str, context: ClaimContext) -> Option<&TokenClaim> {
-        let token_upper = token.to_uppercase();
-
         for claim in &self.claims {
-            let claim_matches = claim.token.eq_ignore_ascii_case(token)
-                || claim.token.to_uppercase() == token_upper;
-
-            if !claim_matches {
+            if claim.token != token {
                 continue;
             }
 
@@ -187,22 +244,9 @@ impl InterfaceRegistry {
         None
     }
 
-    /// Find a command by name.
+    /// Find a command by name (case-sensitive).
     pub fn find_command(&self, name: &str) -> Option<(LibId, u16)> {
-        // Try exact match first
-        if let Some(&result) = self.commands.get(name) {
-            return Some(result);
-        }
-
-        // Try case-insensitive match
-        let name_upper = name.to_uppercase();
-        for (cmd_name, &result) in &self.commands {
-            if cmd_name.to_uppercase() == name_upper {
-                return Some(result);
-            }
-        }
-
-        None
+        self.commands.get(name).copied()
     }
 
     /// Get all registered commands.
@@ -212,6 +256,17 @@ impl InterfaceRegistry {
             lib,
             cmd,
         })
+    }
+
+    /// Get the stack effect for a syntax construct.
+    ///
+    /// Returns the stack effect (inputs consumed, outputs produced) for a construct.
+    /// For example, FOR consumes 2 values (start, end) and produces 0 values.
+    pub fn get_construct_effect(&self, lib_id: LibId, construct_id: u16) -> StackEffect {
+        self.interfaces
+            .get(&lib_id)
+            .map(|lib| lib.construct_effect(construct_id))
+            .unwrap_or(StackEffect::Dynamic)
     }
 }
 
@@ -263,7 +318,8 @@ mod tests {
         reg.register_command("TEST", 1, 0);
 
         assert_eq!(reg.find_command("TEST"), Some((1, 0)));
-        assert_eq!(reg.find_command("test"), Some((1, 0)));
+        // Case-sensitive: lowercase doesn't match
+        assert_eq!(reg.find_command("test"), None);
         assert_eq!(reg.find_command("UNKNOWN"), None);
     }
 }

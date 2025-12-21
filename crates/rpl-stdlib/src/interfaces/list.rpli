@@ -5,9 +5,12 @@ library List 88
 1: List -> (LIST→), (LIST->), (OBJ→), (OBJ->) -> ...
 
 -- List inspection
-2: a -> SIZE -> Int
+2: List | Str -> SIZE -> Int
 3: List Int -> GET -> a
 4: List Int a -> PUT -> List
 5: List -> HEAD -> a
 6: List -> TAIL -> List
 7: List -> REVLIST -> List
+
+-- List concatenation/append
+8: a b -> ADD -> List

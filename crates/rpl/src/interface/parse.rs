@@ -134,6 +134,36 @@ fn parse_id_prefix(line: &str) -> Result<(u16, &str), String> {
     Ok((id, rest))
 }
 
+/// Collect tokens inside parentheses, handling nesting.
+/// `start_offset` is how many chars into the first token the `(` appears (e.g., 1 for "(Int", 3 for "a:(Int")
+fn collect_parenthesized(tokens: &[&str], i: &mut usize, start_offset: usize) -> Result<String, String> {
+    let first_token = tokens[*i];
+    let mut parts = vec![&first_token[start_offset..]]; // After the opening (
+    let mut depth = 1;
+    *i += 1;
+
+    while *i < tokens.len() && depth > 0 {
+        let t = tokens[*i];
+        for c in t.chars() {
+            if c == '(' { depth += 1; }
+            if c == ')' { depth -= 1; }
+        }
+        parts.push(t);
+        *i += 1;
+    }
+
+    if depth != 0 {
+        return Err("unclosed parenthesis".into());
+    }
+
+    // Join and remove trailing )
+    let mut result = parts.join(" ");
+    if result.ends_with(')') {
+        result.pop();
+    }
+    Ok(result)
+}
+
 /// Parse a space-separated list of types.
 fn parse_types(s: &str) -> Result<Vec<Type>, String> {
     if s.is_empty() {
@@ -166,12 +196,58 @@ fn parse_types(s: &str) -> Result<Vec<Type>, String> {
             continue;
         }
 
-        // Check for union: a | b
+        // Constrained type variable: a:(Type | Type)
+        // Detect pattern: single char followed by :(
+        if token.len() >= 3
+            && token.chars().next().unwrap().is_ascii_lowercase()
+            && token.chars().nth(1) == Some(':')
+            && token.chars().nth(2) == Some('(')
+        {
+            let var = token.chars().next().unwrap();
+            let inner = collect_parenthesized(&tokens, &mut i, 3)?;
+            let inner_types = parse_types(&inner)?;
+            if inner_types.len() != 1 {
+                return Err(format!(
+                    "type constraint must be a single type expression, got {} types",
+                    inner_types.len()
+                ));
+            }
+            types.push(Type::ConstrainedVar(var, Box::new(inner_types.into_iter().next().unwrap())));
+            continue;
+        }
+
+        // Grouped type: (Type | Type)
+        // Allows clearer separation of union types as inputs
+        if token.starts_with('(') {
+            let inner = collect_parenthesized(&tokens, &mut i, 1)?;
+            let inner_types = parse_types(&inner)?;
+            if inner_types.len() != 1 {
+                return Err(format!(
+                    "grouped type must be a single type expression, got {} types",
+                    inner_types.len()
+                ));
+            }
+            types.push(inner_types.into_iter().next().unwrap());
+            continue;
+        }
+
+        // Check for union: a | b | c | ...
         if i + 2 < tokens.len() && tokens[i + 1] == "|" {
-            let a = parse_single_type(token)?;
-            let b = parse_single_type(tokens[i + 2])?;
-            types.push(Type::Union(Box::new(a), Box::new(b)));
-            i += 3;
+            let mut union_types = vec![parse_single_type(token)?];
+            i += 1; // past first type
+
+            // Collect all consecutive | type pairs
+            while i + 1 < tokens.len() && tokens[i] == "|" {
+                union_types.push(parse_single_type(tokens[i + 1])?);
+                i += 2;
+            }
+
+            // Build nested Union: a | b | c becomes Union(a, Union(b, c))
+            let mut result = union_types.pop().unwrap();
+            while let Some(t) = union_types.pop() {
+                result = Type::Union(Box::new(t), Box::new(result));
+            }
+            types.push(result);
             continue;
         }
 
@@ -635,5 +711,45 @@ library Stack 72
         let decl = parse_declaration("0: Str -> (→UTF8), TOUTF8 -> List").unwrap();
         assert_eq!(decl.id, 0);
         assert_eq!(decl.pattern.names, vec!["→UTF8", "TOUTF8"]);
+    }
+
+    #[test]
+    fn test_constrained_type_variable() {
+        let decl = parse_declaration("0: a:(Int | Real) b:(Int | Real) -> (+) -> Numeric a b").unwrap();
+        assert_eq!(decl.id, 0);
+        assert_eq!(decl.inputs.len(), 2);
+        // Check that a is constrained to Int | Real
+        if let Type::ConstrainedVar('a', constraint) = &decl.inputs[0] {
+            assert!(matches!(constraint.as_ref(), Type::Union(_, _)));
+        } else {
+            panic!("Expected ConstrainedVar for first input");
+        }
+        // Check that b is constrained to Int | Real
+        if let Type::ConstrainedVar('b', constraint) = &decl.inputs[1] {
+            assert!(matches!(constraint.as_ref(), Type::Union(_, _)));
+        } else {
+            panic!("Expected ConstrainedVar for second input");
+        }
+        assert!(matches!(&decl.outputs[0], Type::Numeric('a', 'b')));
+    }
+
+    #[test]
+    fn test_container_constraint() {
+        let decl = parse_declaration("0: a:(List | Str) -> SIZE -> Int").unwrap();
+        assert_eq!(decl.inputs.len(), 1);
+        if let Type::ConstrainedVar('a', constraint) = &decl.inputs[0] {
+            assert!(matches!(constraint.as_ref(), Type::Union(_, _)));
+        } else {
+            panic!("Expected ConstrainedVar for input");
+        }
+    }
+
+    #[test]
+    fn test_grouped_type() {
+        // Parentheses for clarity when multiple union inputs
+        let decl = parse_declaration("0: (Int | Real) (Int | Real) -> ATAN2 -> Real").unwrap();
+        assert_eq!(decl.inputs.len(), 2);
+        assert!(matches!(&decl.inputs[0], Type::Union(_, _)));
+        assert!(matches!(&decl.inputs[1], Type::Union(_, _)));
     }
 }

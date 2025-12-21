@@ -1,26 +1,28 @@
 library Arithmetic 64
 
 -- Binary arithmetic (type-dependent result)
-0:  a b -> (+) -> Numeric a b
-1:  a b -> (-) -> Numeric a b
-2:  a b -> (*) -> Numeric a b
-3:  a b -> (/) -> Numeric a b
-4:    a -> NEG -> a
-5:    a -> INV -> Real
-6:  a b -> MOD -> Numeric a b
-7:    a -> ABS -> a
+-- + handles numeric addition and string concatenation
+-- For list operations, use ADD from the List library
+0:  a:(Int | Real | Str) b:(Int | Real | Str) -> (+) -> a
+1:  a:(Int | Real) b:(Int | Real) -> (-) -> Numeric a b
+2:  a:(Int | Real) b:(Int | Real) -> (*) -> Numeric a b
+3:  a:(Int | Real) b:(Int | Real) -> (/) -> Real
+4:    a:(Int | Real) -> NEG -> a
+5:    a:(Int | Real) -> INV -> Real
+6:  a:(Int | Real) b:(Int | Real) -> MOD -> Numeric a b
+7:    a:(Int | Real) -> ABS -> a
 
 -- Comparisons (return 0 or 1)
 8:  a b -> (==), SAME -> Int
 9:  a b -> (!=), (<>) -> Int
-10: a b -> (<)        -> Int
-11: a b -> (<=)       -> Int
-12: a b -> (>)        -> Int
-13: a b -> (>=)       -> Int
+10: a b -> (<)  -> Int
+11: a b -> (<=) -> Int
+12: a b -> (>)  -> Int
+13: a b -> (>=) -> Int
 
 -- Additional arithmetic
-14: a b -> (^)  -> Real
-15: a b -> MIN  -> Numeric a b
-16: a b -> MAX  -> Numeric a b
-17:   a -> SIGN -> Int
-18:   a -> SQ   -> a
+14: a:(Int | Real) b:(Int | Real) -> (^)  -> Real
+15: a:(Int | Real) b:(Int | Real) -> MIN  -> Numeric a b
+16: a:(Int | Real) b:(Int | Real) -> MAX  -> Numeric a b
+17:   a:(Int | Real) -> SIGN -> Int
+18:   a:(Int | Real) -> SQ   -> a

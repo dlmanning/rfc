@@ -1,38 +1,38 @@
 library Transcendentals 66
 
 -- Trigonometric (radians)
-0:  a -> SIN -> Real
-1:  a -> COS -> Real
-2:  a -> TAN -> Real
-3:  a -> ASIN -> Real
-4:  a -> ACOS -> Real
-5:  a -> ATAN -> Real
-6:  a b -> ATAN2 -> Real
+0:  (Int | Real) -> SIN -> Real
+1:  (Int | Real) -> COS -> Real
+2:  (Int | Real) -> TAN -> Real
+3:  (Int | Real) -> ASIN -> Real
+4:  (Int | Real) -> ACOS -> Real
+5:  (Int | Real) -> ATAN -> Real
+6:  (Int | Real) (Int | Real) -> ATAN2 -> Real
 
 -- Hyperbolic
-7:  a -> SINH -> Real
-8:  a -> COSH -> Real
-9:  a -> TANH -> Real
-10: a -> ASINH -> Real
-11: a -> ACOSH -> Real
-12: a -> ATANH -> Real
+7:  (Int | Real) -> SINH -> Real
+8:  (Int | Real) -> COSH -> Real
+9:  (Int | Real) -> TANH -> Real
+10: (Int | Real) -> ASINH -> Real
+11: (Int | Real) -> ACOSH -> Real
+12: (Int | Real) -> ATANH -> Real
 
 -- Logarithmic
-13: a -> LN -> Real
-14: a -> LOG -> Real
-15: a -> LNP1 -> Real
+13: (Int | Real) -> LN -> Real
+14: (Int | Real) -> LOG -> Real
+15: (Int | Real) -> LNP1 -> Real
 
 -- Exponential
-16: a -> EXP -> Real
-17: a -> ALOG -> Real
-18: a -> EXPM -> Real
+16: (Int | Real) -> EXP -> Real
+17: (Int | Real) -> ALOG -> Real
+18: (Int | Real) -> EXPM -> Real
 
 -- Other
-19: a -> SQRT -> Real
+19: (Int | Real) -> SQRT -> Real
 20: -> PI, (π) -> Real
 
--- Rounding (preserves int/real)
-21: a -> CEIL -> a
-22: a -> FLOOR -> a
-23: a -> IP -> a
-24: a -> FP -> a
+-- Rounding (preserves int/real - needs type variable)
+21: a:(Int | Real) -> CEIL -> a
+22: a:(Int | Real) -> FLOOR -> a
+23: a:(Int | Real) -> IP -> a
+24: a:(Int | Real) -> FP -> a

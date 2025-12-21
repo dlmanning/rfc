@@ -29,6 +29,7 @@ use crate::core::{Interner, Pos, Span};
 
 use super::result::AnalysisResult;
 use super::scopes::ScopeId;
+use super::analyze;
 use crate::ir::Node;
 use crate::parse::parse;
 use crate::registry::InterfaceRegistry;
@@ -110,7 +111,7 @@ impl IncrementalAnalysis {
     pub fn new(source: &str, registry: &InterfaceRegistry, interner: &mut Interner) -> Self {
         let nodes = parse(source, registry, interner).unwrap_or_default();
 
-        let result = super::analyze(&nodes, registry, interner);
+        let result = analyze(&nodes, registry, interner);
         let scope_cache = build_scope_cache(&result);
 
         Self {
@@ -289,7 +290,7 @@ impl IncrementalAnalysis {
     fn full_update(&mut self, registry: &InterfaceRegistry, interner: &mut Interner) {
         self.nodes = parse(&self.source, registry, interner).unwrap_or_default();
 
-        self.result = super::analyze(&self.nodes, registry, interner);
+        self.result = analyze(&self.nodes, registry, interner);
         self.scope_cache = build_scope_cache(&self.result);
     }
 }

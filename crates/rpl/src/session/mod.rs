@@ -534,15 +534,24 @@ impl Session {
 
     /// Evaluate source code and return the result.
     ///
-    /// This is a convenience method that parses, lowers, and executes.
+    /// This is a convenience method that analyzes, parses, lowers, and executes.
     pub fn eval(&mut self, source: &str) -> Result<Vec<Value>, EvalError> {
+        // Analyze
+        let id = self.analysis.set_source("__eval__", source);
+        let _ = self.analysis.analyze(id);
+
         // Parse
         let (interfaces, interner) = self.analysis.parsing_context();
         let nodes = parse(source, interfaces, interner)
             .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
 
+        // Get analysis result for type-informed lowering
+        let analysis = self.analysis.analysis_cache.get(&id)
+            .expect("analysis should be cached after analyze()")
+            .result();
+
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
             .map_err(|e| EvalError::Lower(e.message))?;
 
         // Execute
@@ -557,13 +566,22 @@ impl Session {
     ///
     /// Unlike `eval()`, this does not clear the stack before execution.
     pub fn eval_repl(&mut self, source: &str) -> Result<(), EvalError> {
+        // Analyze
+        let id = self.analysis.set_source("__repl__", source);
+        let _ = self.analysis.analyze(id);
+
         // Parse
         let (interfaces, interner) = self.analysis.parsing_context();
         let nodes = parse(source, interfaces, interner)
             .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
 
+        // Get analysis result for type-informed lowering
+        let analysis = self.analysis.analysis_cache.get(&id)
+            .expect("analysis should be cached after analyze()")
+            .result();
+
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
             .map_err(|e| EvalError::Lower(e.message))?;
 
         // Execute without reset
@@ -575,14 +593,28 @@ impl Session {
 
     /// Compile source code to a CompiledProgram (with debug info).
     ///
-    /// This returns a CompiledProgram with source span mappings
+    /// This runs the analyzer first to infer types for local variables,
+    /// then uses that information during lowering for better code generation.
+    ///
+    /// The returned CompiledProgram includes source span mappings
     /// that can be used with execute_debug().
     pub fn compile(&mut self, source: &str) -> Result<CompiledProgram, EvalError> {
+        // Add source to analysis session and run analysis
+        let id = self.analysis.set_source("__compile__", source);
+        let _ = self.analysis.analyze(id); // Trigger analysis, drop the reference
+
+        // Now parse (needs mutable borrow of interner)
         let (interfaces, interner) = self.analysis.parsing_context();
         let nodes = parse(source, interfaces, interner)
             .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
 
-        lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner())
+        // Get analysis result (now as immutable borrow alongside other immutable borrows)
+        let analysis = self.analysis.analysis_cache.get(&id)
+            .expect("analysis should be cached after analyze()")
+            .result();
+
+        // Lower with analysis results for type-informed code generation
+        lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
             .map_err(|e| EvalError::Lower(e.message))
     }
 

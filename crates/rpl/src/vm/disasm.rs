@@ -590,6 +590,7 @@ mod tests {
 
     use crate::{parse::parse, lower::lower, registry::{InterfaceRegistry, LowererRegistry}};
     use crate::core::Interner;
+    use crate::analysis;
 
     /// Compile source code and return the bytecode.
     fn compile(source: &str) -> Vec<u8> {
@@ -597,7 +598,8 @@ mod tests {
         let lowerers = LowererRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).expect("lower failed");
+        let analysis = analysis::analyze(&nodes, &interfaces, &interner);
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lower failed");
         program.code
     }
 

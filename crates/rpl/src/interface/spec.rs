@@ -13,10 +13,11 @@ use super::{
 use crate::{
     core::{Pos, Span, TypeId},
     ir::{LibId, Node},
-    libs::{ClaimContext, CommandInfo, LibraryInterface, StackEffect, TokenClaim},
+    libs::{ClaimContext, CommandInfo, LibraryInterface, ResultType, StackEffect, TokenClaim},
     parse::{ParseContext, ParseError},
-    types::CStack,
+    types::TypeConstraint,
 };
+use smallvec::SmallVec;
 
 // ============================================================================
 // Core Types
@@ -52,6 +53,13 @@ pub struct SyntaxDecl {
     pub token: String,
     /// The compiled parser for this syntax.
     pub parser: Parser,
+    /// Input types (values consumed from stack before construct runs).
+    pub inputs: Vec<Type>,
+    /// Output types (values pushed to stack after construct finishes).
+    pub outputs: Vec<Type>,
+    /// Number of stack values consumed by pattern captures (e.g., cond:Int consumes 1).
+    /// This is separate from inputs which are consumed before the construct.
+    pub pattern_consumes: u8,
 }
 
 /// How to compute the stack effect for a command.
@@ -59,7 +67,6 @@ pub struct SyntaxDecl {
 pub enum EffectKind {
     Static(StackEffect),
     BinaryNumeric,
-    UnaryPreserving,
 }
 
 // ============================================================================
@@ -399,6 +406,20 @@ fn keyword_appears_before(ctx: &ParseContext, keyword: &str, terminator: &str) -
 /// Compile pattern elements into a Parser.
 fn compile_pattern(slots: &[PatternElement]) -> Parser {
     compile_pattern_with_context(slots, &[])
+}
+
+/// Count how many stack values are consumed by pattern captures.
+///
+/// Only Binding elements ($name:Sym) consume values from the stack before
+/// the construct runs. Slot elements (like cond:Int) capture EXPRESSIONS
+/// that are parsed and executed as part of the construct, not values
+/// consumed from the stack.
+fn count_pattern_stack_captures(_slots: &[PatternElement]) -> u8 {
+    // Slots capture parsed expressions (not stack values)
+    // Bindings consume from stack, but they're handled separately
+    // by handle_bindings in the analyzer.
+    // So pattern_consumes is always 0 for syntax constructs.
+    0
 }
 
 /// Compile pattern elements with outer terminator context.
@@ -741,6 +762,138 @@ fn compute_binding_indices(pattern: &[SlotPattern], num_branches: usize) -> Vec<
 }
 
 // ============================================================================
+// Alternative Branch Analysis
+// ============================================================================
+
+/// Compute groups of alternative branches for control flow analysis.
+///
+/// Analyzes the parser structure to find branches that are mutually exclusive
+/// at runtime. For example, IF/THEN/ELSE has branches 1 (then) and 2 (else)
+/// as alternatives - only one executes at runtime.
+fn compute_alternative_groups(parser: &Parser, num_branches: usize) -> Vec<Vec<usize>> {
+    // Find slot positions and whether they follow optional keywords
+    let mut slot_info = Vec::new();
+    collect_slot_info(parser, &mut slot_info, false);
+
+    // Build alternative groups
+    // If a slot follows an optional keyword, it forms an alternative with the previous slot
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+
+    let mut current_group: Option<usize> = None;
+    let mut slot_idx = 0;
+
+    for info in &slot_info {
+        match info {
+            SlotInfo::Required => {
+                // This slot is not an alternative, close any current group
+                if let Some(group_idx) = current_group {
+                    // If group has only one member, remove it
+                    if groups.get(group_idx).map(|g| g.len() < 2).unwrap_or(false) {
+                        groups.remove(group_idx);
+                    }
+                }
+                current_group = None;
+                slot_idx += 1;
+            }
+            SlotInfo::Optional => {
+                // This slot follows an optional keyword, so it's an alternative
+                // to the previous slot - but only if both branches exist
+                if slot_idx > 0 && slot_idx < num_branches {
+                    if let Some(group_idx) = current_group {
+                        // Add to existing group
+                        if let Some(group) = groups.get_mut(group_idx) {
+                            group.push(slot_idx);
+                        }
+                    } else {
+                        // Start new group with previous slot and this one
+                        groups.push(vec![slot_idx - 1, slot_idx]);
+                        current_group = Some(groups.len() - 1);
+                    }
+                }
+                slot_idx += 1;
+            }
+            SlotInfo::Repeat => {
+                // Repeat slots - for now, treat as sequential
+                // The number of actual branches depends on runtime
+                current_group = None;
+                // Skip - repeat will add variable branches
+            }
+        }
+    }
+
+    // Filter out groups with less than 2 members (can happen if optional branch is missing)
+    groups.retain(|g| g.len() >= 2);
+
+    groups
+}
+
+/// Information about a slot in the parser
+#[derive(Debug, Clone)]
+enum SlotInfo {
+    /// A required slot (not preceded by optional keyword)
+    Required,
+    /// An optional slot (preceded by optional keyword)
+    Optional,
+    /// A repeat slot
+    Repeat,
+}
+
+/// Collect slot information from a parser
+fn collect_slot_info(parser: &Parser, slots: &mut Vec<SlotInfo>, after_optional: bool) {
+    match parser {
+        Parser::ParseUntil(_) | Parser::ParseToEnd => {
+            if after_optional {
+                slots.push(SlotInfo::Optional);
+            } else {
+                slots.push(SlotInfo::Required);
+            }
+        }
+        Parser::Binding { .. } => {
+            if after_optional {
+                slots.push(SlotInfo::Optional);
+            } else {
+                slots.push(SlotInfo::Required);
+            }
+        }
+        Parser::Sequence(parsers) => {
+            let mut optional = after_optional;
+            for p in parsers {
+                match p {
+                    Parser::OptionalKeyword(_) | Parser::OptionalKeywordWithCapture(_) => {
+                        optional = true;
+                    }
+                    Parser::Keyword(_) | Parser::KeywordWithCapture(_) => {
+                        optional = false;
+                    }
+                    _ => {
+                        collect_slot_info(p, slots, optional);
+                        // Reset after consuming
+                        if matches!(p, Parser::ParseUntil(_) | Parser::ParseToEnd | Parser::Binding { .. }) {
+                            optional = false;
+                        }
+                    }
+                }
+            }
+        }
+        Parser::Repeat { .. } => {
+            slots.push(SlotInfo::Repeat);
+        }
+        Parser::Alternation(alts) => {
+            // For parse-time alternation, just analyze the first alternative
+            if let Some(first) = alts.first() {
+                collect_slot_info(first, slots, after_optional);
+            }
+        }
+        Parser::Keyword(_)
+        | Parser::OptionalKeyword(_)
+        | Parser::KeywordWithCapture(_)
+        | Parser::OptionalKeywordWithCapture(_) => {
+            // Keywords don't produce slots
+        }
+    }
+}
+
+// ============================================================================
 // Effect Inference
 // ============================================================================
 
@@ -769,13 +922,24 @@ fn infer_effect_kind(decl: &Declaration) -> EffectKind {
         return EffectKind::BinaryNumeric;
     }
 
-    // Unary preserving: `a -> a`
-    if decl.inputs.len() == 1
-        && decl.outputs.len() == 1
-        && let (Type::Var(a), Type::Var(b)) = (&decl.inputs[0], &decl.outputs[0])
-        && a == b
-    {
-        return EffectKind::UnaryPreserving;
+    // Unary preserving: `a -> a` or `a:Constraint -> a`
+    // Matches when input and output are the same type variable (with or without constraints)
+    // Now represented as Fixed with FromInput(0)
+    if decl.inputs.len() == 1 && decl.outputs.len() == 1 {
+        let input_var = match &decl.inputs[0] {
+            Type::Var(c) => Some(*c),
+            Type::ConstrainedVar(c, _) => Some(*c),
+            _ => None,
+        };
+        let output_var = match &decl.outputs[0] {
+            Type::Var(c) => Some(*c),
+            Type::ConstrainedVar(c, _) => Some(*c),
+            _ => None,
+        };
+        if let (Some(a), Some(b)) = (input_var, output_var)
+            && a == b {
+                return EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)]));
+            }
     }
 
     // Permutation: all outputs are input vars
@@ -810,7 +974,9 @@ fn try_permutation(inputs: &[Type], outputs: &[Type]) -> Option<StackEffect> {
         })
         .collect::<Option<Vec<_>>>()?;
 
-    Some(StackEffect::permutation(inputs.len() as u8, &pattern))
+    // Convert pattern to Fixed with FromInput results
+    let results: Vec<ResultType> = pattern.iter().map(|&i| ResultType::from_input(i)).collect();
+    Some(StackEffect::fixed_result(inputs.len() as u8, &results))
 }
 
 fn type_to_type_id(typ: &Type) -> Option<TypeId> {
@@ -826,6 +992,68 @@ fn type_to_type_id(typ: &Type) -> Option<TypeId> {
             ConcreteType::Any => None,
         },
         _ => None,
+    }
+}
+
+/// Convert an interface Type to a TypeConstraint for constraint-based inference.
+fn type_to_constraint(typ: &Type) -> TypeConstraint {
+    match typ {
+        Type::Concrete(ct) => match ct {
+            ConcreteType::Int => TypeConstraint::Exact(TypeId::BINT),
+            ConcreteType::Real => TypeConstraint::Exact(TypeId::REAL),
+            ConcreteType::Str => TypeConstraint::Exact(TypeId::STRING),
+            ConcreteType::List => TypeConstraint::Exact(TypeId::LIST),
+            ConcreteType::Prog => TypeConstraint::Exact(TypeId::PROGRAM),
+            ConcreteType::Sym => TypeConstraint::Exact(TypeId::SYMBOLIC),
+            ConcreteType::Blob => TypeConstraint::Exact(TypeId::BLOB),
+            ConcreteType::Any => TypeConstraint::Any,
+        },
+        Type::Var(_) => {
+            // Type variables are polymorphic - the type flows through unchanged
+            TypeConstraint::Any
+        }
+        Type::ConstrainedVar(_, constraint) => {
+            // Constrained type variable - recursively convert the constraint type
+            type_to_constraint(constraint)
+        }
+        Type::Dynamic => TypeConstraint::Any,
+        Type::Numeric(_, _) => TypeConstraint::numeric(),
+        Type::Union(a, b) => {
+            // Convert union to OneOf constraint
+            let a_constraint = type_to_constraint(a);
+            let b_constraint = type_to_constraint(b);
+            match (a_constraint, b_constraint) {
+                (TypeConstraint::Exact(t1), TypeConstraint::Exact(t2)) => {
+                    let mut types = SmallVec::new();
+                    types.push(t1);
+                    if t1 != t2 {
+                        types.push(t2);
+                    }
+                    if types.len() == 1 {
+                        TypeConstraint::Exact(types[0])
+                    } else {
+                        TypeConstraint::OneOf(types)
+                    }
+                }
+                (TypeConstraint::OneOf(mut ts), TypeConstraint::Exact(t))
+                | (TypeConstraint::Exact(t), TypeConstraint::OneOf(mut ts)) => {
+                    if !ts.contains(&t) {
+                        ts.push(t);
+                    }
+                    TypeConstraint::OneOf(ts)
+                }
+                (TypeConstraint::OneOf(mut ts1), TypeConstraint::OneOf(ts2)) => {
+                    for t in ts2 {
+                        if !ts1.contains(&t) {
+                            ts1.push(t);
+                        }
+                    }
+                    TypeConstraint::OneOf(ts1)
+                }
+                _ => TypeConstraint::Any,
+            }
+        }
+        Type::Binding(_, inner) => type_to_constraint(inner),
     }
 }
 
@@ -875,10 +1103,14 @@ impl InterfaceSpec {
                 }
 
                 let parser = compile_pattern(&decl.pattern.slots);
+                let pattern_consumes = count_pattern_stack_captures(&decl.pattern.slots);
                 syntax.push(SyntaxDecl {
                     id: decl.id,
                     token: token.clone(),
                     parser,
+                    inputs: decl.inputs.clone(),
+                    outputs: decl.outputs.clone(),
+                    pattern_consumes,
                 });
             }
         }
@@ -913,10 +1145,14 @@ impl InterfaceSpec {
             } else if let Some(token) = decl.pattern.names.first() {
                 // Syntax construct - use explicit ID from declaration
                 let parser = compile_pattern(&decl.pattern.slots);
+                let pattern_consumes = count_pattern_stack_captures(&decl.pattern.slots);
                 syntax.push(SyntaxDecl {
                     id: decl.id,
                     token: token.clone(),
                     parser,
+                    inputs: decl.inputs.clone(),
+                    outputs: decl.outputs.clone(),
+                    pattern_consumes,
                 });
             }
         }
@@ -977,7 +1213,7 @@ impl InterfaceSpec {
             .flat_map(|cmd| {
                 let effect = match &cmd.effect_kind {
                     EffectKind::Static(e) => e.clone(),
-                    EffectKind::BinaryNumeric | EffectKind::UnaryPreserving => {
+                    EffectKind::BinaryNumeric => {
                         StackEffect::fixed(cmd.inputs.len() as u8, &vec![None; cmd.outputs.len()])
                     }
                 };
@@ -1002,6 +1238,18 @@ impl InterfaceSpec {
             .find(|cmd| cmd.cmd_id == cmd_id)
             .and_then(|cmd| cmd.binding_effect)
     }
+
+    /// Get the input type constraints for a command.
+    ///
+    /// Returns a vector of TypeConstraint, one per input. The constraints are
+    /// in stack order (deepest first, i.e., first element is the bottom-most input).
+    pub fn get_input_constraints(&self, cmd_id: u16) -> Vec<TypeConstraint> {
+        self.commands
+            .iter()
+            .find(|cmd| cmd.cmd_id == cmd_id)
+            .map(|cmd| cmd.inputs.iter().map(type_to_constraint).collect())
+            .unwrap_or_default()
+    }
 }
 
 // ============================================================================
@@ -1025,7 +1273,7 @@ impl LibraryInterface for InterfaceSpec {
         self.token_claims()
     }
 
-    fn command_effect(&self, cmd: u16, types: &CStack) -> StackEffect {
+    fn command_effect(&self, cmd: u16, tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
         let cmd = match self.commands.iter().find(|c| c.cmd_id == cmd) {
             Some(c) => c,
             None => return StackEffect::Dynamic,
@@ -1033,8 +1281,7 @@ impl LibraryInterface for InterfaceSpec {
 
         match &cmd.effect_kind {
             EffectKind::Static(effect) => effect.clone(),
-            EffectKind::BinaryNumeric => crate::libs::binary_numeric_effect(types),
-            EffectKind::UnaryPreserving => crate::libs::unary_preserving_effect(types),
+            EffectKind::BinaryNumeric => crate::libs::binary_numeric_effect(tos, nos),
         }
     }
 
@@ -1088,6 +1335,59 @@ impl LibraryInterface for InterfaceSpec {
     fn binding_effect(&self, cmd: u16) -> Option<BindingKind> {
         self.get_binding_effect(cmd)
     }
+
+    fn input_constraints(&self, cmd: u16) -> Vec<TypeConstraint> {
+        self.get_input_constraints(cmd)
+    }
+
+    fn alternative_branches(&self, construct_id: u16, num_branches: usize) -> Vec<Vec<usize>> {
+        let decl = match self.syntax.iter().find(|s| s.id == construct_id) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+
+        // Analyze the parser to find alternative branch groups
+        compute_alternative_groups(&decl.parser, num_branches)
+    }
+
+    fn construct_effect(&self, construct_id: u16) -> StackEffect {
+        let decl = match self.syntax.iter().find(|s| s.id == construct_id) {
+            Some(d) => d,
+            None => return StackEffect::Dynamic,
+        };
+
+        // Convert input/output types to stack effect
+        // Include both explicit inputs and pattern captures (like cond:Int in IF)
+        let consumes = decl.inputs.len() as u8 + decl.pattern_consumes;
+        let results: Vec<ResultType> = decl
+            .outputs
+            .iter()
+            .map(|t| match t {
+                Type::Concrete(ct) => {
+                    let type_id = match ct {
+                        ConcreteType::Int => TypeId::BINT,
+                        ConcreteType::Real => TypeId::REAL,
+                        ConcreteType::Str => TypeId::STRING,
+                        ConcreteType::List => TypeId::LIST,
+                        ConcreteType::Prog => TypeId::PROGRAM,
+                        ConcreteType::Sym => TypeId::SYMBOLIC,
+                        ConcreteType::Blob => TypeId::BLOB,
+                        ConcreteType::Any => return ResultType::Unknown,
+                    };
+                    ResultType::known(type_id)
+                }
+                _ => ResultType::Unknown,
+            })
+            .collect();
+
+        StackEffect::fixed_result(consumes, &results)
+    }
+
+    fn is_loop_construct(&self, construct_id: u16) -> bool {
+        // Flow library (ID 9) counted loops: FOR=20, FORUP=21, FORDN=22, START=23
+        // These constructs consume start/end values from stack and may create loop variables
+        self.id == 9 && (20..=23).contains(&construct_id)
+    }
 }
 
 // ============================================================================
@@ -1136,19 +1436,19 @@ library Stack 1
         let dup = rt.find_command("DUP").unwrap();
         assert_eq!(
             dup.effect_kind,
-            EffectKind::Static(StackEffect::permutation(1, &[0, 0]))
+            EffectKind::Static(StackEffect::dup())
         );
 
         let swap = rt.find_command("SWAP").unwrap();
         assert_eq!(
             swap.effect_kind,
-            EffectKind::Static(StackEffect::permutation(2, &[1, 0]))
+            EffectKind::Static(StackEffect::swap())
         );
 
         let rot = rt.find_command("ROT").unwrap();
         assert_eq!(
             rot.effect_kind,
-            EffectKind::Static(StackEffect::permutation(3, &[1, 2, 0]))
+            EffectKind::Static(StackEffect::rot())
         );
     }
 
@@ -1212,10 +1512,11 @@ library Arith 4
         let rt = InterfaceSpec::from_ast(&ast);
 
         let neg = rt.find_command("NEG").unwrap();
-        assert_eq!(neg.effect_kind, EffectKind::UnaryPreserving);
+        // UnaryPreserving is now represented as Static with FromInput(0)
+        assert_eq!(neg.effect_kind, EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)])));
 
         let abs = rt.find_command("ABS").unwrap();
-        assert_eq!(abs.effect_kind, EffectKind::UnaryPreserving);
+        assert_eq!(abs.effect_kind, EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)])));
     }
 
     #[test]
@@ -1269,16 +1570,12 @@ library Arith 7
 
         let add = rt.find_command("ADD").unwrap();
 
-        let mut int_stack = CStack::default();
-        int_stack.push_known(TypeId::BINT);
-        int_stack.push_known(TypeId::BINT);
-        let effect = rt.command_effect(add.cmd_id, &int_stack);
+        // Two integers -> Integer
+        let effect = rt.command_effect(add.cmd_id, Some(TypeId::BINT), Some(TypeId::BINT));
         assert_eq!(effect, StackEffect::fixed(2, &[Some(TypeId::BINT)]));
 
-        let mut mixed_stack = CStack::default();
-        mixed_stack.push_known(TypeId::BINT);
-        mixed_stack.push_known(TypeId::REAL);
-        let effect = rt.command_effect(add.cmd_id, &mixed_stack);
+        // Mixed int/real -> Real
+        let effect = rt.command_effect(add.cmd_id, Some(TypeId::REAL), Some(TypeId::BINT));
         assert_eq!(effect, StackEffect::fixed(2, &[Some(TypeId::REAL)]));
     }
 
@@ -1578,5 +1875,45 @@ library Test 1
 
         let indices = rt.binding_branches(999, 5);
         assert!(indices.is_empty(), "Unknown construct should return empty");
+    }
+
+    // --- Alternative Branch Tests ---
+
+    #[test]
+    fn test_alternative_branches_if_then_else() {
+        // IF/THEN/ELSE has branches 1 (then) and 2 (else) as alternatives
+        let interface = r#"
+library Test 1
+
+10: -> IF cond:Int THEN body:Prog ELSE? alt:Prog END ->
+"#;
+        let ast = parse(interface).unwrap();
+        let rt = InterfaceSpec::from_ast(&ast);
+
+        // With 3 branches: [cond, then_body, else_body]
+        let alts = rt.alternative_branches(10, 3);
+        assert_eq!(alts.len(), 1, "Should have 1 alternative group");
+        assert_eq!(alts[0], vec![1, 2], "Branches 1 and 2 should be alternatives");
+
+        // With 2 branches (no ELSE): [cond, then_body]
+        let alts = rt.alternative_branches(10, 2);
+        // Should still detect the pattern but with only existing branches
+        assert!(alts.is_empty() || alts[0].iter().all(|&i| i < 2),
+            "Should handle missing ELSE branch");
+    }
+
+    #[test]
+    fn test_alternative_branches_no_alternatives() {
+        // Simple IF without ELSE has no alternatives
+        let interface = r#"
+library Test 1
+
+20: -> IF cond:Int THEN body:Prog END ->
+"#;
+        let ast = parse(interface).unwrap();
+        let rt = InterfaceSpec::from_ast(&ast);
+
+        let alts = rt.alternative_branches(20, 2);
+        assert!(alts.is_empty(), "IF without ELSE should have no alternatives");
     }
 }

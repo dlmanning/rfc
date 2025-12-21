@@ -278,7 +278,7 @@ pub fn hover(
                 return Some(make_definition_hover(def));
             }
             // Unresolved reference - might be a command
-            return hover_command(&reference.name, reference.span, registry);
+            return hover_command(&reference.name, reference.span, analysis, registry);
         }
     }
 
@@ -291,7 +291,7 @@ pub fn hover(
 fn make_definition_hover(def: &Definition) -> HoverResult {
     let kind_str = match def.kind {
         DefinitionKind::Global => {
-            if def.arity.is_some() {
+            if def.arity.is_some() || def.signature.is_some() {
                 "function"
             } else {
                 "global variable"
@@ -303,12 +303,18 @@ fn make_definition_hover(def: &Definition) -> HoverResult {
 
     let mut details = Vec::new();
 
-    if let Some(ref ty) = def.value_type {
-        details.push(format!("Type: `{}`", ty));
-    }
+    // Show signature if available (preferred over just arity)
+    if let Some(ref sig) = def.signature {
+        details.push(format!("Signature: `{}`", sig));
+    } else {
+        // Fall back to showing type and arity separately
+        if let Some(ref ty) = def.value_type {
+            details.push(format!("Type: `{}`", ty));
+        }
 
-    if let Some(arity) = def.arity {
-        details.push(format!("Arity: {}", arity));
+        if let Some(arity) = def.arity {
+            details.push(format!("Arity: {}", arity));
+        }
     }
 
     let detail_str = if details.is_empty() {
@@ -323,7 +329,12 @@ fn make_definition_hover(def: &Definition) -> HoverResult {
     }
 }
 
-fn hover_command(name: &str, span: Span, registry: &InterfaceRegistry) -> Option<HoverResult> {
+fn hover_command(
+    name: &str,
+    span: Span,
+    analysis: &AnalysisResult,
+    registry: &InterfaceRegistry,
+) -> Option<HoverResult> {
     // Look up command in registry
     if let Some((lib_id, cmd_id)) = registry.find_command(name) {
         let mut parts = Vec::new();
@@ -333,10 +344,13 @@ fn hover_command(name: &str, span: Span, registry: &InterfaceRegistry) -> Option
             parts.push(format!("Library: {}", lib_name));
         }
 
-        // Get stack effect
-        // Use an empty type stack for static effect lookup
-        let types = crate::types::CStack::new();
-        let effect = registry.get_command_effect(lib_id, cmd_id, &types);
+        // Get stack effect using type context from analysis if available
+        let (tos, nos) = if let Some(snapshot) = analysis.node_stacks.get(&span) {
+            (snapshot.tos.as_known(), snapshot.nos.as_known())
+        } else {
+            (None, None)
+        };
+        let effect = registry.get_command_effect(lib_id, cmd_id, tos, nos);
         let notation = effect.to_notation();
         if notation != "(dynamic)" {
             parts.push(format!("Effect: `{}`", notation));
@@ -531,7 +545,7 @@ pub fn document_symbols(analysis: &AnalysisResult, interner: &Interner) -> Vec<D
 
         symbols.push(DocumentSymbol {
             name: def.name.clone(),
-            detail: def.value_type.as_ref().map(|t| format!("{:?}", t)),
+            detail: def.value_type.as_ref().map(|t| t.to_string()),
             kind,
             range: def.span,
             selection_range: def.span,

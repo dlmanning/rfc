@@ -109,7 +109,7 @@ impl LibraryLowerer for TranscendentalsLib {
             }
             // Rounding operations - use native opcodes for reals
             cmd::CEIL => {
-                let tos = ctx.types.top();
+                let tos = ctx.tos();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Ceil);
                 } else if !tos.is_integer() {
@@ -118,7 +118,7 @@ impl LibraryLowerer for TranscendentalsLib {
                 // Integer is already "ceiled" - no-op
             }
             cmd::FLOOR => {
-                let tos = ctx.types.top();
+                let tos = ctx.tos();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Floor);
                 } else if !tos.is_integer() {
@@ -128,7 +128,7 @@ impl LibraryLowerer for TranscendentalsLib {
             }
             cmd::IP => {
                 // Integer part (truncate toward zero)
-                let tos = ctx.types.top();
+                let tos = ctx.tos();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Trunc);
                 } else if !tos.is_integer() {
@@ -139,7 +139,7 @@ impl LibraryLowerer for TranscendentalsLib {
             cmd::FP => {
                 // Fractional part: x - trunc(x)
                 // For integers, always 0
-                let tos = ctx.types.top();
+                let tos = ctx.tos();
                 if tos.is_integer() {
                     // Drop the integer, push 0
                     ctx.output.emit_opcode(Opcode::Drop);

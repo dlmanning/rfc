@@ -62,8 +62,8 @@ impl LibraryLowerer for BinaryLib {
         ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
         // Check if we can use optimized integer ops
-        let tos = ctx.types.top();
-        let nos = ctx.types.nos();
+        let tos = ctx.tos();
+        let nos = ctx.nos();
         let tos_is_int = tos.is_integer();
         let both_int = tos_is_int && nos.is_integer();
 

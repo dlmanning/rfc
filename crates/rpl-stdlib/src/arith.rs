@@ -77,11 +77,12 @@ impl LibraryLowerer for ArithLib {
             cmd::ADD => ctx.emit_binary_numeric(Opcode::I64Add, Opcode::F64Add, ARITH_LIB, cmd),
             cmd::SUB => ctx.emit_binary_numeric(Opcode::I64Sub, Opcode::F64Sub, ARITH_LIB, cmd),
             cmd::MUL => ctx.emit_binary_numeric(Opcode::I64Mul, Opcode::F64Mul, ARITH_LIB, cmd),
-            cmd::DIV => ctx.emit_binary_numeric(Opcode::I64DivS, Opcode::F64Div, ARITH_LIB, cmd),
+            // Division always produces Real (RPL convention)
+            cmd::DIV => ctx.emit_binary_real_only(Opcode::F64Div, ARITH_LIB, cmd),
             cmd::NEG => ctx.emit_unary_numeric(None, Opcode::F64Neg, ARITH_LIB, cmd),
             cmd::ABS => {
                 // For reals, use native F64Abs; for others, use library call
-                let tos = ctx.types.top();
+                let tos = ctx.tos();
                 if tos.is_real() {
                     ctx.output.emit_opcode(Opcode::F64Abs);
                 } else {
@@ -114,7 +115,7 @@ impl LibraryExecutor for ArithLib {
             cmd::ADD => add_op(ctx),
             cmd::SUB => binary_numeric_op(ctx, |a, b| a - b, |a, b| a - b),
             cmd::MUL => binary_numeric_op(ctx, |a, b| a * b, |a, b| a * b),
-            cmd::DIV => binary_real_op(ctx, |a, b| a / b),
+            cmd::DIV => div_op(ctx),
             cmd::NEG => unary_numeric_op(ctx, |a| -a, |a| -a),
             cmd::ABS => unary_numeric_op(ctx, |a| a.abs(), |a| a.abs()),
             cmd::INV => unary_real_op(ctx, |a| 1.0 / a),
@@ -137,7 +138,8 @@ impl LibraryExecutor for ArithLib {
 
 // Execution helpers
 
-/// Addition with support for lists and strings.
+/// Numeric addition and string concatenation.
+/// List operations should use ADD from the List library.
 fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
     let b = ctx.pop()?;
     let a = ctx.pop()?;
@@ -147,29 +149,11 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         (Value::Real(a), Value::Real(b)) => Value::Real(a + b),
         (Value::Integer(a), Value::Real(b)) => Value::Real(a as f64 + b),
         (Value::Real(a), Value::Integer(b)) => Value::Real(a + b as f64),
-        // List concatenation
-        (Value::List(a), Value::List(b)) => {
-            let mut result: Vec<Value> = a.iter().cloned().collect();
-            result.extend(b.iter().cloned());
-            Value::list(result)
-        }
-        // List append (list + element)
-        (Value::List(a), elem) => {
-            let mut result: Vec<Value> = a.iter().cloned().collect();
-            result.push(elem);
-            Value::list(result)
-        }
-        // List prepend (element + list)
-        (elem, Value::List(b)) => {
-            let mut result = vec![elem];
-            result.extend(b.iter().cloned());
-            Value::list(result)
-        }
         // String concatenation
         (Value::String(a), Value::String(b)) => {
             Value::string(format!("{}{}", a.as_ref(), b.as_ref()))
         }
-        _ => return Err("Type error: expected numbers, lists, or strings".into()),
+        _ => return Err("Type error: expected numbers or strings".into()),
     };
     ctx.push(result)?;
     Ok(())
@@ -233,6 +217,24 @@ where
         _ => return Err("Type error: expected numbers".into()),
     };
     ctx.push(Value::Real(op(a, b)))?;
+    Ok(())
+}
+
+/// Division with zero check.
+fn div_op(ctx: &mut ExecuteContext) -> ExecuteResult {
+    let b = ctx.pop()?;
+    let a = ctx.pop()?;
+    let (a, b) = match (a, b) {
+        (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
+        (Value::Real(a), Value::Real(b)) => (a, b),
+        (Value::Integer(a), Value::Real(b)) => (a as f64, b),
+        (Value::Real(a), Value::Integer(b)) => (a, b as f64),
+        _ => return Err("Type error: expected numbers".into()),
+    };
+    if b == 0.0 {
+        return Err("Division by zero".into());
+    }
+    ctx.push(Value::Real(a / b))?;
     Ok(())
 }
 
@@ -345,5 +347,26 @@ mod tests {
     fn division_known_int_with_real() {
         let result = crate::eval("263 500. /");
         assert_eq!(result, Ok(vec![Value::Real(0.526)]));
+    }
+
+    /// Test that NEG uses FromInput(0) to preserve input type.
+    #[test]
+    fn neg_uses_from_input() {
+        use rpl::libs::{ResultType, StackEffect};
+
+        let spec = interface();
+        let neg = spec.find_command("NEG").expect("NEG should exist");
+
+        // The effect should be Static with FromInput(0)
+        match &neg.effect_kind {
+            rpl::interface::EffectKind::Static(effect) => {
+                assert_eq!(
+                    *effect,
+                    StackEffect::fixed_result(1, &[ResultType::from_input(0)]),
+                    "NEG should use FromInput(0)"
+                );
+            }
+            _ => panic!("NEG should have Static effect, got {:?}", neg.effect_kind),
+        }
     }
 }

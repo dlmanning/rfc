@@ -292,13 +292,12 @@ fn multiple_values_on_stack() {
 }
 
 // ============================================================================
-// Case Insensitivity
+// Case Sensitivity
 // ============================================================================
 
 #[test]
-fn commands_case_insensitive() {
-    assert_stack_eq("#FF #0F band", &[0x0F]);
-    assert_stack_eq("#FF #0F Band", &[0x0F]);
+fn commands_case_sensitive() {
+    // Only uppercase commands work (case-sensitive)
     assert_stack_eq("#FF #0F BAND", &[0x0F]);
 }
 

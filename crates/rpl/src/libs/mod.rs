@@ -59,7 +59,7 @@ use crate::vm::directory::Directory;
 use crate::vm::stack::Stack;
 use crate::vm::RplException;
 use crate::core::{Span, TypeId};
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
 // ============================================================================
 // Stack Effects
@@ -71,37 +71,71 @@ use smallvec::SmallVec;
 /// Returned by `LibraryLowerer::lower_command()` after emitting code,
 /// so the effect can reflect the actual types based on input types.
 ///
-/// # Type Permutations
+/// # Type Preservation with FromInput
 ///
 /// For stack manipulation commands, we track how input types flow to outputs.
-/// The `Permutation` variant uses a pattern array where each element indicates
-/// which input position (0 = deepest consumed) maps to that output position.
+/// The `FromInput(i)` result type indicates that an output copies its type
+/// from input position `i` (0 = deepest consumed).
 ///
-/// Examples:
-/// - `SWAP (a b -- b a)`: inputs=2, pattern=[1, 0]
-/// - `DUP (a -- a a)`: inputs=1, pattern=[0, 0]
-/// - `DROP (a --)`: inputs=1, pattern=[]
-/// - `ROT (a b c -- b c a)`: inputs=3, pattern=[1, 2, 0]
-/// - `OVER (a b -- a b a)`: inputs=2, pattern=[0, 1, 0]
+/// Result type for stack effects.
+///
+/// Represents what type a command produces on the stack:
+/// - `Unknown`: type cannot be determined statically
+/// - `Known(TypeId)`: exact type is known
+/// - `OneOf(types)`: type is one of the specified types (e.g., Numeric = Int|Real)
+/// - `FromInput(i)`: type is copied from input at position i (0 = deepest consumed)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResultType {
+    Unknown,
+    Known(TypeId),
+    OneOf(SmallVec<[TypeId; 2]>),
+    /// Output type is copied from input at position i (0 = deepest consumed).
+    /// Used for type-preserving operations like DUP, SWAP, NEG.
+    FromInput(u8),
+}
+
+impl ResultType {
+    /// Create a Numeric result type (Int | Real).
+    pub fn numeric() -> Self {
+        Self::OneOf(smallvec![TypeId::BINT, TypeId::REAL])
+    }
+
+    /// Create a Known result type.
+    pub fn known(ty: TypeId) -> Self {
+        Self::Known(ty)
+    }
+
+    /// Create a FromInput result type (output copies input at position i).
+    pub fn from_input(i: u8) -> Self {
+        Self::FromInput(i)
+    }
+}
+
+impl From<Option<TypeId>> for ResultType {
+    fn from(opt: Option<TypeId>) -> Self {
+        match opt {
+            Some(ty) => ResultType::Known(ty),
+            None => ResultType::Unknown,
+        }
+    }
+}
+
+/// Stack effect representation.
+///
+/// Examples using FromInput:
+/// - `SWAP (a b -- b a)`: Fixed { consumes: 2, results: [FromInput(1), FromInput(0)] }
+/// - `DUP (a -- a a)`: Fixed { consumes: 1, results: [FromInput(0), FromInput(0)] }
+/// - `DROP (a --)`: Fixed { consumes: 1, results: [] }
+/// - `SIZE (list -- int)`: Fixed { consumes: 1, results: [Known(BINT)] }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StackEffect {
-    /// Type-preserving permutation of stack items.
-    ///
-    /// - `inputs`: number of items consumed from stack
-    /// - `pattern`: for each output slot (bottom to top), which input slot it comes from
-    ///
-    /// Pattern indices are 0-based where 0 is the deepest consumed item.
-    Permutation {
-        inputs: u8,
-        pattern: SmallVec<[u8; 4]>,
-    },
     /// Fixed number of inputs with known result types.
     ///
     /// - `consumes`: number of items consumed from stack
-    /// - `results`: types of produced items (None = unknown type)
+    /// - `results`: types of produced items (can reference inputs via FromInput)
     Fixed {
         consumes: u8,
-        results: SmallVec<[Option<TypeId>; 4]>,
+        results: SmallVec<[ResultType; 4]>,
     },
     /// Dynamic effect (depends on runtime values, e.g., PICK n).
     Dynamic,
@@ -114,26 +148,23 @@ impl StackEffect {
     pub fn fixed(consumes: u8, results: &[Option<TypeId>]) -> Self {
         Self::Fixed {
             consumes,
-            results: SmallVec::from_slice(results),
+            results: results.iter().map(|&opt| ResultType::from(opt)).collect(),
         }
     }
 
-    /// Create a permutation effect.
+    /// Create a fixed effect with ResultType results.
     ///
-    /// # Arguments
-    /// - `inputs`: number of stack items consumed
-    /// - `pattern`: output mapping, where `pattern[i]` is the input index for output `i`
-    pub fn permutation(inputs: u8, pattern: &[u8]) -> Self {
-        Self::Permutation {
-            inputs,
-            pattern: SmallVec::from_slice(pattern),
+    /// Use this for effects that need OneOf types (e.g., Numeric).
+    pub fn fixed_result(consumes: u8, results: &[ResultType]) -> Self {
+        Self::Fixed {
+            consumes,
+            results: results.iter().cloned().collect(),
         }
     }
 
     /// Get the number of items consumed.
     pub fn consumes(&self) -> Option<u8> {
         match self {
-            Self::Permutation { inputs, .. } => Some(*inputs),
             Self::Fixed { consumes, .. } => Some(*consumes),
             Self::Dynamic => None,
         }
@@ -142,28 +173,27 @@ impl StackEffect {
     /// Get the number of items produced.
     pub fn produces(&self) -> Option<u8> {
         match self {
-            Self::Permutation { pattern, .. } => Some(pattern.len() as u8),
             Self::Fixed { results, .. } => Some(results.len() as u8),
             Self::Dynamic => None,
         }
     }
 
     /// Get the result types (for Fixed effects).
-    pub fn results(&self) -> Option<&[Option<TypeId>]> {
+    pub fn results(&self) -> Option<&[ResultType]> {
         match self {
             Self::Fixed { results, .. } => Some(results),
             _ => None,
         }
     }
 
-    // Common permutation patterns as functions
-    pub fn dup() -> Self { Self::permutation(1, &[0, 0]) }
-    pub fn drop() -> Self { Self::permutation(1, &[]) }
-    pub fn swap() -> Self { Self::permutation(2, &[1, 0]) }
-    pub fn rot() -> Self { Self::permutation(3, &[1, 2, 0]) }
-    pub fn over() -> Self { Self::permutation(2, &[0, 1, 0]) }
-    pub fn nip() -> Self { Self::permutation(2, &[1]) }  // (a b -- b)
-    pub fn tuck() -> Self { Self::permutation(2, &[1, 0, 1]) }  // (a b -- b a b)
+    // Common stack manipulation effects using FromInput
+    pub fn dup() -> Self { Self::fixed_result(1, &[ResultType::from_input(0), ResultType::from_input(0)]) }
+    pub fn drop() -> Self { Self::fixed_result(1, &[]) }
+    pub fn swap() -> Self { Self::fixed_result(2, &[ResultType::from_input(1), ResultType::from_input(0)]) }
+    pub fn rot() -> Self { Self::fixed_result(3, &[ResultType::from_input(1), ResultType::from_input(2), ResultType::from_input(0)]) }
+    pub fn over() -> Self { Self::fixed_result(2, &[ResultType::from_input(0), ResultType::from_input(1), ResultType::from_input(0)]) }
+    pub fn nip() -> Self { Self::fixed_result(2, &[ResultType::from_input(1)]) }  // (a b -- b)
+    pub fn tuck() -> Self { Self::fixed_result(2, &[ResultType::from_input(1), ResultType::from_input(0), ResultType::from_input(1)]) }  // (a b -- b a b)
 
     /// DEPTH: (-- n) produces integer, doesn't consume anything
     pub fn depth() -> Self { Self::fixed(0, &[Some(TypeId::BINT)]) }
@@ -171,33 +201,25 @@ impl StackEffect {
     /// Format the stack effect in traditional notation: `(inputs -- outputs)`
     pub fn to_notation(&self) -> String {
         match self {
-            Self::Permutation { inputs, pattern } => {
-                // Use letters for the input slots (a, b, c, ...)
-                let input_names: Vec<char> = (0..*inputs)
-                    .map(|i| (b'a' + i) as char)
-                    .collect();
-                let inputs_str: Vec<String> = input_names.iter().map(|c| c.to_string()).collect();
-                let outputs_str: Vec<String> = pattern
-                    .iter()
-                    .map(|&i| input_names.get(i as usize).copied().unwrap_or('?').to_string())
-                    .collect();
-                format!("({} -- {})", inputs_str.join(" "), outputs_str.join(" "))
-            }
             Self::Fixed { consumes, results } => {
-                // Use letters for inputs, type names for outputs
+                // Use letters for inputs, type names or input refs for outputs
                 let inputs_str: Vec<String> = (0..*consumes)
                     .map(|i| ((b'a' + i) as char).to_string())
                     .collect();
-                let outputs_str: Vec<&str> = results
+                let outputs_str: Vec<String> = results
                     .iter()
                     .map(|ty| match ty {
-                        Some(TypeId::BINT) => "int",
-                        Some(TypeId::REAL) => "real",
-                        Some(TypeId::STRING) => "str",
-                        Some(TypeId::LIST) => "list",
-                        Some(TypeId::PROGRAM) => "prog",
-                        Some(TypeId::SYMBOLIC) => "sym",
-                        _ => "?",
+                        ResultType::Known(TypeId::BINT) => "int".to_string(),
+                        ResultType::Known(TypeId::REAL) => "real".to_string(),
+                        ResultType::Known(TypeId::STRING) => "str".to_string(),
+                        ResultType::Known(TypeId::LIST) => "list".to_string(),
+                        ResultType::Known(TypeId::PROGRAM) => "prog".to_string(),
+                        ResultType::Known(TypeId::SYMBOLIC) => "sym".to_string(),
+                        ResultType::Known(_) => "?".to_string(),
+                        ResultType::OneOf(types) if types.contains(&TypeId::BINT) && types.contains(&TypeId::REAL) => "num".to_string(),
+                        ResultType::OneOf(_) => "union".to_string(),
+                        ResultType::Unknown => "?".to_string(),
+                        ResultType::FromInput(i) => ((b'a' + i) as char).to_string(),
                     })
                     .collect();
                 format!("({} -- {})", inputs_str.join(" "), outputs_str.join(" "))
@@ -211,8 +233,6 @@ impl StackEffect {
 // Effect Computation Helpers
 // ============================================================================
 
-use crate::types::CStack;
-
 /// Compute the stack effect for a binary numeric operation.
 ///
 /// This is the single source of truth for determining result types
@@ -221,15 +241,20 @@ use crate::types::CStack;
 /// Rules:
 /// - If both operands are integers → integer result
 /// - If either operand is real (or mixed int/real) → real result
-/// - Otherwise → unknown result type
-pub fn binary_numeric_effect(types: &CStack) -> StackEffect {
-    let (tos, nos) = (types.top(), types.nos());
-    if tos.is_integer() && nos.is_integer() {
-        StackEffect::fixed(2, &[Some(TypeId::BINT)])
-    } else if tos.is_real() || nos.is_real() {
-        StackEffect::fixed(2, &[Some(TypeId::REAL)])
+/// - Otherwise → numeric result (Int | Real), since the operation is known to be numeric
+pub fn binary_numeric_effect(tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
+    let tos_is_int = tos == Some(TypeId::BINT);
+    let nos_is_int = nos == Some(TypeId::BINT);
+    let tos_is_real = tos == Some(TypeId::REAL);
+    let nos_is_real = nos == Some(TypeId::REAL);
+
+    if tos_is_int && nos_is_int {
+        StackEffect::fixed_result(2, &[ResultType::known(TypeId::BINT)])
+    } else if tos_is_real || nos_is_real {
+        StackEffect::fixed_result(2, &[ResultType::known(TypeId::REAL)])
     } else {
-        StackEffect::fixed(2, &[None])
+        // Even when we can't determine the exact type, we know it's numeric
+        StackEffect::fixed_result(2, &[ResultType::numeric()])
     }
 }
 
@@ -241,15 +266,15 @@ pub fn binary_numeric_effect(types: &CStack) -> StackEffect {
 /// Rules:
 /// - If input is integer → integer result
 /// - If input is real → real result
-/// - Otherwise → unknown result type
-pub fn unary_preserving_effect(types: &CStack) -> StackEffect {
-    let tos = types.top();
-    if tos.is_integer() {
-        StackEffect::fixed(1, &[Some(TypeId::BINT)])
-    } else if tos.is_real() {
-        StackEffect::fixed(1, &[Some(TypeId::REAL)])
+/// - Otherwise → numeric result (preserves numeric nature even when exact type is unknown)
+pub fn unary_preserving_effect(tos: Option<TypeId>) -> StackEffect {
+    if tos == Some(TypeId::BINT) {
+        StackEffect::fixed_result(1, &[ResultType::known(TypeId::BINT)])
+    } else if tos == Some(TypeId::REAL) {
+        StackEffect::fixed_result(1, &[ResultType::known(TypeId::REAL)])
     } else {
-        StackEffect::fixed(1, &[None])
+        // Even when we can't determine the exact type, we know it's numeric
+        StackEffect::fixed_result(1, &[ResultType::numeric()])
     }
 }
 
@@ -323,8 +348,8 @@ impl CommandInfo {
         consumes: u8,
         produces: u8,
     ) -> Self {
-        // Create a slice of None (unknown) types for the produces count
-        let results: SmallVec<[Option<TypeId>; 4]> = (0..produces).map(|_| None).collect();
+        // Create a slice of Unknown types for the produces count
+        let results: SmallVec<[ResultType; 4]> = (0..produces).map(|_| ResultType::Unknown).collect();
         Self {
             name,
             lib_id,
@@ -514,7 +539,8 @@ pub trait LibraryInterface: Send + Sync {
     /// Compute the stack effect for a command.
     ///
     /// Used for type inference during compilation and analysis.
-    fn command_effect(&self, _cmd: u16, _types: &crate::types::CStack) -> StackEffect {
+    /// `tos` and `nos` are the top-of-stack and next-on-stack types if known.
+    fn command_effect(&self, _cmd: u16, _tos: Option<TypeId>, _nos: Option<TypeId>) -> StackEffect {
         StackEffect::Dynamic
     }
 
@@ -550,6 +576,51 @@ pub trait LibraryInterface: Send + Sync {
     /// to track variable definitions and references without hardcoding library IDs.
     fn binding_effect(&self, _cmd: u16) -> Option<BindingKind> {
         None
+    }
+
+    /// Get the input type constraints for a command.
+    ///
+    /// Returns a vector of TypeConstraint, one per input. Used by the analyzer
+    /// for constraint-based type inference on local variables.
+    fn input_constraints(&self, _cmd: u16) -> Vec<crate::types::TypeConstraint> {
+        Vec::new()
+    }
+
+    /// Get alternative branch groups for a construct.
+    ///
+    /// Returns groups of branch indices that are mutually exclusive at runtime.
+    /// The analyzer will save the type stack before visiting these branches,
+    /// visit each one, and then merge the resulting stacks.
+    ///
+    /// For example, IF/THEN/ELSE returns [[1, 2]] meaning branches 1 (then)
+    /// and 2 (else) are alternatives. The analyzer will:
+    /// 1. Visit branch 0 (condition) normally
+    /// 2. Save stack state
+    /// 3. Visit branch 1, record resulting stack
+    /// 4. Restore stack state
+    /// 5. Visit branch 2, record resulting stack
+    /// 6. Merge the two resulting stacks
+    ///
+    /// Returns empty vec if all branches are sequential.
+    fn alternative_branches(&self, _construct_id: u16, _num_branches: usize) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+
+    /// Check if a construct is a loop (FOR, START, etc.).
+    ///
+    /// Loop constructs have special handling in the analyzer:
+    /// - Loop variables use DefinitionKind::LoopVar instead of Local
+    /// - Loop body scope is ScopeKind::Loop
+    fn is_loop_construct(&self, _construct_id: u16) -> bool {
+        false
+    }
+
+    /// Get the stack effect for a syntax construct.
+    ///
+    /// Returns the number of inputs consumed and outputs produced by a construct.
+    /// For example, FOR consumes 2 values (start, end) and produces 0 values.
+    fn construct_effect(&self, _construct_id: u16) -> StackEffect {
+        StackEffect::Dynamic
     }
 }
 

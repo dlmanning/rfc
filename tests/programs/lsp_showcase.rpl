@@ -77,7 +77,7 @@
         @ Check if discriminant is negative
         IF disc 0 < THEN
             @ No real roots
-            0
+            0.0
         ELSE
             @ Compute two roots
             disc sqrt -> sqrt_disc <<
@@ -95,3 +95,6 @@
 1 -5 6 quadratic_solver
 @ Test: Solve x^2 + 2x + 5 = 0 (no real roots)
 1 2 5 quadratic_solver
+
+@ Should make parameter types be Int | Real
+@ 2.0 1.9 7.3 quadratic_solver

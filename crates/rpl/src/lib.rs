@@ -114,8 +114,11 @@ pub fn eval_with_registries(
     let nodes = parse::parse(source, interfaces, &mut interner)
         .map_err(|e| format!("parse error: {}", e))?;
 
+    // Analyze for type-directed lowering
+    let analysis = analysis::analyze(&nodes, interfaces, &interner);
+
     // Lower
-    let program = lower::lower(&nodes, interfaces, lowerers, &interner)
+    let program = lower::lower(&nodes, interfaces, lowerers, &interner, &analysis)
         .map_err(|e| format!("lower error: {}", e))?;
 
     // Execute

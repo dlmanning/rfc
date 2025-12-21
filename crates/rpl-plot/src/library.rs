@@ -469,7 +469,6 @@ pub fn register_plot_lib(session: &mut rpl::Session) {
 mod tests {
     use super::*;
     use rpl::libs::LibraryInterface;
-    use rpl::types::CStack;
 
     #[test]
     fn plot_lib_id() {
@@ -528,25 +527,23 @@ mod tests {
 
     #[test]
     fn test_command_effects() {
-        let empty_stack = CStack::new();
-
         // NEWPLOT: 0 in, 1 out (Blob)
-        let effect = interface().command_effect(cmd::NEWPLOT, &empty_stack);
+        let effect = interface().command_effect(cmd::NEWPLOT, None, None);
         assert_eq!(effect.consumes(), Some(0));
         assert_eq!(effect.produces(), Some(1));
 
         // CIRCLE: 4 in (Blob + 3 args), 1 out (Blob)
-        let effect = interface().command_effect(cmd::CIRCLE, &empty_stack);
+        let effect = interface().command_effect(cmd::CIRCLE, None, None);
         assert_eq!(effect.consumes(), Some(4));
         assert_eq!(effect.produces(), Some(1));
 
         // FILL: 1 in (Blob), 1 out (Blob)
-        let effect = interface().command_effect(cmd::FILL, &empty_stack);
+        let effect = interface().command_effect(cmd::FILL, None, None);
         assert_eq!(effect.consumes(), Some(1));
         assert_eq!(effect.produces(), Some(1));
 
         // RGBA: 4 in, 1 out (Int) - no blob
-        let effect = interface().command_effect(cmd::RGBA, &empty_stack);
+        let effect = interface().command_effect(cmd::RGBA, None, None);
         assert_eq!(effect.consumes(), Some(4));
         assert_eq!(effect.produces(), Some(1));
     }

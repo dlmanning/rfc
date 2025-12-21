@@ -3,6 +3,9 @@
 //! This module contains the result of running static analysis on RPL code,
 //! including the symbol table, scope tree, and any diagnostics.
 
+use std::collections::HashMap;
+
+use super::StackSnapshot;
 use crate::core::Span;
 
 use super::scopes::ScopeTree;
@@ -34,6 +37,8 @@ pub enum DiagnosticKind {
     DuplicateDefinition,
     /// Stack underflow - operation requires more items than available.
     StackUnderflow,
+    /// Type mismatch - variable used with incompatible type constraints.
+    TypeMismatch,
 }
 
 impl DiagnosticKind {
@@ -43,6 +48,7 @@ impl DiagnosticKind {
             DiagnosticKind::UndefinedVariable => Severity::Error,
             DiagnosticKind::DuplicateDefinition => Severity::Error,
             DiagnosticKind::StackUnderflow => Severity::Error,
+            DiagnosticKind::TypeMismatch => Severity::Error,
             DiagnosticKind::UnusedVariable => Severity::Warning,
             DiagnosticKind::ShadowedVariable => Severity::Warning,
             DiagnosticKind::WriteOnlyVariable => Severity::Warning,
@@ -152,6 +158,30 @@ impl Diagnostic {
         )
     }
 
+    /// Create a type mismatch error.
+    ///
+    /// This is used when constraint-based type inference detects conflicting
+    /// type requirements on a variable.
+    pub fn type_mismatch(
+        name: &str,
+        span: Span,
+        first_constraint: &str,
+        first_op: &str,
+        second_constraint: &str,
+        second_op: &str,
+        first_span: Span,
+    ) -> Self {
+        Self::with_related(
+            DiagnosticKind::TypeMismatch,
+            span,
+            format!(
+                "type conflict for '{}': used as {} by {} but as {} by {}",
+                name, first_constraint, first_op, second_constraint, second_op
+            ),
+            first_span,
+        )
+    }
+
     /// Check if this is an error.
     pub fn is_error(&self) -> bool {
         matches!(self.severity, Severity::Error)
@@ -172,6 +202,8 @@ pub struct AnalysisResult {
     pub scopes: ScopeTree,
     /// Diagnostics produced during analysis.
     pub diagnostics: Vec<Diagnostic>,
+    /// Stack snapshots at each command node for lowering.
+    pub node_stacks: HashMap<Span, StackSnapshot>,
 }
 
 impl Default for AnalysisResult {
@@ -187,6 +219,7 @@ impl AnalysisResult {
             symbols: SymbolTable::new(),
             scopes: ScopeTree::new(),
             diagnostics: Vec::new(),
+            node_stacks: HashMap::new(),
         }
     }
 
@@ -223,6 +256,64 @@ impl AnalysisResult {
     /// Get the number of references.
     pub fn reference_count(&self) -> usize {
         self.symbols.reference_count()
+    }
+
+    /// Find a definition by local index within a specific span context.
+    ///
+    /// This is scope-aware: it finds the definition with the given local_index
+    /// whose scope contains the given span. If multiple scopes contain the span,
+    /// returns the one from the innermost (most specific) scope.
+    ///
+    /// Used by the lowerer to find the correct definition when local indices
+    /// are reused across different functions.
+    pub fn find_by_local_index_at_span(
+        &self,
+        index: usize,
+        span: crate::core::Span,
+    ) -> Option<&super::symbols::Definition> {
+        // Find all definitions with this local_index
+        let candidates: Vec<_> = self
+            .symbols
+            .definitions()
+            .filter(|d| d.local_index == Some(index))
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        if candidates.len() == 1 {
+            return Some(candidates[0]);
+        }
+
+        // Multiple candidates - find the one whose scope contains the span
+        // and is the innermost (smallest span that still contains our span)
+        let mut best: Option<&super::symbols::Definition> = None;
+        let mut best_scope_span: Option<crate::core::Span> = None;
+
+        for def in candidates {
+            if let Some(scope) = self.scopes.get(def.scope) {
+                // Check if the scope contains the span we're looking for
+                if scope.span.contains_span(span) {
+                    // Is this a more specific (smaller) scope than our current best?
+                    match best_scope_span {
+                        None => {
+                            best = Some(def);
+                            best_scope_span = Some(scope.span);
+                        }
+                        Some(current_best_span) => {
+                            // Prefer the smaller scope (more specific)
+                            if scope.span.len() < current_best_span.len() {
+                                best = Some(def);
+                                best_scope_span = Some(scope.span);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        best
     }
 }
 

@@ -2,8 +2,8 @@
 @ Usage: 10 fib -> 55
 
 << -> n <<
-    n 1 <=
-    IF THEN
+    IF n 1 <=
+    THEN
         n
     ELSE
         n 1 - fib

@@ -45,6 +45,11 @@ impl Span {
         pos >= self.start && pos < self.end
     }
 
+    /// Check if this span fully contains another span.
+    pub fn contains_span(self, other: Span) -> bool {
+        self.start <= other.start && self.end >= other.end
+    }
+
     /// Merge two spans into one covering both.
     pub fn merge(self, other: Span) -> Span {
         Span {

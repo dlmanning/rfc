@@ -191,10 +191,10 @@ fn transcendental_atan2_zero_zero_error() {
     assert_error("0 0 ATAN2", "undefined");
 }
 
-// Case insensitivity
+// Case sensitivity
 #[test]
-fn transcendental_case_insensitive() {
-    assert_stack_approx("0 sin", &[0.0], 1e-10);
-    assert_stack_approx("0 Sin", &[0.0], 1e-10);
-    assert_stack_approx("pi", &[std::f64::consts::PI], 1e-15);
+fn transcendental_case_sensitive() {
+    // Only uppercase commands work (case-sensitive)
+    assert_stack_approx("0 SIN", &[0.0], 1e-10);
+    assert_stack_approx("PI", &[std::f64::consts::PI], 1e-15);
 }

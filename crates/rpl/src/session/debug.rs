@@ -105,6 +105,7 @@ mod tests {
     use crate::{lower::lower, parse::parse, registry::{InterfaceRegistry, LowererRegistry}};
     use crate::core::Interner;
     use crate::source::SourceId;
+    use crate::analysis;
 
     fn compile_source(source: &str) -> (CompiledProgram, SourceFile) {
         let interfaces = InterfaceRegistry::new();
@@ -112,7 +113,8 @@ mod tests {
         let mut interner = Interner::new();
 
         let nodes = parse(source, &interfaces, &mut interner).unwrap();
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let analysis = analysis::analyze(&nodes, &interfaces, &interner);
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         let source_file = SourceFile::new(SourceId::new(0), "test.rpl".into(), source.into());
 

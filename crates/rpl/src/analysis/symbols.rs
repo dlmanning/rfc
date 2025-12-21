@@ -6,7 +6,8 @@
 use crate::core::Span;
 
 use super::scopes::ScopeId;
-use crate::types::CType;
+use super::Type;
+use crate::types::{ConstraintSource, Signature};
 
 /// Unique identifier for a definition.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -78,9 +79,17 @@ pub struct Definition {
     /// Whether this definition has been referenced.
     pub referenced: bool,
     /// Inferred type of the value stored to this variable, if known.
-    pub value_type: Option<CType>,
+    pub value_type: Option<Type>,
     /// For functions: the number of parameters (arity).
     pub arity: Option<usize>,
+    /// Type constraints from usage sites (for constraint-based inference).
+    pub usage_constraints: Vec<ConstraintSource>,
+    /// For locals/loop vars: the local index assigned during parsing.
+    /// Used by lowering to look up type information.
+    pub local_index: Option<usize>,
+    /// For functions: inferred signature (inputs → outputs).
+    /// Only set for programs with explicit local bindings.
+    pub signature: Option<Signature>,
 }
 
 impl Definition {
@@ -95,6 +104,9 @@ impl Definition {
             referenced: false,
             value_type: None,
             arity: None,
+            usage_constraints: Vec::new(),
+            local_index: None,
+            signature: None,
         }
     }
 
@@ -104,7 +116,7 @@ impl Definition {
         span: Span,
         kind: DefinitionKind,
         scope: ScopeId,
-        value_type: CType,
+        value_type: Type,
     ) -> Self {
         Self {
             id: DefinitionId::new(0),
@@ -115,6 +127,9 @@ impl Definition {
             referenced: false,
             value_type: Some(value_type),
             arity: None,
+            usage_constraints: Vec::new(),
+            local_index: None,
+            signature: None,
         }
     }
 
@@ -124,7 +139,7 @@ impl Definition {
         span: Span,
         kind: DefinitionKind,
         scope: ScopeId,
-        value_type: CType,
+        value_type: Type,
         arity: usize,
     ) -> Self {
         Self {
@@ -136,7 +151,38 @@ impl Definition {
             referenced: false,
             value_type: Some(value_type),
             arity: Some(arity),
+            usage_constraints: Vec::new(),
+            local_index: None,
+            signature: None,
         }
+    }
+
+    /// Create a new definition with a local index.
+    pub fn with_local_index(
+        name: String,
+        span: Span,
+        kind: DefinitionKind,
+        scope: ScopeId,
+        local_index: usize,
+    ) -> Self {
+        Self {
+            id: DefinitionId::new(0),
+            name,
+            span,
+            kind,
+            scope,
+            referenced: false,
+            value_type: None,
+            arity: None,
+            usage_constraints: Vec::new(),
+            local_index: Some(local_index),
+            signature: None,
+        }
+    }
+
+    /// Add a type constraint from a usage site.
+    pub fn add_constraint(&mut self, constraint: ConstraintSource) {
+        self.usage_constraints.push(constraint);
     }
 }
 
@@ -255,6 +301,15 @@ impl SymbolTable {
         self.definitions
             .iter()
             .find(|d| d.name == name && d.scope == scope)
+    }
+
+    /// Find a local definition by its local index.
+    ///
+    /// Used by lowering to get type information for local variables.
+    pub fn find_by_local_index(&self, index: usize) -> Option<&Definition> {
+        self.definitions
+            .iter()
+            .find(|d| d.local_index == Some(index))
     }
 
     /// Find references to a specific definition.

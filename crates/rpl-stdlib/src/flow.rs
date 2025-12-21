@@ -89,27 +89,31 @@ impl LibraryLowerer for FlowLib {
                     });
                 }
                 ctx.lower_all(&branches[0])?;
-                ctx.pop_type();
-                let pre_branch = ctx.types.clone();
+                ctx.pop_depth(); // condition consumed
+                let pre_branch = ctx.save_depth();
                 ctx.output.emit_if();
                 ctx.lower_all(&branches[1])?;
 
                 if branches.len() >= 3 {
                     // Has ELSE branch
-                    let then_state = ctx.types.clone();
-                    ctx.types.replace_with(pre_branch);
+                    let then_depth = ctx.save_depth();
+                    ctx.restore_depth(pre_branch);
                     ctx.output.emit_else();
                     ctx.lower_all(&branches[2])?;
-                    let else_state = ctx.types.clone();
-                    let joined = then_state.join(&else_state);
-                    ctx.types.replace_with(joined);
+                    let else_depth = ctx.save_depth();
+                    // Use minimum depth from both branches
+                    let min_depth = then_depth.0.min(else_depth.0);
+                    let known = then_depth.1 && else_depth.1;
+                    ctx.restore_depth((min_depth, known));
                     ctx.output.emit_end();
                 } else {
                     // No ELSE
                     ctx.output.emit_end();
-                    let then_state = ctx.types.clone();
-                    let joined = pre_branch.join(&then_state);
-                    ctx.types.replace_with(joined);
+                    let then_depth = ctx.save_depth();
+                    // Use minimum depth from pre-branch and then-branch
+                    let min_depth = pre_branch.0.min(then_depth.0);
+                    let known = pre_branch.1 && then_depth.1;
+                    ctx.restore_depth((min_depth, known));
                 }
                 Ok(())
             }
@@ -156,17 +160,18 @@ impl LibraryLowerer for FlowLib {
                         message: "DO/UNTIL requires body and condition".into(),
                     });
                 }
-                let pre_loop = ctx.types.clone();
+                let pre_loop = ctx.save_depth();
                 ctx.output.emit_loop();
                 ctx.lower_all(&branches[0])?;
                 ctx.lower_all(&branches[1])?;
                 ctx.output.emit_i64_eqz();
-                ctx.pop_type();
+                ctx.pop_depth();
                 ctx.output.emit_br_if(0);
                 ctx.output.emit_end();
-                let post_loop = ctx.types.clone();
-                let joined = pre_loop.join(&post_loop);
-                ctx.types.replace_with(joined);
+                let post_loop = ctx.save_depth();
+                let min_depth = pre_loop.0.min(post_loop.0);
+                let known = pre_loop.1 && post_loop.1;
+                ctx.restore_depth((min_depth, known));
                 Ok(())
             }
 
@@ -177,20 +182,21 @@ impl LibraryLowerer for FlowLib {
                         message: "WHILE/REPEAT requires condition and body".into(),
                     });
                 }
-                let pre_loop = ctx.types.clone();
+                let pre_loop = ctx.save_depth();
                 ctx.output.emit_block();
                 ctx.output.emit_loop();
                 ctx.lower_all(&branches[0])?;
                 ctx.output.emit_i64_eqz();
-                ctx.pop_type();
+                ctx.pop_depth();
                 ctx.output.emit_br_if(1);
                 ctx.lower_all(&branches[1])?;
                 ctx.output.emit_br(0);
                 ctx.output.emit_end();
                 ctx.output.emit_end();
-                let post_loop = ctx.types.clone();
-                let joined = pre_loop.join(&post_loop);
-                ctx.types.replace_with(joined);
+                let post_loop = ctx.save_depth();
+                let min_depth = pre_loop.0.min(post_loop.0);
+                let known = pre_loop.1 && post_loop.1;
+                ctx.restore_depth((min_depth, known));
                 Ok(())
             }
 
@@ -204,7 +210,7 @@ impl LibraryLowerer for FlowLib {
                         message: "IFERR requires body and error handler".into(),
                     });
                 }
-                let pre_try = ctx.types.clone();
+                let pre_try = ctx.save_depth();
                 ctx.output.emit_block();
                 ctx.output.emit_block();
                 ctx.output.emit_try_table_catch_all(1);
@@ -215,15 +221,16 @@ impl LibraryLowerer for FlowLib {
                     // Has ELSE (no-error) branch
                     ctx.lower_all(&branches[2])?;
                 }
-                let success_state = ctx.types.clone();
+                let success_depth = ctx.save_depth();
                 ctx.output.emit_br(1);
                 ctx.output.emit_end();
-                ctx.types.replace_with(pre_try);
-                ctx.types.mark_unknown_depth();
+                ctx.restore_depth(pre_try);
+                ctx.mark_unknown_depth();
                 ctx.lower_all(&branches[1])?;
-                let error_state = ctx.types.clone();
-                let joined = success_state.join(&error_state);
-                ctx.types.replace_with(joined);
+                let error_depth = ctx.save_depth();
+                let min_depth = success_depth.0.min(error_depth.0);
+                let known = success_depth.1 && error_depth.1;
+                ctx.restore_depth((min_depth, known));
                 ctx.output.emit_end();
                 Ok(())
             }
@@ -335,7 +342,7 @@ impl FlowLib {
         ctx.emit_local_set(step_local);
 
         // Save state before loop body (loop may execute 0+ times)
-        let pre_loop = ctx.types.clone();
+        let pre_loop = ctx.save_depth();
 
         // block {
         //   loop {
@@ -396,20 +403,21 @@ impl FlowLib {
         // Select: if step > 0 then (var <= end) else (var >= end)
         // Select pops condition, false_val, true_val and pushes result
         ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_type(); // condition consumed
-        ctx.pop_type(); // ge_result consumed
-        // le_result stays as the selected value type (already on type stack)
+        ctx.pop_depth(); // condition consumed
+        ctx.pop_depth(); // ge_result consumed
+        // le_result stays as the selected value (already tracked in depth)
 
-        ctx.pop_type(); // br_if consumes condition
+        ctx.pop_depth(); // br_if consumes condition
         ctx.output.emit_br_if(0); // continue loop
 
         ctx.output.emit_end(); // end loop
         ctx.output.emit_end(); // end block
 
         // Join with pre-loop state (loop may execute multiple times)
-        let post_loop = ctx.types.clone();
-        let joined = pre_loop.join(&post_loop);
-        ctx.types.replace_with(joined);
+        let post_loop = ctx.save_depth();
+        let min_depth = pre_loop.0.min(post_loop.0);
+        let known = pre_loop.1 && post_loop.1;
+        ctx.restore_depth((min_depth, known));
 
         Ok(())
     }
@@ -470,7 +478,7 @@ impl FlowLib {
         ctx.emit_local_set(step_local);
 
         // Save state before loop (loop may execute 0+ times)
-        let pre_loop = ctx.types.clone();
+        let pre_loop = ctx.save_depth();
 
         // Check if we should skip the loop entirely
         // FORUP: skip if start > end
@@ -488,7 +496,7 @@ impl FlowLib {
             // FORDN: skip if start < end
             ctx.emit_i64_binop(Opcode::I64LtS);
         }
-        ctx.pop_type(); // br_if consumes condition
+        ctx.pop_depth(); // br_if consumes condition
         ctx.output.emit_br_if(0); // skip to end of outer block if true
 
         // The loop itself
@@ -522,10 +530,10 @@ impl FlowLib {
 
         // Select: if step > 0 then (var <= end) else (var >= end)
         ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_type(); // condition consumed
-        ctx.pop_type(); // ge_result consumed
+        ctx.pop_depth(); // condition consumed
+        ctx.pop_depth(); // ge_result consumed
 
-        ctx.pop_type(); // br_if consumes condition
+        ctx.pop_depth(); // br_if consumes condition
         ctx.output.emit_br_if(0); // continue loop
 
         ctx.output.emit_end(); // end loop
@@ -533,9 +541,10 @@ impl FlowLib {
         ctx.output.emit_end(); // end outer block (skip target)
 
         // Join with pre-loop state (loop may execute multiple times)
-        let post_loop = ctx.types.clone();
-        let joined = pre_loop.join(&post_loop);
-        ctx.types.replace_with(joined);
+        let post_loop = ctx.save_depth();
+        let min_depth = pre_loop.0.min(post_loop.0);
+        let known = pre_loop.1 && post_loop.1;
+        ctx.restore_depth((min_depth, known));
 
         Ok(())
     }
@@ -572,7 +581,7 @@ impl FlowLib {
         ctx.emit_local_set(step_local);
 
         // Save state before loop (loop may execute 0+ times)
-        let pre_loop = ctx.types.clone();
+        let pre_loop = ctx.save_depth();
 
         // Loop structure same as FOR
         ctx.output.emit_block();
@@ -608,19 +617,20 @@ impl FlowLib {
 
         // Select: if step > 0 then (counter <= end) else (counter >= end)
         ctx.output.emit_opcode(Opcode::Select);
-        ctx.pop_type(); // condition consumed
-        ctx.pop_type(); // ge_result consumed
+        ctx.pop_depth(); // condition consumed
+        ctx.pop_depth(); // ge_result consumed
 
-        ctx.pop_type(); // br_if consumes condition
+        ctx.pop_depth(); // br_if consumes condition
         ctx.output.emit_br_if(0);
 
         ctx.output.emit_end();
         ctx.output.emit_end();
 
         // Join with pre-loop state (loop may execute multiple times)
-        let post_loop = ctx.types.clone();
-        let joined = pre_loop.join(&post_loop);
-        ctx.types.replace_with(joined);
+        let post_loop = ctx.save_depth();
+        let min_depth = pre_loop.0.min(post_loop.0);
+        let known = pre_loop.1 && post_loop.1;
+        ctx.restore_depth((min_depth, known));
 
         Ok(())
     }
@@ -635,13 +645,13 @@ impl FlowLib {
             return Ok(()); // Empty CASE does nothing
         }
 
-        // Save pre-case state for joining
-        let pre_case = ctx.types.clone();
+        // Save pre-case depth for joining
+        let pre_case = ctx.save_depth();
 
-        // Convert to nested if/else with proper type state tracking
+        // Convert to nested if/else with proper depth tracking
         let mut i = 0;
-        let mut depth = 0;
-        let mut branch_states: Vec<rpl::types::CStack> = Vec::new();
+        let mut if_depth = 0;
+        let mut branch_depths: Vec<(usize, bool)> = Vec::new();
         let mut has_default = false;
 
         while i < branches.len() {
@@ -652,7 +662,7 @@ impl FlowLib {
                 // Odd branch count - last branch is default body with empty condition
                 has_default = true;
                 ctx.lower_all(condition)?; // "condition" is actually the default body
-                branch_states.push(ctx.types.clone());
+                branch_depths.push(ctx.save_depth());
                 break;
             };
 
@@ -660,48 +670,51 @@ impl FlowLib {
                 // Default case - just execute the body
                 has_default = true;
                 ctx.lower_all(body)?;
-                branch_states.push(ctx.types.clone());
+                branch_depths.push(ctx.save_depth());
                 i += 2;
             } else {
-                // Save state before this branch
-                let pre_branch = ctx.types.clone();
+                // Save depth before this branch
+                let pre_branch = ctx.save_depth();
 
                 // Conditional case
                 ctx.lower_all(condition)?;
-                ctx.pop_type(); // condition consumed by if
+                ctx.pop_depth(); // condition consumed by if
                 ctx.output.emit_if();
                 ctx.lower_all(body)?;
 
-                // Save this branch's state
-                branch_states.push(ctx.types.clone());
+                // Save this branch's depth
+                branch_depths.push(ctx.save_depth());
 
-                depth += 1;
+                if_depth += 1;
                 i += 2;
 
-                // If there are more branches, emit else and restore pre-branch state
+                // If there are more branches, emit else and restore pre-branch depth
                 if i < branches.len() {
                     ctx.output.emit_else();
-                    ctx.types.replace_with(pre_branch);
+                    ctx.restore_depth(pre_branch);
                 }
             }
         }
 
         // Close all the if blocks
-        for _ in 0..depth {
+        for _ in 0..if_depth {
             ctx.output.emit_end();
         }
 
-        // Join all branch states
-        if !branch_states.is_empty() {
-            let mut joined = branch_states[0].clone();
-            for state in &branch_states[1..] {
-                joined = joined.join(state);
+        // Compute minimum depth from all branches
+        if !branch_depths.is_empty() {
+            let mut min_depth = branch_depths[0].0;
+            let mut all_known = branch_depths[0].1;
+            for &(depth, known) in &branch_depths[1..] {
+                min_depth = min_depth.min(depth);
+                all_known = all_known && known;
             }
-            // Also join with pre-case state (if no default case, might not execute any branch)
+            // Also consider pre-case depth (if no default case, might not execute any branch)
             if !has_default {
-                joined = joined.join(&pre_case);
+                min_depth = min_depth.min(pre_case.0);
+                all_known = all_known && pre_case.1;
             }
-            ctx.types.replace_with(joined);
+            ctx.restore_depth((min_depth, all_known));
         }
 
         Ok(())

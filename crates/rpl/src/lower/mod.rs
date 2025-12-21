@@ -30,13 +30,13 @@
 //! TryTable 0x40 <clause_count:leb128> [<catch_kind:u8> <label:leb128>]*
 //! ```
 
-use crate::core::{Interner, Span, TypeId};
+use crate::core::{Interner, Span};
 
 use crate::{
+    analysis::AnalysisResult,
+    analysis::{StackSnapshot, Type},
     ir::{AtomKind, CompositeKind, Node, NodeKind},
-    libs::StackEffect,
     registry::{InterfaceRegistry, LowererRegistry},
-    types::{CStack, CType},
 };
 
 // Use bytecode types from rpl-vm (the authority on the bytecode format)
@@ -255,6 +255,12 @@ impl BytecodeBuffer {
             self.spans.push(span);
             self.span_offsets.push(self.code.len());
         }
+    }
+
+    /// Get the current span being emitted.
+    #[must_use]
+    pub fn current_span(&self) -> Option<Span> {
+        self.current_span
     }
 
     /// Get current position.
@@ -598,14 +604,20 @@ pub struct LowerContext<'a> {
     interfaces: &'a InterfaceRegistry,
     lowerers: &'a LowererRegistry,
     interner: &'a Interner,
-    /// Type stack for tracking types during lowering.
-    pub types: CStack,
+    /// Analysis results for type information lookup.
+    /// Required for type-directed code generation via `stack_snapshot()`.
+    analysis: &'a AnalysisResult,
+    /// Stack depth counter for list construction.
+    /// Incremented on push, decremented on pop.
+    depth: usize,
+    /// Whether depth is known (false after dynamic operations).
+    depth_known: bool,
     /// Next local index to allocate (after scratch locals).
     next_local: u32,
     /// Base index for scratch locals (0, 1, 2).
     scratch_base: u32,
     /// Tracked types for local variables (indexed by local index).
-    local_types: Vec<CType>,
+    local_types: Vec<Type>,
     /// Mapping from parsed user local indices to actual local indices.
     /// This avoids conflicts between user locals and dynamically allocated locals.
     user_local_map: HashMap<u32, u32>,
@@ -615,23 +627,28 @@ use std::collections::HashMap;
 
 impl<'a> LowerContext<'a> {
     /// Create a new lower context.
+    ///
+    /// Requires analysis results for type-directed code generation.
     /// Pre-allocates scratch locals for stack operations.
     pub fn new(
         interfaces: &'a InterfaceRegistry,
         lowerers: &'a LowererRegistry,
         interner: &'a Interner,
+        analysis: &'a AnalysisResult,
     ) -> Self {
         // Pre-allocate scratch locals as Unknown type
         let mut local_types = Vec::new();
         for _ in 0..SCRATCH_LOCAL_COUNT {
-            local_types.push(CType::Unknown);
+            local_types.push(Type::Unknown);
         }
         Self {
             output: BytecodeBuffer::new(),
             interfaces,
             lowerers,
             interner,
-            types: CStack::new(),
+            analysis,
+            depth: 0,
+            depth_known: true,
             // Reserve first 3 locals for scratch (stack ops)
             next_local: SCRATCH_LOCAL_COUNT,
             scratch_base: 0,
@@ -656,14 +673,62 @@ impl<'a> LowerContext<'a> {
     /// Convert a user-defined local index (from parsing) to the actual local index.
     /// Uses a mapping to avoid conflicts between user locals and dynamically allocated locals.
     /// Each unique parsed index gets its own allocated local on first use.
+    ///
+    /// Looks up the inferred type for the local variable from analysis using
+    /// scope-aware lookup to handle same local indices in different functions.
     pub fn user_local(&mut self, parsed_idx: u32) -> u32 {
-        // Use entry API to avoid double lookup
-        *self.user_local_map.entry(parsed_idx).or_insert_with(|| {
-            let idx = self.next_local;
-            self.next_local += 1;
-            self.local_types.push(CType::Unknown);
-            idx
-        })
+        // Check if we've already mapped this index
+        if let Some(&actual_idx) = self.user_local_map.get(&parsed_idx) {
+            return actual_idx;
+        }
+
+        // Allocate a new local
+        let actual_idx = self.next_local;
+        self.next_local += 1;
+
+        // Look up the inferred type from analysis results using scope-aware lookup.
+        // Use the current span to find the definition in the correct scope.
+        let current_span = self.output.current_span();
+        let ty = if let Some(span) = current_span {
+            // Scope-aware lookup: find definition whose scope contains this span
+            self.analysis
+                .find_by_local_index_at_span(parsed_idx as usize, span)
+                .and_then(|def| def.value_type.clone())
+                .unwrap_or(Type::Unknown)
+        } else {
+            // Fallback if no span available
+            self.analysis
+                .symbols
+                .find_by_local_index(parsed_idx as usize)
+                .and_then(|def| def.value_type.clone())
+                .unwrap_or(Type::Unknown)
+        };
+
+        // Store the type directly
+        self.local_types.push(ty);
+        self.user_local_map.insert(parsed_idx, actual_idx);
+        actual_idx
+    }
+
+    /// Apply depth effects for a function call using analysis-inferred signatures.
+    ///
+    /// Updates depth counter based on function's input/output counts.
+    /// Type information comes from `node_stacks` (populated during analysis).
+    fn apply_function_call_depth(&mut self, name: &str) {
+        // Look up function signature from analysis
+        let sig = self
+            .analysis
+            .symbols
+            .find_definitions_by_name(name)
+            .find_map(|def| def.signature.clone());
+
+        if let Some(sig) = sig {
+            // Apply depth effect: consume inputs, produce outputs
+            self.apply_depth_effect(sig.inputs.len(), sig.outputs.len());
+        } else {
+            // No signature available - depth becomes unknown
+            self.mark_unknown_depth();
+        }
     }
 
     /// Allocate a new local and return its index.
@@ -672,7 +737,7 @@ impl<'a> LowerContext<'a> {
     pub fn alloc_local(&mut self) -> u32 {
         let idx = self.next_local;
         self.next_local += 1;
-        self.local_types.push(CType::Unknown);
+        self.local_types.push(Type::Unknown);
         idx
     }
 
@@ -682,25 +747,25 @@ impl<'a> LowerContext<'a> {
         let start = self.next_local;
         self.next_local += count;
         for _ in 0..count {
-            self.local_types.push(CType::Unknown);
+            self.local_types.push(Type::Unknown);
         }
         start
     }
 
     /// Get the tracked type of a local variable.
     #[must_use]
-    pub fn local_type(&self, index: u32) -> CType {
+    pub fn local_type(&self, index: u32) -> Type {
         self.local_types
             .get(index as usize)
             .cloned()
-            .unwrap_or(CType::Unknown)
+            .unwrap_or(Type::Unknown)
     }
 
     /// Set the tracked type of a local variable.
-    pub fn set_local_type(&mut self, index: u32, ty: CType) {
+    pub fn set_local_type(&mut self, index: u32, ty: Type) {
         let idx = index as usize;
         if idx >= self.local_types.len() {
-            self.local_types.resize(idx + 1, CType::Unknown);
+            self.local_types.resize(idx + 1, Type::Unknown);
         }
         self.local_types[idx] = ty;
     }
@@ -717,13 +782,69 @@ impl<'a> LowerContext<'a> {
     // the StackEffect. They do NOT modify the type stack - the caller applies
     // the returned effect.
 
+    /// Get the top-of-stack type (from analysis snapshot or Unknown).
+    ///
+    /// Use this for type-directed code generation in library lowerers.
+    pub fn tos(&self) -> Type {
+        self.stack_snapshot().tos
+    }
+
+    /// Get the next-on-stack type (from analysis snapshot or Unknown).
+    ///
+    /// Use this for type-directed code generation in library lowerers.
+    pub fn nos(&self) -> Type {
+        self.stack_snapshot().nos
+    }
+
+    /// Get the current stack depth.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Save depth state for later restoration (for control flow).
+    pub fn save_depth(&self) -> (usize, bool) {
+        (self.depth, self.depth_known)
+    }
+
+    /// Restore depth state (for control flow).
+    pub fn restore_depth(&mut self, state: (usize, bool)) {
+        self.depth = state.0;
+        self.depth_known = state.1;
+    }
+
+    /// Get stack snapshot for the current node.
+    ///
+    /// This is the primary interface for type-directed code generation.
+    /// Returns the pre-computed snapshot from `node_stacks` (computed during
+    /// analysis traversal) when available.
+    ///
+    /// Returns a snapshot from `analysis.node_stacks` if available for the current span.
+    /// Falls back to Unknown types with the current depth counter.
+    fn stack_snapshot(&self) -> StackSnapshot {
+        // Try to get from analysis-computed node_stacks
+        if let Some(span) = self.output.current_span()
+            && let Some(snapshot) = self.analysis.node_stacks.get(&span) {
+                return snapshot.clone();
+            }
+
+        // Fallback: Unknown types with current depth
+        // This happens for non-command contexts where analysis didn't store a snapshot
+        StackSnapshot {
+            tos: Type::Unknown,
+            nos: Type::Unknown,
+            depth: self.depth,
+            depth_known: self.depth_known,
+        }
+    }
+
     /// Coerce operands so both are real.
     ///
     /// Returns `true` if successful (both operands are now real).
     /// Returns `false` if coercion could not be done (unknown types that need
     /// runtime type checking).
     fn coerce_to_real_if_mixed(&mut self) -> bool {
-        let (tos, nos) = (self.types.top(), self.types.nos());
+        let snapshot = self.stack_snapshot();
+        let (tos, nos) = (&snapshot.tos, &snapshot.nos);
 
         // Both already real - no coercion needed
         if tos.is_real() && nos.is_real() {
@@ -753,9 +874,9 @@ impl<'a> LowerContext<'a> {
 
     /// Emit a binary numeric operation, choosing optimal opcode based on operand types.
     ///
-    /// Uses `binary_numeric_effect` as single source of truth for type computation:
+    /// Uses stack snapshot (from analysis when available) to determine types:
     /// - If both operands are integers: emits int_op
-    /// - If both are known numeric and can be coerced to real: emits real_op
+    /// - If at least one is real and can be coerced: emits real_op
     /// - Otherwise: emits CallLib for runtime type checking
     pub fn emit_binary_numeric(
         &mut self,
@@ -764,32 +885,56 @@ impl<'a> LowerContext<'a> {
         lib: u16,
         cmd: u16,
     ) {
-        // Use shared effect computation as single source of truth
-        let effect = crate::libs::binary_numeric_effect(&self.types);
+        let snapshot = self.stack_snapshot();
+        let (tos, nos) = (&snapshot.tos, &snapshot.nos);
 
-        // Emit bytecode based on the computed effect
-        match &effect {
-            StackEffect::Fixed { results, .. }
-                if results.first() == Some(&Some(TypeId::BINT)) =>
-            {
-                // Both integers - use integer opcode
-                self.output.emit_opcode(int_op);
-            }
-            StackEffect::Fixed { results, .. }
-                if results.first() == Some(&Some(TypeId::REAL)) =>
-            {
-                // At least one real - try to coerce and use real opcode
-                if self.coerce_to_real_if_mixed() {
-                    self.output.emit_opcode(real_op);
-                } else {
-                    // Coercion failed (unknown type) - use library call
-                    self.output.emit_call_lib(lib, cmd);
-                }
-            }
-            _ => {
-                // Unknown types - use library call
+        if tos.is_integer() && nos.is_integer() {
+            // Both integers - use integer opcode
+            self.output.emit_opcode(int_op);
+        } else if tos.is_real() || nos.is_real() {
+            // At least one real - try to coerce and use real opcode
+            if self.coerce_to_real_if_mixed() {
+                self.output.emit_opcode(real_op);
+            } else {
+                // Coercion failed (unknown type) - use library call
                 self.output.emit_call_lib(lib, cmd);
             }
+        } else {
+            // Unknown types - use library call
+            self.output.emit_call_lib(lib, cmd);
+        }
+    }
+
+    /// Emit a binary operation that always produces Real (e.g., division).
+    ///
+    /// For division, we need to handle the case where the divisor might be zero.
+    /// When at least one operand is already Real, we use F64Div (IEEE 754 semantics).
+    /// When both are integers, we fall back to CallLib to get proper error checking
+    /// for division by zero.
+    ///
+    /// Note: Does not update type stack - that's handled by lower_command
+    /// which queries the command_effect after this returns.
+    pub fn emit_binary_real_only(
+        &mut self,
+        real_op: Opcode,
+        lib: u16,
+        cmd: u16,
+    ) {
+        let snapshot = self.stack_snapshot();
+        let (tos, nos) = (&snapshot.tos, &snapshot.nos);
+
+        // Both integers - use library call for proper division by zero handling
+        if tos.is_integer() && nos.is_integer() {
+            self.output.emit_call_lib(lib, cmd);
+        } else if tos.is_real() && nos.is_real() {
+            // Both already real - use native F64 opcode
+            self.output.emit_opcode(real_op);
+        } else if self.coerce_to_real_if_mixed() {
+            // Mixed int/real - coerced successfully, use native F64 opcode
+            self.output.emit_opcode(real_op);
+        } else {
+            // Unknown types - use library call
+            self.output.emit_call_lib(lib, cmd);
         }
     }
 
@@ -801,7 +946,8 @@ impl<'a> LowerContext<'a> {
         lib: u16,
         cmd: u16,
     ) {
-        let (tos, nos) = (self.types.top(), self.types.nos());
+        let snapshot = self.stack_snapshot();
+        let (tos, nos) = (&snapshot.tos, &snapshot.nos);
         let both_int = tos.is_integer() && nos.is_integer();
         let both_real = tos.is_real() && nos.is_real();
 
@@ -818,8 +964,10 @@ impl<'a> LowerContext<'a> {
 
     /// Emit a unary numeric operation.
     ///
-    /// Uses `unary_preserving_effect` as single source of truth for type computation.
-    /// The `int_op` is optional - if `None`, uses CallLib for integers.
+    /// Uses stack snapshot (from analysis when available) to determine types:
+    /// - If input is integer and int_op provided: emits int_op
+    /// - If input is real: emits real_op
+    /// - Otherwise: emits CallLib for runtime type checking
     pub fn emit_unary_numeric(
         &mut self,
         int_op: Option<Opcode>,
@@ -827,106 +975,95 @@ impl<'a> LowerContext<'a> {
         lib: u16,
         cmd: u16,
     ) {
-        // Use shared effect computation as single source of truth
-        let effect = crate::libs::unary_preserving_effect(&self.types);
+        let snapshot = self.stack_snapshot();
+        let tos = &snapshot.tos;
 
-        // Emit bytecode based on the computed effect
-        match &effect {
-            StackEffect::Fixed { results, .. }
-                if results.first() == Some(&Some(TypeId::REAL)) =>
-            {
-                self.output.emit_opcode(real_op);
-            }
-            StackEffect::Fixed { results, .. }
-                if results.first() == Some(&Some(TypeId::BINT)) =>
-            {
-                if let Some(op) = int_op {
-                    self.output.emit_opcode(op);
-                } else {
-                    self.output.emit_call_lib(lib, cmd);
-                }
-            }
-            _ => {
+        if tos.is_real() {
+            self.output.emit_opcode(real_op);
+        } else if tos.is_integer() {
+            if let Some(op) = int_op {
+                self.output.emit_opcode(op);
+            } else {
                 self.output.emit_call_lib(lib, cmd);
             }
+        } else {
+            self.output.emit_call_lib(lib, cmd);
         }
     }
 
-    /// Push a known integer type onto the type stack.
-    pub fn push_type_integer(&mut self) {
-        self.types.push(CType::integer());
+    /// Increment depth counter (value pushed to stack).
+    pub fn push_depth(&mut self) {
+        self.depth += 1;
     }
 
-    /// Push a known real type onto the type stack.
-    pub fn push_type_real(&mut self) {
-        self.types.push(CType::real());
+    /// Decrement depth counter (value popped from stack).
+    pub fn pop_depth(&mut self) {
+        if self.depth > 0 {
+            self.depth -= 1;
+        }
     }
 
-    /// Push an unknown type onto the type stack.
-    pub fn push_type_unknown(&mut self) {
-        self.types.push(CType::Unknown);
-    }
-
-    /// Pop a type from the type stack.
-    pub fn pop_type(&mut self) {
-        self.types.pop();
+    /// Apply depth change for an operation that consumes and produces values.
+    fn apply_depth_effect(&mut self, consumes: usize, produces: usize) {
+        self.depth = self.depth.saturating_sub(consumes) + produces;
     }
 
     /// Apply a binary integer operation (2 ints -> 1 int).
     ///
-    /// Emits the opcode and updates the type stack.
+    /// Emits the opcode and updates the depth counter.
     pub fn emit_i64_binop(&mut self, op: Opcode) {
         self.output.emit_opcode(op);
-        self.types.apply_effect(&StackEffect::fixed(2, &[Some(crate::core::TypeId::BINT)]));
+        self.apply_depth_effect(2, 1);
     }
 
     /// Pop the top value for br_if (condition is consumed).
     ///
     /// Use this after emitting br_if to track that the condition was consumed.
     pub fn consume_br_condition(&mut self) {
-        self.pop_type();
+        self.pop_depth();
     }
 
-    /// Mark that the type stack depth is unknown (dynamic operation).
+    /// Mark that the stack depth is unknown (dynamic operation).
     pub fn mark_unknown_depth(&mut self) {
-        self.types.mark_unknown_depth();
+        self.depth_known = false;
     }
 
-    /// Emit local.get with a specific type.
-    pub fn emit_local_get_typed(&mut self, index: u32, ty: CType) {
-        self.output.emit_local_get(index);
-        self.types.push(ty);
-    }
-
-    /// Emit local.get with known integer type.
-    pub fn emit_local_get_int(&mut self, index: u32) {
-        self.emit_local_get_typed(index, CType::integer());
-    }
-
-    /// Emit local.set (pops type from stack and records it for the local).
-    pub fn emit_local_set(&mut self, index: u32) {
-        let ty = self.types.top();
-        self.set_local_type(index, ty);
-        self.output.emit_local_set(index);
-        self.pop_type();
-    }
-
-    /// Emit local.get using the tracked type of the local.
+    /// Emit local.get and increment depth.
     pub fn emit_local_get_tracked(&mut self, index: u32) {
-        let ty = self.local_type(index);
-        self.emit_local_get_typed(index, ty);
+        self.output.emit_local_get(index);
+        self.push_depth();
     }
 
-    /// Emit i64.const with type tracking.
+    /// Emit local.get for an integer local with depth tracking.
+    /// Alias for emit_local_get_tracked (type info comes from analysis).
+    pub fn emit_local_get_int(&mut self, index: u32) {
+        self.emit_local_get_tracked(index);
+    }
+
+    /// Emit local.set and decrement depth.
+    ///
+    /// Updates the local's tracked type from analysis if available.
+    pub fn emit_local_set(&mut self, index: u32) {
+        // Try to get the type from analysis snapshot
+        let snapshot = self.stack_snapshot();
+        if !snapshot.tos.is_unknown()
+            && let Some(known) = snapshot.tos.as_known() {
+                self.set_local_type(index, Type::Known(known));
+            }
+        self.output.emit_local_set(index);
+        self.pop_depth();
+    }
+
+    /// Emit i64.const with depth tracking.
     pub fn emit_i64_const(&mut self, value: i64) {
         self.output.emit_i64_const(value);
-        self.push_type_integer();
+        self.push_depth();
     }
 
-    /// Emit f64.const with type tracking.
+    /// Emit f64.const with depth tracking.
     pub fn emit_f64_const(&mut self, value: f64) {
         self.output.emit_f64_const(value);
-        self.push_type_real();
+        self.push_depth();
     }
 
     /// Lower a sequence of nodes.
@@ -953,15 +1090,15 @@ impl<'a> LowerContext<'a> {
         match atom {
             AtomKind::Integer(n) => {
                 self.output.emit_i64_const(*n);
-                self.types.push(CType::integer());
+                self.push_depth();
             }
             AtomKind::Real(n) => {
                 self.output.emit_f64_const(*n);
-                self.types.push(CType::real());
+                self.push_depth();
             }
             AtomKind::String(s) => {
                 self.output.emit_string_const(s);
-                self.types.push(CType::string());
+                self.push_depth();
             }
             AtomKind::LocalRef(idx) => {
                 // User locals are offset by SCRATCH_LOCAL_COUNT to avoid conflict with scratch
@@ -969,16 +1106,18 @@ impl<'a> LowerContext<'a> {
                 self.emit_local_get_tracked(actual_idx);
             }
             AtomKind::GlobalRef(sym) => {
-                // Resolved global reference - still uses runtime lookup via directory
+                // Resolved global reference - uses runtime lookup via directory
                 let name = self.interner.resolve(*sym);
                 self.output.emit_eval_name(name);
-                self.types.push(CType::Unknown); // Result type unknown until runtime
+                // Apply depth effect based on function signature
+                self.apply_function_call_depth(name);
             }
             AtomKind::Symbol(sym) => {
                 // Resolve symbol to name and emit eval_name
                 let name = self.interner.resolve(*sym);
                 self.output.emit_eval_name(name);
-                self.types.push(CType::Unknown); // Result type unknown until runtime
+                // Apply depth effect based on function signature
+                self.apply_function_call_depth(name);
             }
             AtomKind::Command(lib, cmd) => {
                 self.lower_command(*lib, *cmd)?;
@@ -987,7 +1126,7 @@ impl<'a> LowerContext<'a> {
                 // Serialize to string and emit as symbolic constant
                 let expr_str = format!("{}", expr);
                 self.output.emit_symbolic_const(&expr_str);
-                self.types.push(CType::symbolic());
+                self.push_depth();
             }
         }
         Ok(())
@@ -995,20 +1134,31 @@ impl<'a> LowerContext<'a> {
 
     /// Lower a command by dispatching to the library lowerer.
     ///
-    /// The library emits bytecode, then we query the effect from the
-    /// analyzer (single source of truth) and apply it to the type stack.
+    /// The library emits bytecode. Depth tracking is updated based on
+    /// the interface's declared effect.
     pub fn lower_command(&mut self, lib: u16, cmd: u16) -> Result<(), LowerError> {
         if let Some(library) = self.lowerers.get(lib) {
             // Emit bytecode
             library.lower_command(cmd, crate::core::Span::default(), self)?;
-            // Query effect from analyzer - single source of truth
-            let effect = self.interfaces.get_command_effect(lib, cmd, &self.types);
-            self.types.apply_effect(&effect);
+            // Apply depth effect from interface
+            if let Some(interface) = self.interfaces.get(lib) {
+                let tos = self.tos().as_known();
+                let nos = self.nos().as_known();
+                let effect = interface.command_effect(cmd, tos, nos);
+                match &effect {
+                    crate::libs::StackEffect::Fixed { consumes, results } => {
+                        self.apply_depth_effect(*consumes as usize, results.len());
+                    }
+                    crate::libs::StackEffect::Dynamic => {
+                        self.mark_unknown_depth();
+                    }
+                }
+            }
             Ok(())
         } else {
-            // Unknown library - emit call and mark types unknown
+            // Unknown library - emit call and mark depth unknown
             self.output.emit_call_lib(lib, cmd);
-            self.types.mark_unknown_depth();
+            self.mark_unknown_depth();
             Ok(())
         }
     }
@@ -1024,31 +1174,29 @@ impl<'a> LowerContext<'a> {
             CompositeKind::Program => {
                 // Compile the program body to separate bytecode with its own string table
                 if let Some(body) = branches.first() {
-                    let nested_program = lower_to_program(body, self.interfaces, self.lowerers, self.interner)?;
+                    let nested_program = lower_to_program(body, self.interfaces, self.lowerers, self.interner, self.analysis)?;
                     self.output.emit_make_program(&nested_program);
                 } else {
                     self.output.emit_make_program(&CompiledProgram::new());
                 }
-                // Update type stack: MakeProgram pushes a program value
-                self.types.push(CType::program());
+                // Program literal pushes one value
+                self.push_depth();
             }
             CompositeKind::List => {
                 // Lower all items, then emit make_list
-                // Track stack depth to handle expressions that produce different counts
-                let depth_before = self.types.depth();
+                // Track stack depth to know how many elements were added
+                let depth_before = self.depth;
                 if let Some(items) = branches.first() {
                     for item in items {
                         self.lower(item)?;
                     }
                 }
-                let depth_after = self.types.depth();
+                let depth_after = self.depth;
                 let count = depth_after.saturating_sub(depth_before) as u32;
                 self.output.emit_make_list(count);
-                // Update type stack: pop the items, push a list
-                for _ in 0..count {
-                    self.types.pop();
-                }
-                self.types.push(CType::list());
+                // Pop items, push the list (net effect: -count + 1)
+                self.depth = depth_before;
+                self.push_depth();
             }
             CompositeKind::Extended(lib, construct_id) => {
                 // Dispatch to library lowerer
@@ -1079,31 +1227,38 @@ impl<'a> LowerContext<'a> {
 }
 
 /// Lower IR nodes to a compiled program with debug info.
+///
+/// Requires analysis results for type-directed code generation.
 pub fn lower(
     nodes: &[Node],
     interfaces: &InterfaceRegistry,
     lowerers: &LowererRegistry,
     interner: &Interner,
+    analysis: &AnalysisResult,
 ) -> Result<CompiledProgram, LowerError> {
-    let mut ctx = LowerContext::new(interfaces, lowerers, interner);
+    let mut ctx = LowerContext::new(interfaces, lowerers, interner, analysis);
     ctx.lower_all(nodes)?;
     Ok(ctx.finish())
 }
 
 /// Lower IR nodes to bytecode and string table (for nested programs).
+///
+/// Requires analysis results for type-directed code generation.
 pub fn lower_to_program(
     nodes: &[Node],
     interfaces: &InterfaceRegistry,
     lowerers: &LowererRegistry,
     interner: &Interner,
+    analysis: &AnalysisResult,
 ) -> Result<CompiledProgram, LowerError> {
-    let mut ctx = LowerContext::new(interfaces, lowerers, interner);
+    let mut ctx = LowerContext::new(interfaces, lowerers, interner, analysis);
     ctx.lower_all(nodes)?;
     Ok(ctx.finish())
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::analysis::{StackSnapshot, Type};
     use crate::core::{Pos, Span, TypeId};
     use crate::ir::LibId;
 
@@ -1126,10 +1281,10 @@ mod tests {
         fn id(&self) -> LibId { ARITH_LIB }
         fn name(&self) -> &'static str { "Arith" }
 
-        fn command_effect(&self, cmd: u16, types: &crate::types::CStack) -> StackEffect {
+        fn command_effect(&self, cmd: u16, tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
             match cmd {
                 arith_cmd::ADD | arith_cmd::SUB | arith_cmd::MUL | arith_cmd::DIV => {
-                    binary_numeric_effect(types)
+                    binary_numeric_effect(tos, nos)
                 }
                 arith_cmd::GT => StackEffect::fixed(2, &[Some(TypeId::BINT)]),
                 _ => StackEffect::Dynamic,
@@ -1179,12 +1334,27 @@ mod tests {
         Interner::new()
     }
 
+    fn empty_analysis() -> AnalysisResult {
+        AnalysisResult::default()
+    }
+
+    /// Create analysis with node_stacks populated for command spans.
+    /// This simulates what the real analyzer would produce.
+    fn analysis_with_stack(spans_and_stacks: Vec<(Span, StackSnapshot)>) -> AnalysisResult {
+        let mut result = AnalysisResult::default();
+        for (span, stack) in spans_and_stacks {
+            result.node_stacks.insert(span, stack);
+        }
+        result
+    }
+
     #[test]
     fn lower_integer() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::integer(42, dummy_span())];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should be: I64Const 42
         assert_eq!(program.code[0], Opcode::I64Const.as_byte());
@@ -1194,8 +1364,9 @@ mod tests {
     fn lower_command() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::command(0, 10, dummy_span())]; // ADD
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should be: CallLib 0 10
         assert_eq!(program.code[0], Opcode::CallLib.as_byte());
@@ -1205,12 +1376,24 @@ mod tests {
     fn lower_sequence() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        // Create distinct spans for each node
+        let cmd_span = Span::new(Pos::new(4), Pos::new(5));
+        // Populate node_stacks with type info at the command
+        let analysis = analysis_with_stack(vec![(
+            cmd_span,
+            StackSnapshot {
+                tos: Type::Known(TypeId::BINT),
+                nos: Type::Known(TypeId::BINT),
+                depth: 2,
+                depth_known: true,
+            },
+        )]);
         let nodes = vec![
-            Node::integer(1, dummy_span()),
-            Node::integer(2, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
+            Node::integer(1, Span::new(Pos::new(0), Pos::new(1))),
+            Node::integer(2, Span::new(Pos::new(2), Pos::new(3))),
+            Node::command(ARITH_LIB, arith_cmd::ADD, cmd_span),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // With type inference, integer + integer emits I64Add directly
         // Should be: I64Const 1, I64Const 2, I64Add
@@ -1223,6 +1406,7 @@ mod tests {
     fn lower_list() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::list(
             vec![
                 Node::integer(1, dummy_span()),
@@ -1231,7 +1415,7 @@ mod tests {
             ],
             dummy_span(),
         )];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should have: I64Const 1, I64Const 2, I64Const 3, MakeList 3
         assert!(program.code.len() > 6);
@@ -1244,8 +1428,9 @@ mod tests {
     fn lower_empty_list() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::list(vec![], dummy_span())];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should be: MakeList 0
         assert_eq!(program.code[0], Opcode::MakeList.as_byte());
@@ -1256,6 +1441,7 @@ mod tests {
     fn lower_program() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::program(
             vec![
                 Node::integer(1, dummy_span()),
@@ -1263,7 +1449,7 @@ mod tests {
             ],
             dummy_span(),
         )];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should be: MakeProgram <len> <bytecode>
         assert_eq!(program.code[0], Opcode::MakeProgram.as_byte());
@@ -1273,8 +1459,9 @@ mod tests {
     fn lower_empty_program() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let nodes = vec![Node::program(vec![], dummy_span())];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should be: MakeProgram 0
         assert_eq!(program.code[0], Opcode::MakeProgram.as_byte());
@@ -1287,12 +1474,22 @@ mod tests {
     fn typed_integer_add() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let cmd_span = Span::new(Pos::new(4), Pos::new(5));
+        let analysis = analysis_with_stack(vec![(
+            cmd_span,
+            StackSnapshot {
+                tos: Type::Known(TypeId::BINT),
+                nos: Type::Known(TypeId::BINT),
+                depth: 2,
+                depth_known: true,
+            },
+        )]);
         let nodes = vec![
-            Node::integer(1, dummy_span()),
-            Node::integer(2, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
+            Node::integer(1, Span::new(Pos::new(0), Pos::new(1))),
+            Node::integer(2, Span::new(Pos::new(2), Pos::new(3))),
+            Node::command(ARITH_LIB, arith_cmd::ADD, cmd_span),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should emit I64Add for integer+integer
         assert!(program.code.contains(&Opcode::I64Add.as_byte()));
@@ -1303,12 +1500,22 @@ mod tests {
     fn typed_real_add() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let cmd_span = Span::new(Pos::new(4), Pos::new(5));
+        let analysis = analysis_with_stack(vec![(
+            cmd_span,
+            StackSnapshot {
+                tos: Type::Known(TypeId::REAL),
+                nos: Type::Known(TypeId::REAL),
+                depth: 2,
+                depth_known: true,
+            },
+        )]);
         let nodes = vec![
-            Node::real(1.5, dummy_span()),
-            Node::real(2.5, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::ADD, dummy_span()),
+            Node::real(1.5, Span::new(Pos::new(0), Pos::new(1))),
+            Node::real(2.5, Span::new(Pos::new(2), Pos::new(3))),
+            Node::command(ARITH_LIB, arith_cmd::ADD, cmd_span),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should emit F64Add for real+real
         assert!(program.code.contains(&Opcode::F64Add.as_byte()));
@@ -1318,12 +1525,22 @@ mod tests {
     fn typed_integer_compare() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let cmd_span = Span::new(Pos::new(4), Pos::new(5));
+        let analysis = analysis_with_stack(vec![(
+            cmd_span,
+            StackSnapshot {
+                tos: Type::Known(TypeId::BINT),
+                nos: Type::Known(TypeId::BINT),
+                depth: 2,
+                depth_known: true,
+            },
+        )]);
         let nodes = vec![
-            Node::integer(5, dummy_span()),
-            Node::integer(3, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::GT, dummy_span()),
+            Node::integer(5, Span::new(Pos::new(0), Pos::new(1))),
+            Node::integer(3, Span::new(Pos::new(2), Pos::new(3))),
+            Node::command(ARITH_LIB, arith_cmd::GT, cmd_span),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should emit I64GtS for integer comparison
         assert!(program.code.contains(&Opcode::I64GtS.as_byte()));
@@ -1333,16 +1550,38 @@ mod tests {
     fn typed_integer_mul_chain() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let mul1_span = Span::new(Pos::new(4), Pos::new(5));
+        let mul2_span = Span::new(Pos::new(8), Pos::new(9));
+        let analysis = analysis_with_stack(vec![
+            (
+                mul1_span,
+                StackSnapshot {
+                    tos: Type::Known(TypeId::BINT),
+                    nos: Type::Known(TypeId::BINT),
+                    depth: 2,
+                    depth_known: true,
+                },
+            ),
+            (
+                mul2_span,
+                StackSnapshot {
+                    tos: Type::Known(TypeId::BINT),
+                    nos: Type::Known(TypeId::BINT),
+                    depth: 2,
+                    depth_known: true,
+                },
+            ),
+        ]);
         let nodes = vec![
-            Node::integer(2, dummy_span()),
-            Node::integer(3, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::MUL, dummy_span()),
-            Node::integer(4, dummy_span()),
-            Node::command(ARITH_LIB, arith_cmd::MUL, dummy_span()),
+            Node::integer(2, Span::new(Pos::new(0), Pos::new(1))),
+            Node::integer(3, Span::new(Pos::new(2), Pos::new(3))),
+            Node::command(ARITH_LIB, arith_cmd::MUL, mul1_span),
+            Node::integer(4, Span::new(Pos::new(6), Pos::new(7))),
+            Node::command(ARITH_LIB, arith_cmd::MUL, mul2_span),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
-        // Both MULs use I64Mul since emit_mul tracks result type based on inputs
+        // Both MULs use I64Mul since analysis provides type info
         let mul_count = program
             .code
             .iter()
@@ -1355,13 +1594,14 @@ mod tests {
     fn span_tracking() {
         let (interfaces, lowerers) = test_registries();
         let interner = test_interner();
+        let analysis = empty_analysis();
         let span1 = Span::new(Pos::new(0), Pos::new(2));
         let span2 = Span::new(Pos::new(3), Pos::new(5));
         let nodes = vec![
             Node::integer(1, span1),
             Node::integer(2, span2),
         ];
-        let program = lower(&nodes, &interfaces, &lowerers, &interner).unwrap();
+        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should have recorded both spans
         assert!(!program.spans.is_empty());

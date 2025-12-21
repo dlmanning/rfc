@@ -301,16 +301,16 @@ fn library_multiple_commands() {
     }
 }
 
-/// Test that library commands are case-insensitive
+/// Test that library commands are case-sensitive
 #[test]
-fn library_command_case_insensitive() {
+fn library_command_case_sensitive() {
     let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE
     session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
 
-    // Should work with any case
-    let result = session.eval("5 double").unwrap();
+    // Only exact case works (case-sensitive)
+    let result = session.eval("5 DOUBLE").unwrap();
     match &result[0] {
         Value::Real(r) => assert_eq!(*r, 10.0),
         Value::Integer(i) => assert_eq!(*i, 10),
