@@ -1,39 +1,27 @@
 //! Plot bytecode decoder for rendering.
 //!
 //! Decodes plot objects into drawable commands for the TUI viewer.
-//! Uses rpl-plot's PlotRenderer trait for decoding.
+//! Uses rpl-vector-plot's Renderer trait for decoding.
 
-use rpl_plot::{render_plot, Color, PlotRenderer};
+use rpl_vector_plot::{decode, render, Color, Paint, Point, Renderer, Stroke};
 
 /// A decoded plot command ready for rendering.
 #[derive(Debug, Clone)]
 pub enum PlotCommand {
     MoveTo { x: f64, y: f64 },
     LineTo { x: f64, y: f64 },
-    Circle { x: f64, y: f64, radius: f64 },
-    Rect { x: f64, y: f64, width: f64, height: f64 },
-    Ellipse { x: f64, y: f64, rx: f64, ry: f64 },
-    Arc { x: f64, y: f64, radius: f64, start: f64, end: f64 },
-    Bezier { x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64 },
-    Pixel { x: f64, y: f64 },
-    Color { r: u8, g: u8, b: u8, a: u8 },
-    FillColor { r: u8, g: u8, b: u8, a: u8 },
-    LineWidth { width: f64 },
-    Text { x: f64, y: f64, text: String },
-    Font { size: f64, name: String },
-    Fill,
-    Stroke,
-    PushState,
-    PopState,
-    Identity,
-    Transform { a: f64, b: f64, c: f64, d: f64, e: f64, f: f64 },
-    Translate { dx: f64, dy: f64 },
-    Scale { sx: f64, sy: f64 },
-    Rotate { angle: f64 },
-    Clip,
+    QuadTo { cx: f64, cy: f64, x: f64, y: f64 },
+    CubicTo { c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64 },
+    Arc { cx: f64, cy: f64, radius: f64, start: f64, sweep: f64 },
+    ClosePath,
+    Fill { r: u8, g: u8, b: u8, a: u8 },
+    Stroke { r: u8, g: u8, b: u8, a: u8, width: f64 },
+    Text { x: f64, y: f64, text: String, size: f64 },
+    PushTransform { a: f64, b: f64, c: f64, d: f64, e: f64, f: f64 },
+    PopTransform,
 }
 
-/// Collector that implements PlotRenderer to gather commands into a Vec.
+/// Collector that implements Renderer to gather commands into a Vec.
 struct CommandCollector {
     commands: Vec<PlotCommand>,
 }
@@ -44,64 +32,58 @@ impl CommandCollector {
     }
 }
 
-impl PlotRenderer for CommandCollector {
-    fn move_to(&mut self, x: f64, y: f64) {
-        self.commands.push(PlotCommand::MoveTo { x, y });
+impl Renderer for CommandCollector {
+    fn move_to(&mut self, p: Point) {
+        self.commands.push(PlotCommand::MoveTo { x: p.x as f64, y: p.y as f64 });
     }
 
-    fn line_to(&mut self, x: f64, y: f64) {
-        self.commands.push(PlotCommand::LineTo { x, y });
+    fn line_to(&mut self, p: Point) {
+        self.commands.push(PlotCommand::LineTo { x: p.x as f64, y: p.y as f64 });
     }
 
-    fn circle(&mut self, cx: f64, cy: f64, radius: f64) {
-        self.commands.push(PlotCommand::Circle { x: cx, y: cy, radius });
+    fn quad_to(&mut self, ctrl: Point, end: Point) {
+        self.commands.push(PlotCommand::QuadTo {
+            cx: ctrl.x as f64,
+            cy: ctrl.y as f64,
+            x: end.x as f64,
+            y: end.y as f64,
+        });
     }
 
-    fn rect(&mut self, x: f64, y: f64, width: f64, height: f64) {
-        self.commands.push(PlotCommand::Rect { x, y, width, height });
+    fn cubic_to(&mut self, c1: Point, c2: Point, end: Point) {
+        self.commands.push(PlotCommand::CubicTo {
+            c1x: c1.x as f64,
+            c1y: c1.y as f64,
+            c2x: c2.x as f64,
+            c2y: c2.y as f64,
+            x: end.x as f64,
+            y: end.y as f64,
+        });
     }
 
-    fn ellipse(&mut self, cx: f64, cy: f64, rx: f64, ry: f64) {
-        self.commands.push(PlotCommand::Ellipse { x: cx, y: cy, rx, ry });
-    }
-
-    fn arc(&mut self, cx: f64, cy: f64, radius: f64, start_angle: f64, end_angle: f64) {
+    fn arc(&mut self, center: Point, radius: f32, start_angle: f32, sweep_angle: f32) {
         self.commands.push(PlotCommand::Arc {
-            x: cx,
-            y: cy,
-            radius,
-            start: start_angle,
-            end: end_angle,
+            cx: center.x as f64,
+            cy: center.y as f64,
+            radius: radius as f64,
+            start: start_angle as f64,
+            sweep: sweep_angle as f64,
         });
     }
 
-    fn bezier(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) {
-        self.commands.push(PlotCommand::Bezier { x1, y1, x2, y2, x3, y3 });
+    fn close_path(&mut self) {
+        self.commands.push(PlotCommand::ClosePath);
     }
 
-    fn pixel(&mut self, x: f64, y: f64) {
-        self.commands.push(PlotCommand::Pixel { x, y });
-    }
-
-    fn text(&mut self, x: f64, y: f64, text: &str) {
-        self.commands.push(PlotCommand::Text { x, y, text: text.to_string() });
-    }
-
-    fn stroke(&mut self) {
-        self.commands.push(PlotCommand::Stroke);
-    }
-
-    fn fill(&mut self) {
-        self.commands.push(PlotCommand::Fill);
-    }
-
-    fn set_line_width(&mut self, width: f64) {
-        self.commands.push(PlotCommand::LineWidth { width });
-    }
-
-    fn set_stroke_color(&mut self, rgba: u32) {
-        let color = Color::from_packed(rgba);
-        self.commands.push(PlotCommand::Color {
+    fn fill(&mut self, paint: &Paint) {
+        let color = match paint {
+            Paint::Solid(c) => *c,
+            Paint::LinearGradient { stops, .. } | Paint::RadialGradient { stops, .. } => {
+                // Use first color of gradient as fallback
+                stops.first().map(|s| s.color).unwrap_or(Color::BLACK)
+            }
+        };
+        self.commands.push(PlotCommand::Fill {
             r: color.r,
             g: color.g,
             b: color.b,
@@ -109,170 +91,125 @@ impl PlotRenderer for CommandCollector {
         });
     }
 
-    fn set_fill_color(&mut self, rgba: u32) {
-        let color = Color::from_packed(rgba);
-        self.commands.push(PlotCommand::FillColor {
-            r: color.r,
-            g: color.g,
-            b: color.b,
-            a: color.a,
+    fn stroke(&mut self, stroke: &Stroke) {
+        self.commands.push(PlotCommand::Stroke {
+            r: stroke.color.r,
+            g: stroke.color.g,
+            b: stroke.color.b,
+            a: stroke.color.a,
+            width: stroke.width as f64,
         });
     }
 
-    fn set_font(&mut self, size: f64, name: &str) {
-        self.commands.push(PlotCommand::Font { size, name: name.to_string() });
+    fn push_transform(&mut self, t: &rpl_vector_plot::Transform) {
+        let [a, b, c, d, e, f] = *t.as_array();
+        self.commands.push(PlotCommand::PushTransform {
+            a: a as f64,
+            b: b as f64,
+            c: c as f64,
+            d: d as f64,
+            e: e as f64,
+            f: f as f64,
+        });
     }
 
-    fn identity(&mut self) {
-        self.commands.push(PlotCommand::Identity);
+    fn pop_transform(&mut self) {
+        self.commands.push(PlotCommand::PopTransform);
     }
 
-    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
-        self.commands.push(PlotCommand::Transform { a, b, c, d, e, f });
+    fn text(&mut self, pos: Point, text: &str, size: f32) {
+        self.commands.push(PlotCommand::Text {
+            x: pos.x as f64,
+            y: pos.y as f64,
+            text: text.to_string(),
+            size: size as f64,
+        });
     }
 
-    fn scale(&mut self, sx: f64, sy: f64) {
-        self.commands.push(PlotCommand::Scale { sx, sy });
-    }
-
-    fn rotate(&mut self, angle: f64) {
-        self.commands.push(PlotCommand::Rotate { angle });
-    }
-
-    fn translate(&mut self, dx: f64, dy: f64) {
-        self.commands.push(PlotCommand::Translate { dx, dy });
-    }
-
-    fn push_state(&mut self) {
-        self.commands.push(PlotCommand::PushState);
-    }
-
-    fn pop_state(&mut self) {
-        self.commands.push(PlotCommand::PopState);
-    }
-
-    fn clip(&mut self) {
-        self.commands.push(PlotCommand::Clip);
+    fn clear_path(&mut self) {
+        // No-op for command collection - we don't track path state
     }
 }
 
 /// Decode plot bytecode into a list of commands.
 pub fn decode_plot(bytes: &[u8]) -> Vec<PlotCommand> {
-    let mut collector = CommandCollector::new();
-    let _ = render_plot(bytes, &mut collector);
-    collector.commands
+    match decode(bytes) {
+        Ok(plot) => {
+            let mut collector = CommandCollector::new();
+            render(&plot, &mut collector);
+            collector.commands
+        }
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Calculate the bounding box of all drawable elements.
 /// Returns (min_x, max_x, min_y, max_y).
 pub fn plot_bounds(bytes: &[u8]) -> (f64, f64, f64, f64) {
-    let mut min_x = f64::MAX;
-    let mut max_x = f64::MIN;
-    let mut min_y = f64::MAX;
-    let mut max_y = f64::MIN;
-
-    let mut update_point = |x: f64, y: f64| {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    };
-
-    for cmd in decode_plot(bytes) {
-        match cmd {
-            PlotCommand::MoveTo { x, y }
-            | PlotCommand::LineTo { x, y }
-            | PlotCommand::Pixel { x, y } => {
-                update_point(x, y);
+    match decode(bytes) {
+        Ok(plot) => {
+            let b = plot.bounds();
+            if b.is_empty() {
+                (0.0, 100.0, 0.0, 100.0)
+            } else {
+                let margin_x = b.w as f64 * 0.05;
+                let margin_y = b.h as f64 * 0.05;
+                (
+                    b.x as f64 - margin_x,
+                    (b.x + b.w) as f64 + margin_x,
+                    b.y as f64 - margin_y,
+                    (b.y + b.h) as f64 + margin_y,
+                )
             }
-            PlotCommand::Circle { x, y, radius } => {
-                update_point(x - radius, y - radius);
-                update_point(x + radius, y + radius);
-            }
-            PlotCommand::Rect { x, y, width, height } => {
-                update_point(x, y);
-                update_point(x + width, y + height);
-            }
-            PlotCommand::Ellipse { x, y, rx, ry } => {
-                update_point(x - rx, y - ry);
-                update_point(x + rx, y + ry);
-            }
-            PlotCommand::Arc { x, y, radius, .. } => {
-                update_point(x - radius, y - radius);
-                update_point(x + radius, y + radius);
-            }
-            PlotCommand::Bezier { x1, y1, x2, y2, x3, y3 } => {
-                update_point(x1, y1);
-                update_point(x2, y2);
-                update_point(x3, y3);
-            }
-            PlotCommand::Text { x, y, .. } => {
-                update_point(x, y);
-            }
-            _ => {}
         }
-    }
-
-    if min_x > max_x || min_y > max_y {
-        (0.0, 100.0, 0.0, 100.0)
-    } else {
-        let margin_x = (max_x - min_x) * 0.05;
-        let margin_y = (max_y - min_y) * 0.05;
-        (
-            min_x - margin_x,
-            max_x + margin_x,
-            min_y - margin_y,
-            max_y + margin_y,
-        )
+        Err(_) => (0.0, 100.0, 0.0, 100.0),
     }
 }
 
 /// Decompile plot bytecode back to RPL source code.
 pub fn decompile_plot(bytes: &[u8]) -> String {
-    let mut lines = vec!["BEGINPLOT".to_string()];
+    let mut lines = vec!["NEWPLOT".to_string()];
 
     for cmd in decode_plot(bytes) {
         let line = match cmd {
             PlotCommand::MoveTo { x, y } => format!("  {} {} MOVETO", fmt_num(x), fmt_num(y)),
             PlotCommand::LineTo { x, y } => format!("  {} {} LINETO", fmt_num(x), fmt_num(y)),
-            PlotCommand::Circle { x, y, radius } => {
-                format!("  {} {} {} CIRCLE", fmt_num(x), fmt_num(y), fmt_num(radius))
+            PlotCommand::QuadTo { cx, cy, x, y } => {
+                format!("  {} {} {} {} QUADTO", fmt_num(cx), fmt_num(cy), fmt_num(x), fmt_num(y))
             }
-            PlotCommand::Rect { x, y, width, height } => {
-                format!("  {} {} {} {} RECT", fmt_num(x), fmt_num(y), fmt_num(width), fmt_num(height))
+            PlotCommand::CubicTo { c1x, c1y, c2x, c2y, x, y } => {
+                format!(
+                    "  {} {} {} {} {} {} CUBICTO",
+                    fmt_num(c1x), fmt_num(c1y), fmt_num(c2x), fmt_num(c2y), fmt_num(x), fmt_num(y)
+                )
             }
-            PlotCommand::Ellipse { x, y, rx, ry } => {
-                format!("  {} {} {} {} ELLIPSE", fmt_num(x), fmt_num(y), fmt_num(rx), fmt_num(ry))
+            PlotCommand::Arc { cx, cy, radius, start, sweep } => {
+                format!(
+                    "  {} {} {} {} {} ARC",
+                    fmt_num(cx), fmt_num(cy), fmt_num(radius), fmt_num(start), fmt_num(sweep)
+                )
             }
-            PlotCommand::Arc { x, y, radius, start, end } => {
-                format!("  {} {} {} {} {} ARC", fmt_num(x), fmt_num(y), fmt_num(radius), fmt_num(start), fmt_num(end))
+            PlotCommand::ClosePath => "  CLOSEPATH".to_string(),
+            PlotCommand::Fill { r, g, b, a } => {
+                format!("  {} {} {} {} RGBA FILLCOLOR FILL", r, g, b, a)
             }
-            PlotCommand::Bezier { x1, y1, x2, y2, x3, y3 } => {
-                format!("  {} {} {} {} {} {} BEZIER", fmt_num(x1), fmt_num(y1), fmt_num(x2), fmt_num(y2), fmt_num(x3), fmt_num(y3))
+            PlotCommand::Stroke { r, g, b, a, width } => {
+                format!("  {} {} {} {} RGBA {} STROKECOLOR STROKE", r, g, b, a, fmt_num(width))
             }
-            PlotCommand::Pixel { x, y } => format!("  {} {} PIXEL", fmt_num(x), fmt_num(y)),
-            PlotCommand::Color { r, g, b, a } => format!("  {} {} {} {} COLOR", r, g, b, a),
-            PlotCommand::FillColor { r, g, b, a } => format!("  {} {} {} {} FILLCOLOR", r, g, b, a),
-            PlotCommand::LineWidth { width } => format!("  {} LINEWIDTH", fmt_num(width)),
-            PlotCommand::Text { x, y, ref text } => format!("  {} {} \"{}\" TEXT", fmt_num(x), fmt_num(y), text),
-            PlotCommand::Font { size, ref name } => format!("  {} \"{}\" FONT", fmt_num(size), name),
-            PlotCommand::Fill => "  FILL".to_string(),
-            PlotCommand::Stroke => "  STROKE".to_string(),
-            PlotCommand::PushState => "  PUSHSTATE".to_string(),
-            PlotCommand::PopState => "  POPSTATE".to_string(),
-            PlotCommand::Identity => "  IDENTITY".to_string(),
-            PlotCommand::Transform { a, b, c, d, e, f } => {
-                format!("  {} {} {} {} {} {} TRANSFORM", fmt_num(a), fmt_num(b), fmt_num(c), fmt_num(d), fmt_num(e), fmt_num(f))
+            PlotCommand::Text { x, y, text, size } => {
+                format!("  {} {} \"{}\" {} TEXT", fmt_num(x), fmt_num(y), text, fmt_num(size))
             }
-            PlotCommand::Translate { dx, dy } => format!("  {} {} TRANSLATE", fmt_num(dx), fmt_num(dy)),
-            PlotCommand::Scale { sx, sy } => format!("  {} {} SCALE", fmt_num(sx), fmt_num(sy)),
-            PlotCommand::Rotate { angle } => format!("  {} ROTATE", fmt_num(angle)),
-            PlotCommand::Clip => "  CLIP".to_string(),
+            PlotCommand::PushTransform { a, b, c, d, e, f } => {
+                format!(
+                    "  ; transform [{} {} {} {} {} {}]",
+                    fmt_num(a), fmt_num(b), fmt_num(c), fmt_num(d), fmt_num(e), fmt_num(f)
+                )
+            }
+            PlotCommand::PopTransform => "  ; pop transform".to_string(),
         };
         lines.push(line);
     }
 
-    lines.push("ENDPLOT".to_string());
     lines.join("\n")
 }
 
@@ -287,36 +224,14 @@ fn fmt_num(n: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use rpl_plot::{encode_number, to_fixed_point, CMD_CIRCLE, CMD_END, CMD_LINETO, CMD_MOVETO, PLOT_MAGIC};
-
     use super::*;
+    use rpl_vector_plot::{encode, Plot};
 
     fn make_simple_plot() -> Vec<u8> {
-        let mut bytes = Vec::new();
-
-        // Magic header
-        bytes.extend_from_slice(&PLOT_MAGIC);
-
-        // MOVETO 10, 20
-        bytes.push(CMD_MOVETO);
-        bytes.extend(encode_number(to_fixed_point(10.0) as i64));
-        bytes.extend(encode_number(to_fixed_point(20.0) as i64));
-
-        // LINETO 30, 40
-        bytes.push(CMD_LINETO);
-        bytes.extend(encode_number(to_fixed_point(30.0) as i64));
-        bytes.extend(encode_number(to_fixed_point(40.0) as i64));
-
-        // CIRCLE 50, 50, 10
-        bytes.push(CMD_CIRCLE);
-        bytes.extend(encode_number(to_fixed_point(50.0) as i64));
-        bytes.extend(encode_number(to_fixed_point(50.0) as i64));
-        bytes.extend(encode_number(to_fixed_point(10.0) as i64));
-
-        // END
-        bytes.push(CMD_END);
-
-        bytes
+        let mut plot = Plot::new();
+        plot.set_fill_color(Color::RED);
+        plot.add_circle(50.0, 50.0, 10.0);
+        encode(&plot)
     }
 
     #[test]
@@ -324,32 +239,8 @@ mod tests {
         let bytes = make_simple_plot();
         let commands = decode_plot(&bytes);
 
-        assert_eq!(commands.len(), 3);
-
-        match &commands[0] {
-            PlotCommand::MoveTo { x, y } => {
-                assert!((x - 10.0).abs() < 0.001);
-                assert!((y - 20.0).abs() < 0.001);
-            }
-            _ => panic!("Expected MoveTo"),
-        }
-
-        match &commands[1] {
-            PlotCommand::LineTo { x, y } => {
-                assert!((x - 30.0).abs() < 0.001);
-                assert!((y - 40.0).abs() < 0.001);
-            }
-            _ => panic!("Expected LineTo"),
-        }
-
-        match &commands[2] {
-            PlotCommand::Circle { x, y, radius } => {
-                assert!((x - 50.0).abs() < 0.001);
-                assert!((y - 50.0).abs() < 0.001);
-                assert!((radius - 10.0).abs() < 0.001);
-            }
-            _ => panic!("Expected Circle"),
-        }
+        // Should have path commands for the circle (arc) + fill
+        assert!(!commands.is_empty());
     }
 
     #[test]
@@ -357,11 +248,10 @@ mod tests {
         let bytes = make_simple_plot();
         let (min_x, max_x, min_y, max_y) = plot_bounds(&bytes);
 
-        // MOVETO 10,20 -> LINETO 30,40 -> CIRCLE center 50,50 radius 10
-        // Expected bounds: x=[10, 60], y=[20, 60] (circle extends to 60)
-        assert!(min_x < 11.0); // ~10 with margin
-        assert!(max_x > 59.0); // ~60 with margin
-        assert!(min_y < 21.0); // ~20 with margin
-        assert!(max_y > 59.0); // ~60 with margin
+        // Circle at (50, 50) with radius 10: bounds should be ~[40, 60] x [40, 60]
+        assert!(min_x < 41.0);
+        assert!(max_x > 59.0);
+        assert!(min_y < 41.0);
+        assert!(max_y > 59.0);
     }
 }

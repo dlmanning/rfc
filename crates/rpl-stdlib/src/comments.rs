@@ -15,7 +15,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -71,7 +71,7 @@ impl LibraryExecutor for CommentsLib {
                 match &val {
                     Value::Program(_) => {
                         ctx.push(val)?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     _ => Err(format!(
                         "STRIPCOMMENTS: expected program, got {}",

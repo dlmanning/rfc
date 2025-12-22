@@ -22,7 +22,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -108,7 +108,7 @@ impl LibraryExecutor for StringsLib {
                         } else {
                             ctx.push(Value::Real(n))?;
                         }
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     Err(_) => Err(format!("Cannot convert '{}' to number", s)),
                 }
@@ -128,7 +128,7 @@ impl LibraryExecutor for StringsLib {
                     _ => return Err(format!("STR: expected number, got {}", val.type_name())),
                 };
                 ctx.push(Value::String(s.into()))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::CHR => {
@@ -136,7 +136,7 @@ impl LibraryExecutor for StringsLib {
                 match char::from_u32(code) {
                     Some(c) => {
                         ctx.push(Value::String(c.to_string().into()))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     None => Err(format!("Invalid character code: {}", code)),
                 }
@@ -147,7 +147,7 @@ impl LibraryExecutor for StringsLib {
                 match s.chars().next() {
                     Some(c) => {
                         ctx.push(Value::Integer(c as u32 as i64))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     None => Err("ASC: empty string".into()),
                 }
@@ -172,7 +172,7 @@ impl LibraryExecutor for StringsLib {
                     .collect();
 
                 ctx.push(Value::String(substring.into()))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::POS => {
@@ -185,40 +185,40 @@ impl LibraryExecutor for StringsLib {
                 };
 
                 ctx.push(Value::Integer(pos as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::SREV => {
                 let s = pop_string(ctx)?;
                 let reversed: String = s.chars().rev().collect();
                 ctx.push(Value::String(reversed.into()))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::TRIM => {
                 let s = pop_string(ctx)?;
                 ctx.push(Value::String(s.trim().to_string().into()))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::RTRIM => {
                 let s = pop_string(ctx)?;
                 ctx.push(Value::String(s.trim_end().to_string().into()))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::STRLENCP => {
                 let s = pop_string(ctx)?;
                 let len = s.chars().count();
                 ctx.push(Value::Integer(len as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::NTOKENS => {
                 let s = pop_string(ctx)?;
                 let count = s.split_whitespace().count();
                 ctx.push(Value::Integer(count as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::NTHTOKEN => {
@@ -232,7 +232,7 @@ impl LibraryExecutor for StringsLib {
                 match s.split_whitespace().nth(n - 1) {
                     Some(token) => {
                         ctx.push(Value::String(token.to_string().into()))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     None => Err(format!("NTHTOKEN: token {} not found", n)),
                 }
@@ -259,7 +259,7 @@ impl LibraryExecutor for StringsLib {
                                 let end_char = s[..i].chars().count();
                                 ctx.push(Value::Integer(start_char as i64))?;
                                 ctx.push(Value::Integer(end_char as i64))?;
-                                return Ok(());
+                                return Ok(ExecuteAction::ok());
                             }
                             in_token = false;
                         }
@@ -276,7 +276,7 @@ impl LibraryExecutor for StringsLib {
                         let end_char = s.chars().count();
                         ctx.push(Value::Integer(start_char as i64))?;
                         ctx.push(Value::Integer(end_char as i64))?;
-                        return Ok(());
+                        return Ok(ExecuteAction::ok());
                     }
                 }
 
@@ -291,7 +291,7 @@ impl LibraryExecutor for StringsLib {
                 if find.is_empty() {
                     ctx.push(Value::String(s))?;
                     ctx.push(Value::Integer(0))?;
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
 
                 let count = s.matches(find.as_ref()).count();
@@ -299,7 +299,7 @@ impl LibraryExecutor for StringsLib {
 
                 ctx.push(Value::String(result.into()))?;
                 ctx.push(Value::Integer(count as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::TO_UTF8 => {
@@ -310,7 +310,7 @@ impl LibraryExecutor for StringsLib {
                     .map(|&b| Value::Integer(b as i64))
                     .collect();
                 ctx.push(Value::list(bytes))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::FROM_UTF8 => {
@@ -345,7 +345,7 @@ impl LibraryExecutor for StringsLib {
                 match String::from_utf8(bytes) {
                     Ok(s) => {
                         ctx.push(Value::String(s.into()))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     Err(_) => Err("UTF8→: invalid UTF-8 byte sequence".into()),
                 }

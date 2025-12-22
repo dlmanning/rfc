@@ -11,7 +11,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -76,7 +76,7 @@ impl LibraryExecutor for SymbolicLib {
                                 } else {
                                     ctx.push(Value::Real(n))?;
                                 }
-                                Ok(())
+                                Ok(ExecuteAction::ok())
                             }
                             None => Err("→NUM: symbolic expression contains variables".into()),
                         }
@@ -84,11 +84,11 @@ impl LibraryExecutor for SymbolicLib {
                     // For numeric types, just return as-is
                     Value::Integer(n) => {
                         ctx.push(Value::Integer(n))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     Value::Real(n) => {
                         ctx.push(Value::Real(n))?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     _ => Err(format!("→NUM: expected symbolic or number, got {}", val.type_name())),
                 }
@@ -106,19 +106,19 @@ impl LibraryExecutor for SymbolicLib {
                                 } else {
                                     ctx.push(Value::Real(n))?;
                                 }
-                                Ok(())
+                                Ok(ExecuteAction::ok())
                             }
                             None => {
                                 // Can't evaluate, return as symbolic
                                 ctx.push(Value::Symbolic(expr))?;
-                                Ok(())
+                                Ok(ExecuteAction::ok())
                             }
                         }
                     }
                     // For other types, just return as-is
                     other => {
                         ctx.push(other)?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                 }
             }

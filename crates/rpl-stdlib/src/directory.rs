@@ -26,7 +26,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     serialize::{pack_directory, packinfo, unpack_directory_checked},
     value::Value,
@@ -102,7 +102,7 @@ impl LibraryExecutor for DirectoryLib {
                 })?;
                 let value = ctx.pop()?;
                 ctx.store(name, value);
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::RCL => {
@@ -116,7 +116,7 @@ impl LibraryExecutor for DirectoryLib {
                     .ok_or_else(|| format!("Undefined: {}", name))?
                     .clone();
                 ctx.push(value)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::PURGE => {
@@ -127,20 +127,20 @@ impl LibraryExecutor for DirectoryLib {
                 })?;
                 ctx.purge(&name)
                     .ok_or_else(|| format!("Undefined: {}", name))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::VARS => {
                 // (-- {names})
                 let names: Vec<Value> = ctx.vars().map(|s| Value::string(s.as_str())).collect();
                 ctx.push(Value::list(names))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::CLVAR => {
                 // (--)
                 ctx.clear_vars();
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::INCR => {
@@ -168,7 +168,7 @@ impl LibraryExecutor for DirectoryLib {
                 let result = new_val.clone();
                 ctx.store(name, new_val);
                 ctx.push(result)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::DECR => {
@@ -196,7 +196,7 @@ impl LibraryExecutor for DirectoryLib {
                 let result = new_val.clone();
                 ctx.store(name, new_val);
                 ctx.push(result)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::RENAME => {
@@ -212,7 +212,7 @@ impl LibraryExecutor for DirectoryLib {
                 if !ctx.rename_var(&old_name, &new_name) {
                     return Err(format!("Undefined: {}", old_name));
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             // === Directory navigation ===
@@ -229,7 +229,7 @@ impl LibraryExecutor for DirectoryLib {
                         name
                     ));
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::PGDIR => {
@@ -240,19 +240,19 @@ impl LibraryExecutor for DirectoryLib {
                 })?;
                 ctx.remove_subdir(&name)
                     .map_err(|e| format!("PGDIR: {}", e))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::UPDIR => {
                 // (--)
                 ctx.updir();
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::HOME => {
                 // (--)
                 ctx.home();
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::PATH => {
@@ -263,7 +263,7 @@ impl LibraryExecutor for DirectoryLib {
                     .map(|s| Value::string(s.as_str()))
                     .collect();
                 ctx.push(Value::list(path))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             // === Directory packing ===
@@ -298,7 +298,7 @@ impl LibraryExecutor for DirectoryLib {
                 };
 
                 ctx.push(Value::bytes(packed))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::UNPACKDIR => {
@@ -356,7 +356,7 @@ impl LibraryExecutor for DirectoryLib {
                         })?;
                 }
 
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::PACKINFO => {
@@ -372,7 +372,7 @@ impl LibraryExecutor for DirectoryLib {
                     .map(|s| Value::string(s.as_str()))
                     .collect();
                 ctx.push(Value::list(names_list))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             _ => Err(format!("Unknown directory command: {}", ctx.cmd)),

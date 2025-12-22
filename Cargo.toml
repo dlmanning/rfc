@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-plot", "crates/rpl-sr5", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
-default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-plot", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
+members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-vector-plot", "crates/rpl-sr5", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
+default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-vector-plot", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
 
     [workspace.package]
     version = "0.1.0"
@@ -15,7 +15,7 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     rpl-lsp = {path = "crates/rpl-lsp"}
     rpl-dap = {path = "crates/rpl-dap"}
     rpl-tui = {path = "crates/rpl-tui"}
-    rpl-plot = {path = "crates/rpl-plot"}
+    rpl-vector-plot = {path = "crates/rpl-vector-plot"}
     rpl-sr5 = {path = "crates/rpl-sr5"}
     rpl = {path = "crates/rpl"}
     rpl-stdlib = {path = "crates/rpl-stdlib"}

@@ -11,7 +11,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -130,18 +130,18 @@ impl LibraryExecutor for StackLib {
             cmd::DUP => {
                 let val = ctx.peek(0)?.clone();
                 ctx.push(val)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DROP => {
                 ctx.pop()?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::SWAP => {
                 let b = ctx.pop()?;
                 let a = ctx.pop()?;
                 ctx.push(b)?;
                 ctx.push(a)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::ROT => {
                 let c = ctx.pop()?;
@@ -150,7 +150,7 @@ impl LibraryExecutor for StackLib {
                 ctx.push(b)?;
                 ctx.push(c)?;
                 ctx.push(a)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::OVER => {
                 let b = ctx.pop()?;
@@ -158,12 +158,12 @@ impl LibraryExecutor for StackLib {
                 ctx.push(a.clone())?;
                 ctx.push(b)?;
                 ctx.push(a)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DEPTH => {
                 let depth = ctx.depth() as i64;
                 ctx.push(Value::Integer(depth))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::PICK => {
                 let n = match ctx.pop()? {
@@ -176,7 +176,7 @@ impl LibraryExecutor for StackLib {
                 }
                 let val = ctx.peek(n - 1)?.clone();
                 ctx.push(val)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::ROLL => {
                 let n = match ctx.pop()? {
@@ -188,7 +188,7 @@ impl LibraryExecutor for StackLib {
                     return Err("ROLL: n must be >= 1".into());
                 }
                 if n == 1 {
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
                 let mut items = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -199,7 +199,7 @@ impl LibraryExecutor for StackLib {
                     ctx.push(item)?;
                 }
                 ctx.push(target)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DUP2 => {
                 // DUP2 (a b -- a b a b)
@@ -207,13 +207,13 @@ impl LibraryExecutor for StackLib {
                 let a = ctx.peek(1)?.clone();
                 ctx.push(a)?;
                 ctx.push(b)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DROP2 => {
                 // DROP2 (a b --)
                 ctx.pop()?;
                 ctx.pop()?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DUPN => {
                 // DUPN (x1..xn n -- x1..xn x1..xn)
@@ -223,7 +223,7 @@ impl LibraryExecutor for StackLib {
                     _ => return Err("DUPN: expected number".into()),
                 };
                 if n == 0 {
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
                 let mut items = Vec::with_capacity(n);
                 for i in 0..n {
@@ -232,7 +232,7 @@ impl LibraryExecutor for StackLib {
                 for item in items {
                     ctx.push(item)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DROPN => {
                 // DROPN (x1..xn n --)
@@ -244,14 +244,14 @@ impl LibraryExecutor for StackLib {
                 for _ in 0..n {
                     ctx.pop()?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DUPDUP => {
                 // DUPDUP (x -- x x x)
                 let val = ctx.peek(0)?.clone();
                 ctx.push(val.clone())?;
                 ctx.push(val)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::NDUPN => {
                 // NDUPN (x n -- x x... n) - duplicate x n times, push n
@@ -265,14 +265,14 @@ impl LibraryExecutor for StackLib {
                     ctx.push(val.clone())?;
                 }
                 ctx.push(Value::Integer(n as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::NIP => {
                 // NIP (a b -- b)
                 let b = ctx.pop()?;
                 ctx.pop()?; // drop a
                 ctx.push(b)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::UNROT => {
                 // UNROT (a b c -- c a b) - reverse of ROT
@@ -282,13 +282,13 @@ impl LibraryExecutor for StackLib {
                 ctx.push(c)?;
                 ctx.push(a)?;
                 ctx.push(b)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::PICK3 => {
                 // PICK3 (a b c -- a b c a) - same as 3 PICK
                 let val = ctx.peek(2)?.clone();
                 ctx.push(val)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::ROLLD => {
                 // ROLLD (x1..xn n -- xn x1..xn-1) - moves TOS to nth position
@@ -299,7 +299,7 @@ impl LibraryExecutor for StackLib {
                     _ => return Err("ROLLD: expected number".into()),
                 };
                 if n <= 1 {
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
                 let mut items = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -313,7 +313,7 @@ impl LibraryExecutor for StackLib {
                 for item in items.into_iter().skip(1).rev() {
                     ctx.push(item)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::REVN => {
                 // REVN (x1..xn n -- xn..x1) - reverse top n elements
@@ -323,7 +323,7 @@ impl LibraryExecutor for StackLib {
                     _ => return Err("REVN: expected number".into()),
                 };
                 if n <= 1 {
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
                 let mut items = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -334,7 +334,7 @@ impl LibraryExecutor for StackLib {
                 for item in items {
                     ctx.push(item)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::UNPICK => {
                 // UNPICK (x1..xn obj n -- obj x1..xn-1) - place obj at position n
@@ -346,7 +346,7 @@ impl LibraryExecutor for StackLib {
                 let obj = ctx.pop()?;
                 if n == 1 {
                     ctx.push(obj)?;
-                    return Ok(());
+                    return Ok(ExecuteAction::ok());
                 }
                 // Pop n-1 items, insert obj at bottom, push items back
                 let mut items = Vec::with_capacity(n - 1);
@@ -357,7 +357,7 @@ impl LibraryExecutor for StackLib {
                 for item in items.into_iter().rev() {
                     ctx.push(item)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::IFT => {
                 // IFT (obj flag -- obj | nothing)
@@ -371,7 +371,7 @@ impl LibraryExecutor for StackLib {
                 if is_true {
                     ctx.push(obj)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::IFTE => {
                 // IFTE (true-obj false-obj flag -- true-obj | false-obj)
@@ -388,7 +388,7 @@ impl LibraryExecutor for StackLib {
                 } else {
                     ctx.push(false_obj)?;
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             _ => Err(format!("Unknown stack command: {}", ctx.cmd)),
         }

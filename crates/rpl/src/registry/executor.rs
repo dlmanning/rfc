@@ -57,7 +57,7 @@ impl ExecutorRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libs::{ExecuteContext, ExecuteResult};
+    use crate::libs::{ExecuteAction, ExecuteContext, ExecuteResult};
 
     struct TestExecutor;
 
@@ -67,7 +67,7 @@ mod tests {
         }
 
         fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
-            Ok(())
+            Ok(ExecuteAction::ok())
         }
     }
 

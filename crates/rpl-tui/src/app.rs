@@ -2,7 +2,7 @@
 
 use rpl::Session;
 use rpl::value::Value;
-use rpl_plot::register_plot_lib;
+use rpl_vector_plot::register_vector_plot_lib;
 
 use super::{
     commands::{CommandResult, try_execute_command},
@@ -62,7 +62,7 @@ impl App {
         let _ = history.load();
 
         let mut session = Session::new();
-        register_plot_lib(&mut session);
+        register_vector_plot_lib(&mut session);
 
         Self {
             session,

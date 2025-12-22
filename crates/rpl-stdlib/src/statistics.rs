@@ -10,12 +10,11 @@
 
 use std::sync::OnceLock;
 
-use rpl::core::Span;
-use rpl::interface::InterfaceSpec;
-
 use rpl::{
+    core::Span,
+    interface::InterfaceSpec,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -98,7 +97,7 @@ impl LibraryExecutor for StatisticsLib {
                 // Convert to [0, 1) range
                 let result = (next as f64) / (LCG_M as f64);
                 ctx.push(Value::Real(result))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::RDZ => {
                 // Pop seed from stack
@@ -106,7 +105,7 @@ impl LibraryExecutor for StatisticsLib {
                     Value::Integer(n) => n,
                     Value::Real(r) => r as i64,
                     other => {
-                        return Err(format!("RDZ: expected number, got {}", other.type_name()))
+                        return Err(format!("RDZ: expected number, got {}", other.type_name()));
                     }
                 };
 
@@ -117,7 +116,7 @@ impl LibraryExecutor for StatisticsLib {
                 // Store seed in directory
                 ctx.directory
                     .store(RNG_SEED_VAR.to_string(), Value::Integer(seed));
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             _ => Err(format!("Unknown statistics command: {}", ctx.cmd)),
         }
@@ -145,7 +144,7 @@ mod tests {
         assert_eq!(result.len(), 3);
         for val in result {
             if let Value::Real(r) = val {
-                assert!(r >= 0.0 && r < 1.0, "RAND value {} out of range", r);
+                assert!((0.0..1.0).contains(&r), "RAND value {} out of range", r);
             } else {
                 panic!("Expected Real, got {:?}", val);
             }

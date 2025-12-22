@@ -12,7 +12,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::{LibraryCommand, LibraryData, Value},
 };
@@ -97,7 +97,7 @@ impl LibraryExecutor for UserLibLib {
                 // Store at .SETTINGS.LIBDATA.<libid>.<varname>
                 let libid_str = libid.as_str();
                 ctx.store_at_path(&["SETTINGS", "LIBDATA", libid_str], &varname, value);
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::LIBRCL => {
@@ -110,7 +110,7 @@ impl LibraryExecutor for UserLibLib {
                 match ctx.lookup_at_path(&["SETTINGS", "LIBDATA", libid_str], &varname) {
                     Some(value) => {
                         ctx.push(value.clone())?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     None => Err(format!(
                         "LIBRCL: variable '{}' not found in library '{}'",
@@ -130,12 +130,12 @@ impl LibraryExecutor for UserLibLib {
                 match ctx.lookup_at_path(&["SETTINGS", "LIBDATA", libid_str], &varname) {
                     Some(value) => {
                         ctx.push(value.clone())?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                     None => {
                         // Return default value
                         ctx.push(default)?;
-                        Ok(())
+                        Ok(ExecuteAction::ok())
                     }
                 }
             }
@@ -147,7 +147,7 @@ impl LibraryExecutor for UserLibLib {
                 // Clear all vars at .SETTINGS.LIBDATA.<libid>
                 let libid_str = libid.as_str();
                 ctx.clear_at_path(&["SETTINGS", "LIBDATA", libid_str]);
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::CRLIB => {
@@ -204,7 +204,7 @@ impl LibraryExecutor for UserLibLib {
 
                 let lib_data = LibraryData::with_commands(libid.to_uppercase(), commands);
                 ctx.push(Value::Library(Arc::new(lib_data)))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::ATTACH => {
@@ -218,7 +218,7 @@ impl LibraryExecutor for UserLibLib {
                 // Store the library at .SETTINGS.LIB.<id>
                 let lib_id = lib_data.id.as_str();
                 ctx.store_at_path(&["SETTINGS", "LIB"], lib_id, library.clone());
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::DETACH => {
@@ -229,7 +229,7 @@ impl LibraryExecutor for UserLibLib {
 
                 // Remove from .SETTINGS.LIB.<id>
                 ctx.purge_at_path(&["SETTINGS", "LIB"], &libid_upper);
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             _ => Err(format!("Unknown userlib command: {}", ctx.cmd)),

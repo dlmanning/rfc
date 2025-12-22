@@ -117,9 +117,6 @@ pub fn register_lowerers(registry: &mut LowererRegistry) {
 
 /// Register all standard library executors (for runtime).
 ///
-/// Note: ProgLib is not registered here because EVAL is handled
-/// directly by the VM, not through the executor registry.
-///
 /// This registers the XxxLib implementation structs for execution.
 pub fn register_executors(registry: &mut ExecutorRegistry) {
     registry.add(StackLib);
@@ -133,7 +130,7 @@ pub fn register_executors(registry: &mut ExecutorRegistry) {
     registry.add(UserLibLib);
     registry.add(BinaryLib);
     registry.add(FlowLib);
-    // ProgLib: no executor - EVAL is handled by VM directly
+    registry.add(ProgLib);
     registry.add(LocalsLib);
     registry.add(StatisticsLib);
 }

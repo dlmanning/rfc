@@ -8,8 +8,9 @@ use std::sync::OnceLock;
 use rpl::core::Span;
 use rpl::interface::InterfaceSpec;
 use rpl::ir::{Branch, LibId};
-use rpl::libs::LibraryLowerer;
+use rpl::libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer};
 use rpl::lower::{LowerContext, LowerError};
+use rpl::value::Value;
 
 // Re-export from rpl-vm (the authority on these constants)
 pub use rpl_vm::{PROG_LIB, prog_cmd as cmd};
@@ -56,9 +57,34 @@ impl LibraryLowerer for ProgLib {
     }
 }
 
-// Note: ProgLib does not implement LibraryExecutor.
-// EVAL is handled specially by the VM which intercepts CallLib(PROG_LIB, EVAL)
-// and executes the program directly.
+impl LibraryExecutor for ProgLib {
+    fn id(&self) -> LibId {
+        PROG_LIB
+    }
+
+    fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
+        match ctx.cmd {
+            cmd::EVAL => {
+                let value = ctx.pop()?;
+                match value {
+                    Value::Program(prog) => {
+                        // Return action for VM to execute the program
+                        Ok(ExecuteAction::call(prog, None))
+                    }
+                    Value::Symbolic(expr) => {
+                        // Return action for VM to evaluate the symbolic expression
+                        Ok(ExecuteAction::eval_symbolic(expr))
+                    }
+                    _ => Err(format!(
+                        "EVAL expected program or symbolic, got {}",
+                        value.type_name()
+                    )),
+                }
+            }
+            _ => Err(format!("Unknown prog command: {}", ctx.cmd)),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

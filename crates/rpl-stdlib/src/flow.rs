@@ -14,7 +14,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::{AtomKind, Branch, LibId, Node, NodeKind},
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -261,7 +261,7 @@ impl LibraryExecutor for FlowLib {
             cmd::ERRN => {
                 let error_code = ctx.last_error().map(|e| e.code).unwrap_or(0);
                 ctx.push(Value::Integer(error_code))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::ERRM => {
                 let error_msg = ctx
@@ -269,7 +269,7 @@ impl LibraryExecutor for FlowLib {
                     .map(|e| e.message.clone())
                     .unwrap_or_default();
                 ctx.push(Value::string(error_msg))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
             cmd::DOERR => {
                 Err("DOERR should be handled by bytecode".into())

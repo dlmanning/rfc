@@ -15,7 +15,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -156,7 +156,7 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         _ => return Err("Type error: expected numbers or strings".into()),
     };
     ctx.push(result)?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn binary_numeric_op<Fi, Fr>(ctx: &mut ExecuteContext, int_op: Fi, real_op: Fr) -> ExecuteResult
@@ -174,7 +174,7 @@ where
         _ => return Err("Type error: expected numbers".into()),
     };
     ctx.push(result)?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 /// Modulo operation with division-by-zero check.
@@ -200,7 +200,7 @@ fn mod_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         _ => return Err("Type error: expected numbers".into()),
     };
     ctx.push(result)?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn binary_real_op<F>(ctx: &mut ExecuteContext, op: F) -> ExecuteResult
@@ -217,7 +217,7 @@ where
         _ => return Err("Type error: expected numbers".into()),
     };
     ctx.push(Value::Real(op(a, b)))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 /// Division with zero check.
@@ -235,7 +235,7 @@ fn div_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         return Err("Division by zero".into());
     }
     ctx.push(Value::Real(a / b))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn unary_numeric_op<Fi, Fr>(ctx: &mut ExecuteContext, int_op: Fi, real_op: Fr) -> ExecuteResult
@@ -250,7 +250,7 @@ where
         _ => return Err("Type error: expected number".into()),
     };
     ctx.push(result)?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn unary_real_op<F>(ctx: &mut ExecuteContext, op: F) -> ExecuteResult
@@ -264,7 +264,7 @@ where
         _ => return Err("Type error: expected number".into()),
     };
     ctx.push(Value::Real(op(a)))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn compare_op<F>(ctx: &mut ExecuteContext, check: F) -> ExecuteResult
@@ -286,7 +286,7 @@ where
     };
     let result = if check(ord) { 1 } else { 0 };
     ctx.push(Value::Integer(result))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 fn sign_op(ctx: &mut ExecuteContext) -> ExecuteResult {
@@ -313,7 +313,7 @@ fn sign_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         _ => return Err("Type error: expected number".into()),
     };
     ctx.push(Value::Integer(sign))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 #[cfg(test)]

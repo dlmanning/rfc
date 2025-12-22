@@ -15,7 +15,7 @@ use rpl::{
     core::Span,
     interface::InterfaceSpec,
     ir::{Branch, LibId},
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -197,7 +197,7 @@ impl LibraryExecutor for TranscendentalsLib {
                     return Err("ATAN2 undefined for (0, 0)".into());
                 }
                 ctx.push(Value::Real(y.atan2(x)))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             // Hyperbolic
@@ -258,7 +258,7 @@ impl LibraryExecutor for TranscendentalsLib {
             }),
             cmd::PI => {
                 ctx.push(Value::Real(std::f64::consts::PI))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             // Rounding
@@ -290,7 +290,7 @@ where
     match op(n) {
         Ok(result) => {
             ctx.push(Value::Real(result))?;
-            Ok(())
+            Ok(ExecuteAction::ok())
         }
         Err(msg) => Err(msg.into()),
     }

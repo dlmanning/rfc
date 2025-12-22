@@ -17,7 +17,7 @@ use rpl::interface::InterfaceSpec;
 use rpl::{
     core::Span,
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -96,7 +96,7 @@ impl LibraryExecutor for ListLib {
                 }
                 items.reverse(); // Pop order is reversed
                 ctx.push(Value::list(items))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::LIST_TO => {
@@ -111,7 +111,7 @@ impl LibraryExecutor for ListLib {
                     ctx.push(item.clone())?;
                 }
                 ctx.push(Value::Integer(n as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::SIZE => {
@@ -128,7 +128,7 @@ impl LibraryExecutor for ListLib {
                     }
                 };
                 ctx.push(Value::Integer(n as i64))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::GET => {
@@ -152,7 +152,7 @@ impl LibraryExecutor for ListLib {
                     ));
                 }
                 ctx.push(items[(index - 1) as usize].clone())?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::PUT => {
@@ -180,7 +180,7 @@ impl LibraryExecutor for ListLib {
                 let mut new_items: Vec<Value> = items.iter().cloned().collect();
                 new_items[(index - 1) as usize] = new_item;
                 ctx.push(Value::list(new_items))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::HEAD => {
@@ -208,7 +208,7 @@ impl LibraryExecutor for ListLib {
                         ));
                     }
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::TAIL => {
@@ -237,7 +237,7 @@ impl LibraryExecutor for ListLib {
                         ));
                     }
                 }
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::REVLIST => {
@@ -249,7 +249,7 @@ impl LibraryExecutor for ListLib {
                 };
                 let reversed: Vec<Value> = items.iter().rev().cloned().collect();
                 ctx.push(Value::list(reversed))?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             cmd::ADD => {
@@ -287,7 +287,7 @@ impl LibraryExecutor for ListLib {
                     }
                 };
                 ctx.push(result)?;
-                Ok(())
+                Ok(ExecuteAction::ok())
             }
 
             _ => Err(format!("Unknown list command: {}", ctx.cmd)),

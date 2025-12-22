@@ -22,7 +22,7 @@ use locals::Locals;
 use stack::{Stack, StackError};
 
 use crate::{
-    libs::ExecuteContext,
+    libs::{ExecuteAction, ExecuteContext},
     lower::CompiledProgram,
     registry::ExecutorRegistry,
     value::{ProgramData, Value},
@@ -118,6 +118,10 @@ pub enum ReturnEntry {
 // VM struct
 // ============================================================================
 
+/// Hook function type for intercepting program calls.
+/// Return `true` to continue execution, `false` to stop.
+pub type ProgramCallHook = Box<dyn FnMut(&Arc<ProgramData>, Option<&str>) -> bool + Send>;
+
 /// The virtual machine.
 pub struct Vm {
     pub stack: Stack,
@@ -128,6 +132,9 @@ pub struct Vm {
     return_stack: Vec<ReturnEntry>,
     local_name_scopes: Vec<Vec<(String, u32)>>,
     last_error: Option<RplException>,
+    /// Optional hook called before executing a program.
+    /// Used by build mode to intercept and stop at entry point.
+    program_call_hook: Option<ProgramCallHook>,
 }
 
 #[derive(Clone, Debug)]
@@ -180,7 +187,24 @@ impl Vm {
             pc: 0,
             local_name_scopes: Vec::new(),
             last_error: None,
+            program_call_hook: None,
         }
+    }
+
+    /// Set a hook to intercept program calls.
+    ///
+    /// The hook is called before executing any program. Return `true` to
+    /// continue execution normally, or `false` to stop execution (for build mode).
+    pub fn set_program_call_hook<F>(&mut self, hook: F)
+    where
+        F: FnMut(&Arc<ProgramData>, Option<&str>) -> bool + Send + 'static,
+    {
+        self.program_call_hook = Some(Box::new(hook));
+    }
+
+    /// Clear the program call hook.
+    pub fn clear_program_call_hook(&mut self) {
+        self.program_call_hook = None;
     }
 
     // --- Public API ---
@@ -491,18 +515,66 @@ impl Vm {
         registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
-        // Special case: EVAL
-        if lib_id == crate::libs::PROG_LIB && cmd_id == crate::libs::prog_cmd::EVAL {
-            return self.eval_program(registry, debug);
-        }
-
         let library = registry
             .get(lib_id)
             .ok_or(VmError::UnknownLibrary(lib_id))?;
         let last_error = self.last_error.clone();
         let mut ctx = ExecuteContext::new(&mut self.stack, &mut self.directory, cmd_id, last_error);
-        library.execute(&mut ctx).map_err(VmError::TypeError)?;
-        Ok(Flow::Continue)
+        let action = library.execute(&mut ctx).map_err(VmError::TypeError)?;
+
+        match action {
+            ExecuteAction::Continue => Ok(Flow::Continue),
+            ExecuteAction::CallProgram { program, name } => {
+                self.execute_program(program, name, registry, debug)
+            }
+            ExecuteAction::EvalSymbolic { expr } => {
+                self.eval_symbolic(&expr)
+            }
+        }
+    }
+
+    /// Evaluate a symbolic expression, pushing the result.
+    fn eval_symbolic(&mut self, expr: &crate::symbolic::SymExpr) -> Result<Flow, VmError> {
+        let result = expr.eval_with_lookup(&|name| {
+            self.lookup_local_by_name(name)
+                .or_else(|| self.directory.lookup(name))
+                .and_then(value_to_f64)
+        });
+        match result {
+            Ok(n) => {
+                self.stack.push(Value::Real(n))?;
+                Ok(Flow::Continue)
+            }
+            Err(msg) => Err(VmError::TypeError(msg)),
+        }
+    }
+
+    /// Execute a program, checking the hook first.
+    fn execute_program(
+        &mut self,
+        prog: Arc<ProgramData>,
+        name: Option<String>,
+        registry: &ExecutorRegistry,
+        debug: Option<&mut DebugState>,
+    ) -> Result<Flow, VmError> {
+        // Check hook - if it returns false, stop execution
+        if let Some(ref mut hook) = self.program_call_hook
+            && !hook(&prog, name.as_deref()) {
+                return Ok(Flow::Return);
+            }
+
+        let code = prog.code.clone();
+        let rodata = prog.rodata.clone();
+        let prog_clone = prog.clone();
+        self.call_nested(
+            &code,
+            &rodata,
+            name,
+            prog,
+            move |pc| prog_clone.source_offset_for_pc(pc),
+            registry,
+            debug,
+        )
     }
 
     fn lookup_library_command(&self, name: &str) -> Option<(Vec<u8>, Vec<u8>)> {
@@ -517,48 +589,6 @@ impl Vm {
             }
         }
         None
-    }
-
-    fn eval_program(
-        &mut self,
-        registry: &ExecutorRegistry,
-        debug: Option<&mut DebugState>,
-    ) -> Result<Flow, VmError> {
-        let value = self.stack.pop()?;
-        match value {
-            Value::Program(prog) => {
-                let code = prog.code.clone();
-                let rodata = prog.rodata.clone();
-                let prog_clone = prog.clone();
-                self.call_nested(
-                    &code,
-                    &rodata,
-                    None,
-                    prog,
-                    move |pc| prog_clone.source_offset_for_pc(pc),
-                    registry,
-                    debug,
-                )
-            }
-            Value::Symbolic(expr) => {
-                let result = expr.eval_with_lookup(&|name| {
-                    self.lookup_local_by_name(name)
-                        .or_else(|| self.directory.lookup(name))
-                        .and_then(value_to_f64)
-                });
-                match result {
-                    Ok(n) => {
-                        self.stack.push(Value::Real(n))?;
-                        Ok(Flow::Continue)
-                    }
-                    Err(msg) => Err(VmError::TypeError(msg)),
-                }
-            }
-            _ => Err(VmError::TypeError(format!(
-                "EVAL expected program or symbolic, got {}",
-                value.type_name()
-            ))),
-        }
     }
 
     // --- Main dispatch ---
@@ -766,15 +796,10 @@ impl Vm {
                 let name = self.read_string_from_rodata(code, rodata)?;
                 if let Some(value) = self.directory.lookup(name).cloned() {
                     if let Value::Program(prog) = value {
-                        let code_bytes = prog.code.clone();
-                        let prog_rodata = prog.rodata.clone();
-                        let prog_clone = prog.clone();
-                        return self.call_nested(
-                            &code_bytes,
-                            &prog_rodata,
-                            Some(name.to_string()),
+                        // Use execute_program so the hook is called
+                        return self.execute_program(
                             prog,
-                            move |pc| prog_clone.source_offset_for_pc(pc),
+                            Some(name.to_string()),
                             registry,
                             debug,
                         );
@@ -786,12 +811,10 @@ impl Vm {
                         lib_code.clone(),
                         lib_rodata.clone(),
                     ));
-                    return self.call_nested(
-                        &lib_code,
-                        &lib_rodata,
-                        Some(name.to_string()),
+                    // Use execute_program so the hook is called
+                    return self.execute_program(
                         prog,
-                        |_| None,
+                        Some(name.to_string()),
                         registry,
                         debug,
                     );

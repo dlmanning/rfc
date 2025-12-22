@@ -508,8 +508,47 @@ impl<'a> ExecuteContext<'a> {
     }
 }
 
+use std::sync::Arc;
+use crate::symbolic::SymExpr;
+use crate::value::ProgramData;
+
+/// Action for VM to take after executor runs.
+#[derive(Debug)]
+pub enum ExecuteAction {
+    /// Continue normal execution.
+    Continue,
+    /// Request VM to call a program.
+    CallProgram {
+        program: Arc<ProgramData>,
+        /// Name for error messages and intercept (e.g., "MAIN").
+        name: Option<String>,
+    },
+    /// Request VM to evaluate a symbolic expression.
+    /// This needs access to locals which executors don't have.
+    EvalSymbolic {
+        expr: Arc<SymExpr>,
+    },
+}
+
+impl ExecuteAction {
+    /// Create a Continue action.
+    pub fn ok() -> Self {
+        Self::Continue
+    }
+
+    /// Create a CallProgram action.
+    pub fn call(program: Arc<ProgramData>, name: Option<String>) -> Self {
+        Self::CallProgram { program, name }
+    }
+
+    /// Create an EvalSymbolic action.
+    pub fn eval_symbolic(expr: Arc<SymExpr>) -> Self {
+        Self::EvalSymbolic { expr }
+    }
+}
+
 /// Result of executing a command.
-pub type ExecuteResult = Result<(), String>;
+pub type ExecuteResult = Result<ExecuteAction, String>;
 
 // ============================================================================
 // Library Traits
@@ -673,6 +712,8 @@ pub trait LibraryExecutor: Send + Sync {
     /// Execute a command at runtime.
     ///
     /// Called when the VM encounters a CallLib instruction.
+    /// Return `ExecuteAction::Continue` for normal flow, or
+    /// `ExecuteAction::CallProgram` to request program execution.
     fn execute(&self, _ctx: &mut ExecuteContext) -> ExecuteResult {
         Err("library does not support execution".into())
     }

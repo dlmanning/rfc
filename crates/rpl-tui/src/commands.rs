@@ -1,6 +1,6 @@
 //! Meta-commands for the REPL (commands starting with colon).
 
-use rpl_plot::register_plot_lib;
+use rpl_vector_plot::register_vector_plot_lib;
 
 use super::app::App;
 
@@ -86,7 +86,7 @@ fn clear_all(app: &mut App) {
     let _ = app.session.eval_repl("CLEAR");
     // Reset session for clean state
     app.session = rpl::Session::new();
-    register_plot_lib(&mut app.session);
+    register_vector_plot_lib(&mut app.session);
     app.last_error = Some("Stack and variables cleared".to_string());
 }
 

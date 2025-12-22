@@ -14,7 +14,7 @@ use rpl::interface::InterfaceSpec;
 
 use rpl::{
     ir::LibId,
-    libs::{ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
+    libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -196,7 +196,7 @@ where
     let b = to_integer(&ctx.pop()?)?;
     let a = to_integer(&ctx.pop()?)?;
     ctx.push(Value::Integer(op(a, b)))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 /// Unary operation.
@@ -206,7 +206,7 @@ where
 {
     let a = to_integer(&ctx.pop()?)?;
     ctx.push(Value::Integer(op(a)))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 /// Shift operation (left or right).
@@ -225,7 +225,7 @@ fn shift_op(ctx: &mut ExecuteContext, left: bool) -> ExecuteResult {
     };
 
     ctx.push(Value::Integer(result))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 /// BDIV operation with division by zero check.
@@ -238,7 +238,7 @@ fn bdiv_op(ctx: &mut ExecuteContext) -> ExecuteResult {
     }
 
     ctx.push(Value::Integer(a / b))?;
-    Ok(())
+    Ok(ExecuteAction::ok())
 }
 
 #[cfg(test)]

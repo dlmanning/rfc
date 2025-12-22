@@ -1,0 +1,51 @@
+library VectorPlot 88
+
+-- Construction
+0:               -> NEWPLOT   -> Blob
+
+-- Path commands
+10:     Blob a b -> MOVETO    -> Blob
+11:     Blob a b -> LINETO    -> Blob
+12: Blob a b c d -> QUADTO    -> Blob
+13: Blob a b c d e f -> CUBICTO -> Blob
+14: Blob a b c d e -> ARC      -> Blob
+15:         Blob -> CLOSEPATH -> Blob
+
+-- Shapes
+20:   Blob a b c -> CIRCLE    -> Blob
+21: Blob a b c d -> RECT      -> Blob
+22: Blob a b c d -> ELLIPSE   -> Blob
+
+-- Finalize path
+30:         Blob -> FILL      -> Blob
+31:         Blob -> STROKE    -> Blob
+32:         Blob -> FILLSTROKE -> Blob
+
+-- Style
+40:     Blob Int -> FILLCOLOR -> Blob
+41:   Blob Int a -> STROKECOLOR -> Blob
+42:       Blob a -> LINEWIDTH -> Blob
+
+-- Transform
+50:     Blob a b -> TRANSLATE -> Blob
+51:       Blob a -> ROTATE    -> Blob
+52:     Blob a b -> SCALE     -> Blob
+53:         Blob -> IDENTITY  -> Blob
+
+-- State
+60:         Blob -> GSAVE     -> Blob
+61:         Blob -> GRESTORE  -> Blob
+
+-- Groups
+70:         Blob -> BEGINGROUP -> Blob
+71:         Blob -> ENDGROUP  -> Blob
+
+-- Text
+80: Blob a b Str c -> TEXT    -> Blob
+
+-- Queries
+90:         Blob -> PLOTBOUNDS -> List
+91:         Blob -> PLOTCOUNT -> Int
+
+-- Color utility
+99:    a b c d   -> RGBA      -> Int

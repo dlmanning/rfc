@@ -2162,19 +2162,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rpl-plot"
-version = "0.1.0"
-dependencies = [
- "rpl",
-]
-
-[[package]]
 name = "rpl-sr5"
 version = "0.1.0"
 dependencies = [
  "pixels",
  "rpl",
- "rpl-plot",
+ "rpl-vector-plot",
  "thiserror 2.0.17",
  "winit",
 ]
@@ -2195,9 +2188,16 @@ dependencies = [
  "dirs",
  "ratatui",
  "rpl",
- "rpl-plot",
+ "rpl-vector-plot",
  "unicode-segmentation",
  "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "rpl-vector-plot"
+version = "0.1.0"
+dependencies = [
+ "rpl",
 ]
 
 [[package]]
