@@ -1,0 +1,50 @@
+@ EVAL demonstration
+@ Shows dynamic code execution capabilities
+
+@ Simple EVAL: execute a program literal
+@ Result: 5
+<< 2 3 + >> EVAL
+
+@ EVAL with stack values
+@ Values already on stack are available to the EVALed program
+@ Result: 42
+7 6 << * >> EVAL
+
+@ EVAL can access enclosing scope's local variables
+@ This is the key difference from function calls
+@ Result: 42
+<< -> a b <<
+    << a b * >> EVAL
+>> >>
+"dynamic_mul" STO
+7 6 dynamic_mul
+
+@ Store a program and EVAL it later
+<< DUP * >>
+"square" STO
+
+@ Recall and evaluate the stored program
+@ Result: 16
+4 'square' RCL EVAL
+
+@ Chain multiple EVALs
+@ First squares 5 to get 25, then adds 1
+@ Result: 26
+5 'square' RCL EVAL << 1 + >> EVAL
+
+@ Conditional EVAL: choose which program to run at runtime
+<< -> flag <<
+    IF flag
+    THEN << 100 >>
+    ELSE << 200 >>
+    END
+    EVAL
+>> >>
+"choose" STO
+
+@ 1 chooses 100, 0 chooses 200, sum is 300
+1 choose
+0 choose
++
+
+@ Final stack (bottom to top): 5 42 42 16 26 300

@@ -522,6 +522,9 @@ pub enum ExecuteAction {
         program: Arc<ProgramData>,
         /// Name for error messages and intercept (e.g., "MAIN").
         name: Option<String>,
+        /// If true, preserve current locals (for EVAL semantics).
+        /// If false, create a new local scope (for function call semantics).
+        preserve_locals: bool,
     },
     /// Request VM to evaluate a symbolic expression.
     /// This needs access to locals which executors don't have.
@@ -536,9 +539,14 @@ impl ExecuteAction {
         Self::Continue
     }
 
-    /// Create a CallProgram action.
+    /// Create a CallProgram action for function calls (new local scope).
     pub fn call(program: Arc<ProgramData>, name: Option<String>) -> Self {
-        Self::CallProgram { program, name }
+        Self::CallProgram { program, name, preserve_locals: false }
+    }
+
+    /// Create a CallProgram action for EVAL (preserve current locals).
+    pub fn eval(program: Arc<ProgramData>) -> Self {
+        Self::CallProgram { program, name: None, preserve_locals: true }
     }
 
     /// Create an EvalSymbolic action.

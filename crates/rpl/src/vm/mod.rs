@@ -458,6 +458,7 @@ impl Vm {
         rodata: &[u8],
         name: Option<String>,
         program_data: Arc<ProgramData>,
+        preserve_locals: bool,
         source_fn: impl Fn(usize) -> Option<u32>,
         registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
@@ -471,9 +472,15 @@ impl Vm {
             Vec::new()
         };
 
-        let saved_locals = self.locals.save();
+        // Save locals only for function calls (not for EVAL which preserves current scope)
+        let saved_locals = if preserve_locals {
+            None
+        } else {
+            let saved = self.locals.save();
+            self.locals.clear();
+            Some(saved)
+        };
         let saved_control_stack = std::mem::take(&mut self.control_stack);
-        self.locals.clear();
 
         // Bind parameters to locals 0..N
         for (i, param) in params.into_iter().enumerate() {
@@ -484,7 +491,7 @@ impl Vm {
             program: program_data,
             return_pc: self.pc,
             name,
-            saved_locals: saved_locals.clone(),
+            saved_locals: saved_locals.clone().unwrap_or_default(),
         });
 
         let result = if let Some(debug) = debug {
@@ -502,7 +509,9 @@ impl Vm {
         };
 
         self.return_stack.pop();
-        self.locals.restore(saved_locals);
+        if let Some(saved) = saved_locals {
+            self.locals.restore(saved);
+        }
         self.control_stack = saved_control_stack;
         result?;
         Ok(Flow::Continue)
@@ -524,8 +533,8 @@ impl Vm {
 
         match action {
             ExecuteAction::Continue => Ok(Flow::Continue),
-            ExecuteAction::CallProgram { program, name } => {
-                self.execute_program(program, name, registry, debug)
+            ExecuteAction::CallProgram { program, name, preserve_locals } => {
+                self.execute_program(program, name, preserve_locals, registry, debug)
             }
             ExecuteAction::EvalSymbolic { expr } => {
                 self.eval_symbolic(&expr)
@@ -554,6 +563,7 @@ impl Vm {
         &mut self,
         prog: Arc<ProgramData>,
         name: Option<String>,
+        preserve_locals: bool,
         registry: &ExecutorRegistry,
         debug: Option<&mut DebugState>,
     ) -> Result<Flow, VmError> {
@@ -571,6 +581,7 @@ impl Vm {
             &rodata,
             name,
             prog,
+            preserve_locals,
             move |pc| prog_clone.source_offset_for_pc(pc),
             registry,
             debug,
@@ -794,12 +805,16 @@ impl Vm {
             }
             EvalName => {
                 let name = self.read_string_from_rodata(code, rodata)?;
-                if let Some(value) = self.directory.lookup(name).cloned() {
+                // Check locals first (for EVAL accessing enclosing scope)
+                if let Some(value) = self.lookup_local_by_name(name).cloned() {
+                    self.stack.push(value)?;
+                } else if let Some(value) = self.directory.lookup(name).cloned() {
                     if let Value::Program(prog) = value {
-                        // Use execute_program so the hook is called
+                        // Function call by name - new local scope
                         return self.execute_program(
                             prog,
                             Some(name.to_string()),
+                            false, // new scope for function calls
                             registry,
                             debug,
                         );
@@ -811,10 +826,11 @@ impl Vm {
                         lib_code.clone(),
                         lib_rodata.clone(),
                     ));
-                    // Use execute_program so the hook is called
+                    // Function call by name - new local scope
                     return self.execute_program(
                         prog,
                         Some(name.to_string()),
+                        false, // new scope for function calls
                         registry,
                         debug,
                     );

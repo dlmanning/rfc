@@ -68,8 +68,8 @@ impl LibraryExecutor for ProgLib {
                 let value = ctx.pop()?;
                 match value {
                     Value::Program(prog) => {
-                        // Return action for VM to execute the program
-                        Ok(ExecuteAction::call(prog, None))
+                        // Return action for VM to execute the program in current scope
+                        Ok(ExecuteAction::eval(prog))
                     }
                     Value::Symbolic(expr) => {
                         // Return action for VM to evaluate the symbolic expression
