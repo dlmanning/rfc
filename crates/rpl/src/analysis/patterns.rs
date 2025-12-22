@@ -159,7 +159,7 @@ fn extract_name(node: &Node) -> Option<(String, Span)> {
 fn is_define_command(node: &Node, registry: &InterfaceRegistry) -> bool {
     if let NodeKind::Atom(AtomKind::Command(lib, cmd)) = &node.kind {
         matches!(
-            registry.get_binding_effect(*lib, *cmd),
+            registry.get(*lib).and_then(|i| i.binding_effect(*cmd)),
             Some(BindingKind::Define)
         )
     } else {
@@ -188,7 +188,7 @@ fn extract_program_params(body_branches: &[Branch], registry: &InterfaceRegistry
     };
 
     // Get binding branches for this construct
-    let binding_indices = registry.binding_branches(lib, construct_id, inner_branches.len());
+    let binding_indices = registry.get(lib).map(|i| i.binding_branches(construct_id, inner_branches.len())).unwrap_or_default();
     if binding_indices.is_empty() {
         return (0, vec![]);
     }

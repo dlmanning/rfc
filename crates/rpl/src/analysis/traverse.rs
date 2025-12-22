@@ -295,8 +295,9 @@ impl<'a> Traverser<'a> {
         branches: &[Branch],
         node: &Node,
     ) {
-        let binding_indices = self.registry.binding_branches(lib, construct_id, branches.len());
-        let is_loop = self.registry.is_loop_construct(lib, construct_id);
+        let iface = self.registry.get(lib);
+        let binding_indices = iface.map(|i| i.binding_branches(construct_id, branches.len())).unwrap_or_default();
+        let is_loop = iface.map(|i| i.is_loop_construct(construct_id)).unwrap_or(false);
 
         // Collect binding info from branches BEFORE modifying stack
         let bindings: Vec<(usize, String, Span)> = binding_indices
@@ -341,7 +342,7 @@ impl<'a> Traverser<'a> {
         };
 
         // Apply construct's stack effect (e.g., FOR consumes start/end ints)
-        let effect = self.registry.get_construct_effect(lib, construct_id);
+        let effect = iface.map(|i| i.construct_effect(construct_id)).unwrap_or(StackEffect::Dynamic);
         if !matches!(effect, StackEffect::Dynamic) {
             self.stack.apply_effect(&effect, node.span);
         }
@@ -411,12 +412,13 @@ impl<'a> Traverser<'a> {
         branches: &[Branch],
         node: &Node,
     ) {
-        let binding_indices = self.registry.binding_branches(lib, construct_id, branches.len());
-        let alternative_indices = self.registry.alternative_branches(lib, construct_id, branches.len());
-        let is_loop = self.registry.is_loop_construct(lib, construct_id);
+        let iface = self.registry.get(lib);
+        let binding_indices = iface.map(|i| i.binding_branches(construct_id, branches.len())).unwrap_or_default();
+        let alternative_indices = iface.map(|i| i.alternative_branches(construct_id, branches.len())).unwrap_or_default();
+        let is_loop = iface.map(|i| i.is_loop_construct(construct_id)).unwrap_or(false);
 
         // Apply construct's stack effect (e.g., IF consumes a boolean condition)
-        let effect = self.registry.get_construct_effect(lib, construct_id);
+        let effect = iface.map(|i| i.construct_effect(construct_id)).unwrap_or(StackEffect::Dynamic);
         if !matches!(effect, StackEffect::Dynamic) {
             self.stack.apply_effect(&effect, node.span);
         }
@@ -546,7 +548,7 @@ impl<'a> Traverser<'a> {
         let cmd_name = self.registry.get_command_name(lib, cmd);
 
         // Get input constraints and collect them
-        let input_constraints = self.registry.get_input_constraints(lib, cmd);
+        let input_constraints = self.registry.get(lib).map(|i| i.input_constraints(cmd)).unwrap_or_default();
         let consumes = effect.consumes().unwrap_or(0) as usize;
 
         for (i, constraint) in input_constraints.iter().enumerate().take(consumes) {
@@ -593,8 +595,9 @@ impl Visitor for Traverser<'_> {
         // Handle Extended nodes specially to avoid walking binding branches
         // (binding branches contain [Integer, String] metadata that would pollute the stack)
         if let NodeKind::Composite(CompositeKind::Extended(lib, construct_id), branches) = &node.kind {
-            let alternatives = self.registry.alternative_branches(*lib, *construct_id, branches.len());
-            let bindings = self.registry.binding_branches(*lib, *construct_id, branches.len());
+            let iface = self.registry.get(*lib);
+            let alternatives = iface.map(|i| i.alternative_branches(*construct_id, branches.len())).unwrap_or_default();
+            let bindings = iface.map(|i| i.binding_branches(*construct_id, branches.len())).unwrap_or_default();
 
             if !alternatives.is_empty() {
                 // Handle constructs with alternatives (IF/THEN/ELSE) with stack save/restore
@@ -606,7 +609,7 @@ impl Visitor for Traverser<'_> {
                 return false;
             } else {
                 // Simple Extended (no bindings, no alternatives) - just apply effect and walk
-                let effect = self.registry.get_construct_effect(*lib, *construct_id);
+                let effect = iface.map(|i| i.construct_effect(*construct_id)).unwrap_or(StackEffect::Dynamic);
                 if !matches!(effect, StackEffect::Dynamic) {
                     self.stack.apply_effect(&effect, node.span);
                 }
@@ -712,7 +715,7 @@ impl Visitor for Traverser<'_> {
         });
 
         // Handle binding effects (STO, RCL, etc.)
-        if let Some(binding_kind) = self.registry.get_binding_effect(lib, cmd) {
+        if let Some(binding_kind) = self.registry.get(lib).and_then(|i| i.binding_effect(cmd)) {
             match binding_kind {
                 BindingKind::Define => {
                     // STO - store to global
@@ -762,7 +765,7 @@ impl Visitor for Traverser<'_> {
         // Get stack effect and apply
         let tos = self.stack.type_at(0).as_known();
         let nos = self.stack.type_at(1).as_known();
-        let effect = self.registry.get_command_effect(lib, cmd, tos, nos);
+        let effect = self.registry.get(lib).map(|i| i.command_effect(cmd, tos, nos)).unwrap_or(StackEffect::Dynamic);
         self.apply_command_effect(lib, cmd, &effect, node.span);
     }
 

@@ -8,6 +8,7 @@ use crate::source::SourceFile;
 
 use crate::{
     analysis::{AnalysisResult, Definition, DefinitionKind, IncrementalAnalysis},
+    libs::StackEffect,
     registry::InterfaceRegistry,
 };
 
@@ -350,7 +351,7 @@ fn hover_command(
         } else {
             (None, None)
         };
-        let effect = registry.get_command_effect(lib_id, cmd_id, tos, nos);
+        let effect = registry.get(lib_id).map(|i| i.command_effect(cmd_id, tos, nos)).unwrap_or(StackEffect::Dynamic);
         let notation = effect.to_notation();
         if notation != "(dynamic)" {
             parts.push(format!("Effect: `{}`", notation));

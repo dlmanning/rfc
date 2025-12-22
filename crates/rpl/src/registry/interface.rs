@@ -9,10 +9,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    core::TypeId,
     ir::LibId,
     libs::{ClaimContext, LibraryInterface, StackEffect, TokenClaim},
-    types::TypeConstraint,
 };
 
 /// Reference to a command in the registry.
@@ -110,47 +108,6 @@ impl InterfaceRegistry {
         self.interfaces.get(&lib_id).map(|lib| lib.name())
     }
 
-    /// Get binding branch indices for a construct.
-    ///
-    /// Returns the indices of branches that contain local variable bindings.
-    /// Used by the analyzer to determine scope structure without hardcoding library IDs.
-    pub fn binding_branches(
-        &self,
-        lib_id: LibId,
-        construct_id: u16,
-        num_branches: usize,
-    ) -> Vec<usize> {
-        self.interfaces
-            .get(&lib_id)
-            .map(|lib| lib.binding_branches(construct_id, num_branches))
-            .unwrap_or_default()
-    }
-
-    /// Get alternative branch groups for a construct.
-    ///
-    /// Returns groups of branch indices that are mutually exclusive at runtime.
-    /// Used by the analyzer to properly merge type stacks for control flow.
-    pub fn alternative_branches(
-        &self,
-        lib_id: LibId,
-        construct_id: u16,
-        num_branches: usize,
-    ) -> Vec<Vec<usize>> {
-        self.interfaces
-            .get(&lib_id)
-            .map(|lib| lib.alternative_branches(construct_id, num_branches))
-            .unwrap_or_default()
-    }
-
-    /// Check if a construct is a loop (FOR, START, etc.).
-    ///
-    /// Used by the analyzer to determine scope and definition kinds.
-    pub fn is_loop_construct(&self, lib_id: LibId, construct_id: u16) -> bool {
-        self.interfaces
-            .get(&lib_id)
-            .is_some_and(|lib| lib.is_loop_construct(construct_id))
-    }
-
     /// Register a token claim.
     pub fn register_claim(&mut self, claim: TokenClaim) {
         self.claims.push(claim);
@@ -168,66 +125,15 @@ impl InterfaceRegistry {
         self.commands.insert(name.into(), (lib_id, cmd_id));
     }
 
-    /// Get the stack effect for a command given the current type stack.
-    ///
-    /// `tos` and `nos` are the top-of-stack and next-on-stack types if known.
-    pub fn get_command_effect(
-        &self,
-        lib_id: LibId,
-        cmd_id: u16,
-        tos: Option<TypeId>,
-        nos: Option<TypeId>,
-    ) -> StackEffect {
-        // First try the library's analyzer
-        if let Some(lib) = self.interfaces.get(&lib_id) {
-            let effect = lib.command_effect(cmd_id, tos, nos);
-            if !matches!(effect, StackEffect::Dynamic) {
-                return effect;
-            }
-        }
-
-        // Fall back to static effect
-        self.command_effects
-            .get(&(lib_id, cmd_id))
-            .cloned()
-            .unwrap_or(StackEffect::Dynamic)
-    }
-
     /// Get the static (declared) stack effect for a command.
     ///
-    /// Unlike `get_command_effect`, this ignores the dynamic analyzer and returns
-    /// the effect declared in the command definition. Useful for getting consume
-    /// counts when the dynamic analyzer returns Dynamic due to unknown types.
+    /// Returns the effect declared in the command definition. For dynamic
+    /// effects based on input types, query the LibraryInterface directly.
     pub fn get_static_effect(&self, lib_id: LibId, cmd_id: u16) -> StackEffect {
         self.command_effects
             .get(&(lib_id, cmd_id))
             .cloned()
             .unwrap_or(StackEffect::Dynamic)
-    }
-
-    /// Get the binding effect for a command, if any.
-    ///
-    /// Returns the binding effect (Define, Read, Delete, Modify) for commands
-    /// that create, read, or modify global definitions.
-    pub fn get_binding_effect(
-        &self,
-        lib_id: LibId,
-        cmd_id: u16,
-    ) -> Option<crate::interface::BindingKind> {
-        self.interfaces
-            .get(&lib_id)
-            .and_then(|lib| lib.binding_effect(cmd_id))
-    }
-
-    /// Get the input type constraints for a command.
-    ///
-    /// Returns a vector of TypeConstraint, one per input. Used for constraint-based
-    /// type inference on local variables.
-    pub fn get_input_constraints(&self, lib_id: LibId, cmd_id: u16) -> Vec<TypeConstraint> {
-        self.interfaces
-            .get(&lib_id)
-            .map(|lib| lib.input_constraints(cmd_id))
-            .unwrap_or_default()
     }
 
     /// Get the name of a command by its library and command ID.
@@ -273,17 +179,6 @@ impl InterfaceRegistry {
             lib,
             cmd,
         })
-    }
-
-    /// Get the stack effect for a syntax construct.
-    ///
-    /// Returns the stack effect (inputs consumed, outputs produced) for a construct.
-    /// For example, FOR consumes 2 values (start, end) and produces 0 values.
-    pub fn get_construct_effect(&self, lib_id: LibId, construct_id: u16) -> StackEffect {
-        self.interfaces
-            .get(&lib_id)
-            .map(|lib| lib.construct_effect(construct_id))
-            .unwrap_or(StackEffect::Dynamic)
     }
 }
 
