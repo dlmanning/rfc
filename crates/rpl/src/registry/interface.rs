@@ -6,13 +6,14 @@
 //! - Stack effects for type inference
 //! - Binding information for scope analysis
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::core::TypeId;
-use crate::ir::LibId;
-use crate::libs::{ClaimContext, LibraryInterface, StackEffect, TokenClaim};
-use crate::types::TypeConstraint;
+use crate::{
+    core::TypeId,
+    ir::LibId,
+    libs::{ClaimContext, LibraryInterface, StackEffect, TokenClaim},
+    types::TypeConstraint,
+};
 
 /// Reference to a command in the registry.
 pub struct CommandRef {
@@ -30,7 +31,7 @@ pub struct CommandRef {
 /// - **Parsing**: Token claims determine how to parse custom syntax
 /// - **Analysis**: Stack effects and binding info for type/scope analysis
 pub struct InterfaceRegistry {
-    /// Token claims sorted by priority (highest first).
+    /// Token claims sorted by library ID (highest first), then priority.
     claims: Vec<TokenClaim>,
     /// Command name → (lib_id, cmd_id) mapping.
     commands: HashMap<String, (LibId, u16)>,
@@ -113,7 +114,12 @@ impl InterfaceRegistry {
     ///
     /// Returns the indices of branches that contain local variable bindings.
     /// Used by the analyzer to determine scope structure without hardcoding library IDs.
-    pub fn binding_branches(&self, lib_id: LibId, construct_id: u16, num_branches: usize) -> Vec<usize> {
+    pub fn binding_branches(
+        &self,
+        lib_id: LibId,
+        construct_id: u16,
+        num_branches: usize,
+    ) -> Vec<usize> {
         self.interfaces
             .get(&lib_id)
             .map(|lib| lib.binding_branches(construct_id, num_branches))
@@ -148,8 +154,13 @@ impl InterfaceRegistry {
     /// Register a token claim.
     pub fn register_claim(&mut self, claim: TokenClaim) {
         self.claims.push(claim);
-        // Keep sorted by priority (highest first)
-        self.claims.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // Keep sorted by library ID (highest first), then by priority
+        // This allows user libraries to override built-in tokens
+        self.claims.sort_by(|a, b| {
+            b.lib_id
+                .cmp(&a.lib_id)
+                .then_with(|| b.priority.cmp(&a.priority))
+        });
     }
 
     /// Register a command with its name and IDs.
@@ -160,7 +171,13 @@ impl InterfaceRegistry {
     /// Get the stack effect for a command given the current type stack.
     ///
     /// `tos` and `nos` are the top-of-stack and next-on-stack types if known.
-    pub fn get_command_effect(&self, lib_id: LibId, cmd_id: u16, tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
+    pub fn get_command_effect(
+        &self,
+        lib_id: LibId,
+        cmd_id: u16,
+        tos: Option<TypeId>,
+        nos: Option<TypeId>,
+    ) -> StackEffect {
         // First try the library's analyzer
         if let Some(lib) = self.interfaces.get(&lib_id) {
             let effect = lib.command_effect(cmd_id, tos, nos);
@@ -291,9 +308,35 @@ mod tests {
     }
 
     #[test]
-    fn claim_priority() {
+    fn claim_library_order() {
         let mut reg = InterfaceRegistry::new();
 
+        // Lower library ID
+        reg.register_claim(TokenClaim {
+            token: "TEST".to_string(),
+            priority: 100, // Higher priority but lower lib_id
+            context: ClaimContext::Any,
+            lib_id: 1,
+        });
+
+        // Higher library ID wins
+        reg.register_claim(TokenClaim {
+            token: "TEST".to_string(),
+            priority: 50, // Lower priority but higher lib_id
+            context: ClaimContext::Any,
+            lib_id: 2,
+        });
+
+        let claim = reg.find_claim("TEST", ClaimContext::Any);
+        // Higher lib_id wins regardless of priority
+        assert_eq!(claim.unwrap().lib_id, 2);
+    }
+
+    #[test]
+    fn claim_priority_within_library() {
+        let mut reg = InterfaceRegistry::new();
+
+        // Same library, different priorities
         reg.register_claim(TokenClaim {
             token: "TEST".to_string(),
             priority: 50,
@@ -305,11 +348,12 @@ mod tests {
             token: "TEST".to_string(),
             priority: 100,
             context: ClaimContext::Any,
-            lib_id: 2,
+            lib_id: 1,
         });
 
         let claim = reg.find_claim("TEST", ClaimContext::Any);
-        assert_eq!(claim.unwrap().lib_id, 2);
+        // Higher priority wins within same library
+        assert_eq!(claim.unwrap().priority, 100);
     }
 
     #[test]
