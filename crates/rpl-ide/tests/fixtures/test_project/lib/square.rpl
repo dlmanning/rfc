@@ -1,0 +1,4 @@
+@ Square a number
+@ (n -- n*n)
+
+<< -> n << n n * >> >>

@@ -35,6 +35,7 @@
 //! ```
 
 // Core infrastructure modules
+mod context;
 mod incremental;
 mod result;
 mod scopes;
@@ -50,6 +51,7 @@ mod traverse;
 mod types;
 
 // Re-exports: Core infrastructure
+pub use context::{Context, EntryInfo};
 pub use incremental::{line_edit_to_span_edit, IncrementalAnalysis, SpanEdit};
 pub use result::{AnalysisResult, Diagnostic, DiagnosticKind, Severity};
 pub use scopes::{Scope, ScopeId, ScopeKind, ScopeTree};
@@ -62,7 +64,7 @@ pub use visitor::{walk_node, walk_nodes, Visitor};
 pub use globals::{collect_globals, GlobalInfo, GlobalMap};
 pub use patterns::{recognize_patterns, ParamInfo, Pattern, PatternMap};
 pub use resolve::{finalize_signatures, resolve_constraints};
-pub use state::{Context, StackState, Substitution};
+pub use state::{StackState, Substitution};
 pub use traverse::{Traverser, TraversalResult};
 pub use types::{Constraint, Origin, Requirement, StackSnapshot, Type, TypeVar};
 
@@ -79,6 +81,7 @@ use crate::registry::InterfaceRegistry;
 /// * `nodes` - Parsed IR nodes from the parser
 /// * `registry` - Library interface registry
 /// * `interner` - Symbol interner
+/// * `context` - External context (known project entries, etc.)
 ///
 /// # Returns
 ///
@@ -87,6 +90,7 @@ pub fn analyze(
     nodes: &[Node],
     registry: &InterfaceRegistry,
     interner: &Interner,
+    context: &Context,
 ) -> AnalysisResult {
     // Phase 1: Pattern recognition
     let patterns = recognize_patterns(nodes, registry);
@@ -119,12 +123,14 @@ pub fn analyze(
     // This handles cases where a local is bound to a function call result (TypeVar)
     // and the function's return type is resolved later during traversal.
     let def_ids: Vec<_> = symbols.definitions().map(|d| d.id).collect();
+
     for def_id in def_ids {
         if let Some(def) = symbols.get_definition_mut(def_id)
             && let Some(ref ty) = def.value_type
             && ty.is_type_var()
         {
-            def.value_type = Some(substitution.apply(ty));
+            let resolved = substitution.apply(ty);
+            def.value_type = Some(resolved);
         }
     }
 
@@ -152,7 +158,7 @@ pub fn analyze(
         .collect();
 
     // Post-processing checks
-    let post_diagnostics = post_analysis_checks(&symbols);
+    let post_diagnostics = post_analysis_checks(&symbols, context);
     diagnostics.extend(post_diagnostics);
 
     AnalysisResult {
@@ -164,12 +170,14 @@ pub fn analyze(
 }
 
 /// Run post-analysis checks for unused variables, etc.
-fn post_analysis_checks(symbols: &SymbolTable) -> Vec<Diagnostic> {
+fn post_analysis_checks(symbols: &SymbolTable, context: &Context) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    // Check for unresolved references
+    // Check for unresolved references (skip if known in context)
     for reference in symbols.unresolved_references() {
-        diagnostics.push(Diagnostic::undefined_variable(&reference.name, reference.span));
+        if !context.is_known(&reference.name) {
+            diagnostics.push(Diagnostic::undefined_variable(&reference.name, reference.span));
+        }
     }
 
     // Check for unused local variables
@@ -203,7 +211,7 @@ mod tests {
         let (registry, interner) = setup_test();
         let nodes: Vec<Node> = vec![];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }
@@ -213,7 +221,7 @@ mod tests {
         let (registry, interner) = setup_test();
         let nodes = vec![Node::integer(42, dummy_span(0, 2))];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }
@@ -223,7 +231,7 @@ mod tests {
         let (registry, interner) = setup_test();
         let nodes = vec![Node::real(3.14, dummy_span(0, 4))];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }
@@ -233,7 +241,7 @@ mod tests {
         let (registry, interner) = setup_test();
         let nodes = vec![Node::string("hello", dummy_span(0, 7))];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }
@@ -246,7 +254,7 @@ mod tests {
             dummy_span(0, 6),
         )];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }
@@ -262,7 +270,7 @@ mod tests {
             dummy_span(0, 7),
         )];
 
-        let result = analyze(&nodes, &registry, &interner);
+        let result = analyze(&nodes, &registry, &interner, &Context::empty());
 
         assert!(result.diagnostics.is_empty());
     }

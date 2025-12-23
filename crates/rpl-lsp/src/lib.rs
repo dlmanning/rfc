@@ -200,6 +200,18 @@ pub fn run_with_state(mut state: ServerState) -> io::Result<()> {
                 None
             }
 
+            "textDocument/didSave" => {
+                if let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(request.params)
+                {
+                    let uri = params.text_document.uri.to_string();
+                    handle_did_save(&mut state, params);
+                    // Publish diagnostics after save (cross-file analysis may have changed)
+                    publish_diagnostics(&mut state, &uri, &mut writer)?;
+                }
+                None
+            }
+
             "textDocument/completion" => {
                 let result = serde_json::from_value(request.params)
                     .ok()
@@ -254,6 +266,16 @@ pub fn run_with_state(mut state: ServerState) -> io::Result<()> {
                 let result = serde_json::from_value(request.params)
                     .ok()
                     .and_then(|params| handle_document_symbol(&mut state, params));
+                Some(Response::success(
+                    request.id.unwrap_or(Value::Null),
+                    serde_json::to_value(result).unwrap_or(Value::Null),
+                ))
+            }
+
+            "workspace/symbol" => {
+                let result = serde_json::from_value(request.params)
+                    .ok()
+                    .and_then(|params| handle_workspace_symbol(&mut state, params));
                 Some(Response::success(
                     request.id.unwrap_or(Value::Null),
                     serde_json::to_value(result).unwrap_or(Value::Null),

@@ -641,7 +641,7 @@ pub trait LibraryInterface: Send + Sync {
     ///
     /// For example, IF/THEN/ELSE returns [[1, 2]] meaning branches 1 (then)
     /// and 2 (else) are alternatives. The analyzer will:
-    /// 1. Visit branch 0 (condition) normally
+    /// 1. Skip branch 0 (condition - already evaluated, captured in construct)
     /// 2. Save stack state
     /// 3. Visit branch 1, record resulting stack
     /// 4. Restore stack state
@@ -650,6 +650,19 @@ pub trait LibraryInterface: Send + Sync {
     ///
     /// Returns empty vec if all branches are sequential.
     fn alternative_branches(&self, _construct_id: u16, _num_branches: usize) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+
+    /// Get the indices of capture branches for a construct.
+    ///
+    /// Capture branches contain expressions that were already evaluated before
+    /// the construct keyword (e.g., the condition in IF). These branches should
+    /// NOT be walked by the analyzer because they would duplicate side effects.
+    ///
+    /// Returns the indices of branches that contain pre-captured values.
+    /// For example, IF has `cond:Int` captured before IF, so capture_branches
+    /// returns [0] (branch 0 contains the condition).
+    fn capture_branches(&self, _construct_id: u16) -> Vec<usize> {
         Vec::new()
     }
 

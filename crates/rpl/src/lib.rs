@@ -75,6 +75,7 @@ pub use session::{AnalysisSession, Runtime, Session, SessionConfig, EvalError};
 pub use session::lsp;
 pub use session::debug as debug_helpers;
 pub use vm::{DebugState, DebugMode, DebugEvent, ExecuteOutcome, ReturnEntry};
+pub use vm::disasm::{disassemble, disassemble_one, DisassembledInstr, DisassembledProgram};
 
 // Re-export VM types from rpl-vm for convenience
 // These are the authoritative definitions; our local modules will transition to use these
@@ -115,7 +116,7 @@ pub fn eval_with_registries(
         .map_err(|e| format!("parse error: {}", e))?;
 
     // Analyze for type-directed lowering
-    let analysis = analysis::analyze(&nodes, interfaces, &interner);
+    let analysis = analysis::analyze(&nodes, interfaces, &interner, &analysis::Context::empty());
 
     // Lower
     let program = lower::lower(&nodes, interfaces, lowerers, &interner, &analysis)

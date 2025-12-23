@@ -3,18 +3,15 @@
 use std::sync::{Arc, OnceLock};
 
 use rpl::{
+    Span,
     interface::InterfaceSpec,
     ir::LibId,
     libs::{ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryLowerer},
     lower::{LowerContext, LowerError},
     value::Value,
-    Span,
 };
 
-use crate::decode::decode;
-use crate::encode::encode;
-use crate::plot::Plot;
-use crate::types::Color;
+use crate::{decode::decode, encode::encode, plot::Plot, types::Color};
 
 /// Interface declaration.
 const INTERFACE: &str = include_str!("vector-plot.rpli");
@@ -387,10 +384,8 @@ impl LibraryExecutor for VectorPlotLib {
                 let b = pop_color(ctx)?;
                 let g = pop_color(ctx)?;
                 let r = pop_color(ctx)?;
-                let packed = ((r as u32) << 24)
-                    | ((g as u32) << 16)
-                    | ((b as u32) << 8)
-                    | (a as u32);
+                let packed =
+                    ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32);
                 ctx.push(Value::Integer(packed as i64))?;
                 Ok(ExecuteAction::ok())
             }
@@ -410,7 +405,6 @@ pub fn register_vector_plot_lib(session: &mut rpl::Session) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rpl::libs::LibraryInterface;
 
     #[test]
     fn vector_plot_lib_id() {

@@ -56,9 +56,11 @@ pub fn stdlib_registries() -> (InterfaceRegistry, LowererRegistry, ExecutorRegis
     let mut interfaces = InterfaceRegistry::new();
     let mut lowerers = LowererRegistry::new();
     let mut executors = ExecutorRegistry::new();
+
     register_interfaces(&mut interfaces);
     register_lowerers(&mut lowerers);
     register_executors(&mut executors);
+
     (interfaces, lowerers, executors)
 }
 
@@ -146,7 +148,7 @@ mod tests {
         register_interfaces(&mut registry);
         let mut interner = rpl::core::Interner::new();
         let nodes = rpl::parse::parse(source, &registry, &mut interner).expect("parse failed");
-        rpl::analysis::analyze(&nodes, &registry, &interner)
+        rpl::analysis::analyze(&nodes, &registry, &interner, &rpl::analysis::Context::empty())
     }
 
     #[test]

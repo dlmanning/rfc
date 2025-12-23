@@ -30,6 +30,7 @@ mod libraries;
 mod lists;
 mod literals;
 mod programs;
+mod projects;
 mod stack;
 mod strings;
 mod symbolic;

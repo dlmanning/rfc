@@ -1,0 +1,5 @@
+[project]
+name = "hello"
+entry = "main"
+version = "0.1.0"
+author = "Test Author"

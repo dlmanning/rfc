@@ -138,8 +138,7 @@ impl LibraryExecutor for ArithLib {
 
 // Execution helpers
 
-/// Numeric addition and string concatenation.
-/// List operations should use ADD from the List library.
+/// Numeric addition, string concatenation, and list operations.
 fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
     let b = ctx.pop()?;
     let a = ctx.pop()?;
@@ -153,7 +152,25 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         (Value::String(a), Value::String(b)) => {
             Value::string(format!("{}{}", a.as_ref(), b.as_ref()))
         }
-        _ => return Err("Type error: expected numbers or strings".into()),
+        // List concatenation
+        (Value::List(a), Value::List(b)) => {
+            let mut result: Vec<Value> = a.iter().cloned().collect();
+            result.extend(b.iter().cloned());
+            Value::list(result)
+        }
+        // List append (list + element)
+        (Value::List(a), elem) => {
+            let mut result: Vec<Value> = a.iter().cloned().collect();
+            result.push(elem);
+            Value::list(result)
+        }
+        // List prepend (element + list)
+        (elem, Value::List(b)) => {
+            let mut result = vec![elem];
+            result.extend(b.iter().cloned());
+            Value::list(result)
+        }
+        _ => return Err("Type error: expected numbers, strings, or lists".into()),
     };
     ctx.push(result)?;
     Ok(ExecuteAction::ok())

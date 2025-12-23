@@ -27,6 +27,7 @@
 
 use crate::core::{Interner, Pos, Span};
 
+use super::context::Context;
 use super::result::AnalysisResult;
 use super::scopes::ScopeId;
 use super::analyze;
@@ -108,10 +109,15 @@ pub struct IncrementalAnalysis {
 
 impl IncrementalAnalysis {
     /// Create a new incremental analysis state from source.
-    pub fn new(source: &str, registry: &InterfaceRegistry, interner: &mut Interner) -> Self {
+    pub fn new(
+        source: &str,
+        registry: &InterfaceRegistry,
+        interner: &mut Interner,
+        context: &Context,
+    ) -> Self {
         let nodes = parse(source, registry, interner).unwrap_or_default();
 
-        let result = analyze(&nodes, registry, interner);
+        let result = analyze(&nodes, registry, interner, context);
         let scope_cache = build_scope_cache(&result);
 
         Self {
@@ -151,6 +157,7 @@ impl IncrementalAnalysis {
         edit: SpanEdit,
         registry: &InterfaceRegistry,
         interner: &mut Interner,
+        context: &Context,
     ) {
         // 1. Update source text
         self.apply_source_edit(&edit);
@@ -163,10 +170,10 @@ impl IncrementalAnalysis {
 
         if can_do_incremental {
             // Incremental update
-            self.incremental_update(&edit, stable_scope, registry, interner);
+            self.incremental_update(&edit, stable_scope, registry, interner, context);
         } else {
             // Full re-parse and re-analyze
-            self.full_update(registry, interner);
+            self.full_update(registry, interner, context);
         }
 
         // 4. Increment version
@@ -182,6 +189,7 @@ impl IncrementalAnalysis {
         mut edits: Vec<SpanEdit>,
         registry: &InterfaceRegistry,
         interner: &mut Interner,
+        context: &Context,
     ) {
         if edits.is_empty() {
             return;
@@ -196,7 +204,7 @@ impl IncrementalAnalysis {
             self.apply_source_edit(&edit);
         }
 
-        self.full_update(registry, interner);
+        self.full_update(registry, interner, context);
         self.version += 1;
     }
 
@@ -269,6 +277,7 @@ impl IncrementalAnalysis {
         _stable_scope: Option<ScopeId>,
         registry: &InterfaceRegistry,
         interner: &mut Interner,
+        context: &Context,
     ) {
         // For the initial implementation, fall back to full update.
         // A more sophisticated implementation would:
@@ -283,14 +292,14 @@ impl IncrementalAnalysis {
         // - Symbol resolution might be affected by changes in outer scopes
         //
         // For now, do a full update which is correct if not optimal.
-        self.full_update(registry, interner);
+        self.full_update(registry, interner, context);
     }
 
     /// Perform a full re-parse and re-analyze.
-    fn full_update(&mut self, registry: &InterfaceRegistry, interner: &mut Interner) {
+    fn full_update(&mut self, registry: &InterfaceRegistry, interner: &mut Interner, context: &Context) {
         self.nodes = parse(&self.source, registry, interner).unwrap_or_default();
 
-        self.result = analyze(&self.nodes, registry, interner);
+        self.result = analyze(&self.nodes, registry, interner, context);
         self.scope_cache = build_scope_cache(&self.result);
     }
 }
@@ -442,7 +451,7 @@ mod tests {
         let registry = make_registry();
         let mut interner = Interner::new();
 
-        let state = IncrementalAnalysis::new("1 2 +", &registry, &mut interner);
+        let state = IncrementalAnalysis::new("1 2 +", &registry, &mut interner, &Context::empty());
 
         assert_eq!(state.source(), "1 2 +");
         assert_eq!(state.version(), 0);
@@ -453,12 +462,13 @@ mod tests {
     fn incremental_analysis_apply_edit() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("1 2 +", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("1 2 +", &registry, &mut interner, &context);
         assert_eq!(state.version(), 0);
 
         // Replace "2" with "3"
-        state.apply_edit(SpanEdit::new(2, 3, "3".into()), &registry, &mut interner);
+        state.apply_edit(SpanEdit::new(2, 3, "3".into()), &registry, &mut interner, &context);
 
         assert_eq!(state.source(), "1 3 +");
         assert_eq!(state.version(), 1);
@@ -468,11 +478,12 @@ mod tests {
     fn incremental_analysis_insert() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("1 2", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("1 2", &registry, &mut interner, &context);
 
         // Insert " +" at end
-        state.apply_edit(SpanEdit::insert(3, " +".into()), &registry, &mut interner);
+        state.apply_edit(SpanEdit::insert(3, " +".into()), &registry, &mut interner, &context);
 
         assert_eq!(state.source(), "1 2 +");
     }
@@ -481,11 +492,12 @@ mod tests {
     fn incremental_analysis_delete() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("1 2 3 +", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("1 2 3 +", &registry, &mut interner, &context);
 
         // Delete " 2"
-        state.apply_edit(SpanEdit::delete(1, 3), &registry, &mut interner);
+        state.apply_edit(SpanEdit::delete(1, 3), &registry, &mut interner, &context);
 
         assert_eq!(state.source(), "1 3 +");
     }
@@ -494,14 +506,15 @@ mod tests {
     fn incremental_analysis_sto_pattern() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
 
         // Should have one definition
         assert_eq!(state.result().definition_count(), 1);
 
         // Change value from 42 to 100
-        state.apply_edit(SpanEdit::new(0, 2, "100".into()), &registry, &mut interner);
+        state.apply_edit(SpanEdit::new(0, 2, "100".into()), &registry, &mut interner, &context);
 
         assert_eq!(state.source(), "100 \"x\" STO");
         // Should still have one definition
@@ -512,8 +525,9 @@ mod tests {
     fn incremental_analysis_add_definition() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
         assert_eq!(state.result().definition_count(), 1);
 
         // Add another definition
@@ -522,6 +536,7 @@ mod tests {
             SpanEdit::insert(source_len, " 10 \"y\" STO".into()),
             &registry,
             &mut interner,
+            &context,
         );
 
         assert_eq!(state.source(), "42 \"x\" STO 10 \"y\" STO");
@@ -533,15 +548,16 @@ mod tests {
     fn incremental_analysis_multiple_edits() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("1 2 3", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("1 2 3", &registry, &mut interner, &context);
 
         // Apply multiple edits at once
         let edits = vec![
             SpanEdit::new(0, 1, "10".into()),  // 1 -> 10
             SpanEdit::new(4, 5, "30".into()),  // 3 -> 30
         ];
-        state.apply_edits(edits, &registry, &mut interner);
+        state.apply_edits(edits, &registry, &mut interner, &context);
 
         // Note: edits are applied from end to start
         assert_eq!(state.source(), "10 2 30");
@@ -578,14 +594,15 @@ mod tests {
     fn version_increments() {
         let registry = make_registry();
         let mut interner = Interner::new();
+        let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("1", &registry, &mut interner);
+        let mut state = IncrementalAnalysis::new("1", &registry, &mut interner, &context);
         assert_eq!(state.version(), 0);
 
-        state.apply_edit(SpanEdit::new(0, 1, "2".into()), &registry, &mut interner);
+        state.apply_edit(SpanEdit::new(0, 1, "2".into()), &registry, &mut interner, &context);
         assert_eq!(state.version(), 1);
 
-        state.apply_edit(SpanEdit::new(0, 1, "3".into()), &registry, &mut interner);
+        state.apply_edit(SpanEdit::new(0, 1, "3".into()), &registry, &mut interner, &context);
         assert_eq!(state.version(), 2);
     }
 }

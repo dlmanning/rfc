@@ -326,6 +326,7 @@ impl<'a> Traverser<'a> {
         // If stack type is Unknown (e.g., program parameters), use a TypeVar
         // so constraint resolution can narrow it based on usage.
         let param_count = bindings.len();
+
         let param_types: Vec<Type> = if is_loop {
             vec![Type::Known(TypeId::BINT); param_count]
         } else {
@@ -391,9 +392,12 @@ impl<'a> Traverser<'a> {
         }
 
         // Walk non-binding branches (body branches only)
+        // Skip: bindings (metadata), captures (already evaluated before construct keyword)
         let binding_set: std::collections::HashSet<_> = binding_indices.iter().copied().collect();
+        let capture_indices = iface.map(|i| i.capture_branches(construct_id)).unwrap_or_default();
+        let capture_set: std::collections::HashSet<_> = capture_indices.iter().copied().collect();
         for (idx, branch) in branches.iter().enumerate() {
-            if !binding_set.contains(&idx) {
+            if !binding_set.contains(&idx) && !capture_set.contains(&idx) {
                 walk_nodes(self, branch);
             }
         }
@@ -494,10 +498,14 @@ impl<'a> Traverser<'a> {
             .flat_map(|group| group.iter().copied())
             .collect();
         let binding_set: std::collections::HashSet<_> = binding_indices.iter().copied().collect();
+        // Capture branches contain already-evaluated code (e.g., IF condition) - skip them
+        let capture_indices = iface.map(|i| i.capture_branches(construct_id)).unwrap_or_default();
+        let capture_set: std::collections::HashSet<_> = capture_indices.iter().copied().collect();
 
         // Walk non-alternative branches first (body branches)
+        // Skip: alternatives (handled separately), bindings (metadata only), captures (already evaluated)
         for (idx, branch) in branches.iter().enumerate() {
-            if !alternative_set.contains(&idx) && !binding_set.contains(&idx) {
+            if !alternative_set.contains(&idx) && !binding_set.contains(&idx) && !capture_set.contains(&idx) {
                 walk_nodes(self, branch);
             }
         }

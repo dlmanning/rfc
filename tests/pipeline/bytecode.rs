@@ -8,7 +8,7 @@ use rpl::core::Interner;
 use rpl::lower::{lower, CompiledProgram};
 use rpl::parse::parse;
 use rpl::registry::{InterfaceRegistry, LowererRegistry};
-use rpl::vm::disasm::{disassemble, DisassembledInstr};
+use rpl::vm::disasm::{disassemble, DisassembledInstr, DisassembledProgram};
 
 /// Compile RPL source to bytecode.
 fn compile(source: &str) -> CompiledProgram {
@@ -20,7 +20,7 @@ fn compile(source: &str) -> CompiledProgram {
     rpl_stdlib::register_lowerers(&mut lowerers);
 
     let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-    let analysis = analyze(&nodes, &interfaces, &interner);
+    let analysis = analyze(&nodes, &interfaces, &interner, &rpl::analysis::Context::empty());
 
     lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lowering failed")
 }
@@ -438,4 +438,21 @@ fn factorial_fixture_bytecode() {
         "Instructions not in expected order: MakeProgram@{:?}, StringConst@{:?}, STO@{:?}, I64Const5@{:?}, EvalName@{:?}",
         make_prog_idx, string_idx, sto_idx, const5_idx, eval_idx
     );
+}
+
+#[test]
+fn format_disassembly_output() {
+    let source = include_str!("../programs/factorial.rpl");
+    let program = compile(source);
+    let disasm = DisassembledProgram::from_compiled(&program, Some("factorial"));
+    let output = disasm.to_string();
+    eprintln!("\n{}", output);
+
+    // Verify output contains expected structure
+    assert!(output.contains("factorial:"));
+    assert!(output.contains("MakeProgram"));
+    // Block nesting should have │ characters
+    assert!(output.contains("│"));
+    // Should have rodata section
+    assert!(output.contains("[rodata:"));
 }

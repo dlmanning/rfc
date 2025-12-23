@@ -1,0 +1,195 @@
+package rpl:ide;
+
+// ============================================================================
+// Core Types
+// ============================================================================
+
+interface types {
+    /// Position in source (1-based line and column)
+    record position {
+        line: u32,
+        character: u32,
+    }
+
+    /// Range in source
+    record range {
+        start: position,
+        end: position,
+    }
+
+    /// Diagnostic severity
+    enum severity {
+        error,
+        warning,
+        hint,
+    }
+
+    /// A diagnostic message
+    record diagnostic {
+        range: range,
+        severity: severity,
+        message: string,
+    }
+
+    /// Value on the stack
+    record stack-value {
+        type-name: string,
+        display: string,
+    }
+
+    /// Execution result
+    record eval-result {
+        stack: list<stack-value>,
+        error: option<string>,
+    }
+
+    /// Project tree node (flat - no recursive children in WIT)
+    record tree-node {
+        key: string,
+        name: string,
+        signature: option<string>,
+    }
+
+    /// Semantic token types (matches VS Code's standard types)
+    enum token-type {
+        comment,
+        keyword,
+        number,
+        string-literal,
+        operator,
+        function,
+        variable,
+        parameter,
+        type-name,
+        property,
+    }
+
+    /// Symbol kind for outline view
+    enum symbol-kind {
+        function,
+        variable,
+        local,
+        loop-variable,
+    }
+
+    /// A document symbol for outline view
+    record document-symbol {
+        name: string,
+        detail: option<string>,
+        kind: symbol-kind,
+        range: range,
+        selection-range: range,
+    }
+
+    /// A semantic token for syntax highlighting
+    record semantic-token {
+        line: u32,
+        start: u32,
+        length: u32,
+        token-type: token-type,
+    }
+
+    /// Hover information
+    record hover-info {
+        /// Markdown content to display
+        contents: string,
+        /// Range of the hovered element
+        range: range,
+    }
+
+}
+
+// ============================================================================
+// Single File Operations
+// ============================================================================
+
+interface file {
+    use types.{diagnostic, eval-result, semantic-token, hover-info, position, document-symbol};
+
+    /// Check a file for errors (no execution)
+    /// Auto-detects and uses project context if file is in a project
+    check: func(content: string, file-path: option<string>) -> list<diagnostic>;
+
+    /// Run a file and return result
+    /// If file is in a project, runs the project's entry point
+    /// Otherwise runs as standalone script
+    run: func(content: string, file-path: option<string>) -> eval-result;
+
+    /// Get semantic tokens for syntax highlighting
+    tokens: func(content: string) -> list<semantic-token>;
+
+    /// Get hover information at a position
+    /// Auto-detects and uses project context if file is in a project
+    hover: func(content: string, pos: position, file-path: option<string>) -> option<hover-info>;
+
+    /// Get document symbols for outline view
+    symbols: func(content: string) -> list<document-symbol>;
+
+    /// Get the project root for a file (if any)
+    /// Also ensures the project is loaded
+    project-path: func(file-path: string) -> option<string>;
+
+    /// Disassemble bytecode and return formatted text
+    /// If file-path is in a project, includes all project entries
+    /// Otherwise includes just the compiled file content
+    disassemble: func(content: string, file-path: option<string>) -> string;
+}
+
+// ============================================================================
+// Project Operations
+// ============================================================================
+
+interface project {
+    use types.{diagnostic, eval-result, tree-node};
+
+    /// List all currently loaded project paths
+    list-open: func() -> list<string>;
+
+    /// Open a project by directory path (loads and caches it)
+    open: func(path: string) -> result<_, string>;
+
+    /// Get project diagnostics (cross-file analysis)
+    diagnostics: func(path: string) -> list<diagnostic>;
+
+    /// Get project tree for outline view
+    tree: func(path: string) -> list<tree-node>;
+
+    /// Get signature for a project entry
+    signature: func(path: string, key: string) -> option<string>;
+
+    /// Run the project entry point
+    run: func(path: string) -> eval-result;
+
+    /// Reload project from disk
+    reload: func(path: string);
+
+    /// Close the project (remove from cache)
+    close: func(path: string);
+}
+
+// ============================================================================
+// REPL / Interactive Session
+// ============================================================================
+
+interface repl {
+    use types.{eval-result, stack-value};
+
+    /// Evaluate code (preserves stack between calls)
+    evaluate: func(code: string) -> eval-result;
+
+    /// Get current stack
+    stack: func() -> list<stack-value>;
+
+    /// Reset session (clear stack)
+    reset: func();
+}
+
+// ============================================================================
+// World Definition
+// ============================================================================
+
+world ide {
+    export file;
+    export project;
+    export repl;
+}

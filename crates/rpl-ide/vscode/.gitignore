@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Compiled TypeScript
+out/
+
+# Generated WASM component
+wasm/
+
+# Generated jco transpile output
+src/rpl-ide/

@@ -1,0 +1,189 @@
+{
+  "name": "rpl-vscode",
+  "displayName": "RPL",
+  "description": "RPL language support",
+  "version": "0.1.0",
+  "publisher": "rpl",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:rpl",
+    "workspaceContains:**/project.toml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "rpl",
+        "extensions": [
+          ".rpl"
+        ],
+        "aliases": [
+          "RPL"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "rpl.runFile",
+        "title": "RPL: Run File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "rpl.runProject",
+        "title": "RPL: Run Project",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "rpl.openRepl",
+        "title": "RPL: Open REPL"
+      },
+      {
+        "command": "rpl.disassemble",
+        "title": "RPL: Show Disassembly",
+        "icon": "$(file-binary)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "rpl.runFile",
+          "when": "resourceLangId == rpl",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "rpl.runFile",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "resourceLangId == rpl"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "rplProjectOutline",
+          "name": "RPL Project",
+          "when": "rpl.hasProject"
+        }
+      ]
+    },
+    "semanticTokenTypes": [
+      {
+        "id": "comment",
+        "description": "Comment"
+      },
+      {
+        "id": "keyword",
+        "description": "Keyword"
+      },
+      {
+        "id": "number",
+        "description": "Number literal"
+      },
+      {
+        "id": "string",
+        "description": "String literal"
+      },
+      {
+        "id": "operator",
+        "description": "Operator"
+      },
+      {
+        "id": "function",
+        "description": "Function/Command"
+      },
+      {
+        "id": "variable",
+        "description": "Variable"
+      },
+      {
+        "id": "parameter",
+        "description": "Parameter"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "scopes": {
+          "comment": [
+            "comment.line.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "keyword": [
+            "keyword.control.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "number": [
+            "constant.numeric.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "string": [
+            "string.quoted.double.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "operator": [
+            "keyword.operator.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "function": [
+            "entity.name.function.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "variable": [
+            "variable.other.rpl"
+          ]
+        }
+      },
+      {
+        "scopes": {
+          "parameter": [
+            "variable.parameter.rpl"
+          ]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build:wasm": "cargo build -p rpl-ide --target wasm32-wasip2 --release && cp ../../../target/wasm32-wasip2/release/rpl_ide.wasm wasm/",
+    "transpile": "jco transpile wasm/rpl_ide.wasm -o src/rpl-ide --instantiation async",
+    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:@bytecodealliance/preview2-shim --format=cjs --platform=node",
+    "build": "npm run build:wasm && npm run transpile && npm run build:ext",
+    "watch": "npm run build:ext -- --watch",
+    "check": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@bytecodealliance/preview2-shim": "^0.17.5"
+  },
+  "devDependencies": {
+    "@bytecodealliance/jco": "^1.4.0",
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.27",
+    "typescript": "^5.3.0"
+  }
+}

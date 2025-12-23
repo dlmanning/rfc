@@ -71,3 +71,11 @@ fn fixture_symbolic() {
     // Should have 3 symbolic objects on the stack
     assert_eq!(values.len(), 3);
 }
+
+#[test]
+fn fixture_quicksort() {
+    let code = include_str!("../programs/quicksort.rpl");
+    let values = eval_to_values(code);
+    // Should have 1 sorted list on the stack
+    assert_eq!(values.len(), 1);
+}

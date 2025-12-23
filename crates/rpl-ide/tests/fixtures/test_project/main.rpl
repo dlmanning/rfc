@@ -1,0 +1,4 @@
+@ Test project entry point
+@ Calls lib/square when executed
+
+<< 5 lib/square >>

@@ -312,6 +312,15 @@ impl Substitution {
             self.insert(var, ty);
         }
     }
+
+    /// Extend this substitution with bindings from another.
+    ///
+    /// Uses unify semantics: if a variable is bound in both, the types are joined.
+    pub fn extend(&mut self, other: Substitution) {
+        for (var, ty) in other.map {
+            self.unify(var, ty);
+        }
+    }
 }
 
 /// Traversal context carrying state through analysis.

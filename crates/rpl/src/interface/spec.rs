@@ -410,16 +410,43 @@ fn compile_pattern(slots: &[PatternElement]) -> Parser {
 
 /// Count how many stack values are consumed by pattern captures.
 ///
-/// Only Binding elements ($name:Sym) consume values from the stack before
-/// the construct runs. Slot elements (like cond:Int) capture EXPRESSIONS
-/// that are parsed and executed as part of the construct, not values
-/// consumed from the stack.
-fn count_pattern_stack_captures(_slots: &[PatternElement]) -> u8 {
-    // Slots capture parsed expressions (not stack values)
-    // Bindings consume from stack, but they're handled separately
-    // by handle_bindings in the analyzer.
-    // So pattern_consumes is always 0 for syntax constructs.
-    0
+/// Slots that appear BEFORE the first keyword in a pattern represent
+/// values that were already on the stack before the construct keyword,
+/// BUT only if they are value types (Int, Real, Str, List, etc.).
+///
+/// Prog slots represent code to be parsed, not stack values.
+/// For example, in IF pattern `IF cond:Int THEN body:Prog ...`:
+/// - `cond:Int` is a value type before THEN, so it captures a stack value
+/// - `body:Prog` is a code type, so it parses expressions (not a stack capture)
+///
+/// For START pattern `START body:Prog (NEXT|STEP!)`:
+/// - `body:Prog` is a code type, so no stack captures from the pattern
+/// - The Int Int inputs before `->` are handled separately via decl.inputs
+///
+/// This count is used by construct_effect to know how many values
+/// the construct consumes from the stack.
+fn count_pattern_stack_captures(slots: &[PatternElement]) -> u8 {
+    use crate::interface::ast::ConcreteType;
+
+    let mut count = 0u8;
+    for slot in slots {
+        match slot {
+            // Stop counting at the first keyword
+            PatternElement::Keyword(_)
+            | PatternElement::OptionalKeyword(_)
+            | PatternElement::KeywordWithCapture(_)
+            | PatternElement::OptionalKeywordWithCapture(_) => break,
+            // Count non-Prog Slot elements before the first keyword
+            // Prog slots are parsed code, not stack values
+            PatternElement::Slot { typ, .. } if *typ != ConcreteType::Prog => count += 1,
+            PatternElement::Slot { .. } => {} // Prog slot - skip
+            // Bindings are handled separately by the analyzer
+            PatternElement::Binding { .. } => {}
+            // Skip nested structures for now (they'd contain keywords)
+            PatternElement::Repeat(_) | PatternElement::Alternation(_) => break,
+        }
+    }
+    count
 }
 
 /// Compile pattern elements with outer terminator context.
@@ -1348,6 +1375,17 @@ impl LibraryInterface for InterfaceSpec {
 
         // Analyze the parser to find alternative branch groups
         compute_alternative_groups(&decl.parser, num_branches)
+    }
+
+    fn capture_branches(&self, construct_id: u16) -> Vec<usize> {
+        let decl = match self.syntax.iter().find(|s| s.id == construct_id) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+
+        // Capture branches are the first `pattern_consumes` branches.
+        // These contain expressions that were already evaluated before the construct.
+        (0..decl.pattern_consumes as usize).collect()
     }
 
     fn construct_effect(&self, construct_id: u16) -> StackEffect {

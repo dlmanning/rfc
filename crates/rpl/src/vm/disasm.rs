@@ -3,9 +3,56 @@
 //! Converts VM bytecode to human-readable instruction format for
 //! use in debugger disassembly views.
 
+use std::fmt::{self, Display, Formatter};
+
 use super::bytecode::{
     BlockType, CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
 };
+use crate::lower::CompiledProgram;
+use crate::value::ProgramData;
+
+/// A disassembled program with rodata and instructions.
+#[derive(Clone, Debug)]
+pub struct DisassembledProgram {
+    /// Optional name for the program.
+    pub name: Option<String>,
+    /// Read-only data section.
+    pub rodata: Vec<u8>,
+    /// Disassembled instructions.
+    pub instructions: Vec<DisassembledInstr>,
+}
+
+impl DisassembledProgram {
+    /// Disassemble a compiled program with an optional name.
+    pub fn from_compiled(program: &CompiledProgram, name: Option<&str>) -> Self {
+        Self {
+            name: name.map(String::from),
+            rodata: program.rodata.clone(),
+            instructions: disassemble(&program.code, 0, program.code.len()),
+        }
+    }
+
+    /// Disassemble program data (runtime value) with an optional name.
+    pub fn from_program_data(program: &ProgramData, name: Option<&str>) -> Self {
+        Self {
+            name: name.map(String::from),
+            rodata: program.rodata.to_vec(),
+            instructions: disassemble(&program.code, 0, program.code.len()),
+        }
+    }
+}
+
+impl From<&CompiledProgram> for DisassembledProgram {
+    fn from(program: &CompiledProgram) -> Self {
+        Self::from_compiled(program, None)
+    }
+}
+
+impl From<&ProgramData> for DisassembledProgram {
+    fn from(program: &ProgramData) -> Self {
+        Self::from_program_data(program, None)
+    }
+}
 
 /// A disassembled instruction.
 #[derive(Clone, Debug)]
@@ -18,6 +65,8 @@ pub struct DisassembledInstr {
     pub text: String,
     /// Raw bytes as hex string (e.g., "42 2A").
     pub bytes: String,
+    /// Nested instructions (for MakeProgram/MakeFunction).
+    pub nested: Option<Vec<DisassembledInstr>>,
 }
 
 /// Disassemble instructions from bytecode.
@@ -43,6 +92,7 @@ pub fn disassemble(code: &[u8], start_pc: usize, count: usize) -> Vec<Disassembl
                 size: 1,
                 text: format!("??? 0x{:02X}", byte),
                 bytes: format!("{:02X}", byte),
+                nested: None,
             });
             pc += 1;
         }
@@ -66,9 +116,9 @@ pub fn disassemble_one(code: &[u8], pc: usize) -> Option<(DisassembledInstr, usi
     offset += 1;
 
     let opcode = Opcode::from_byte(opcode_byte);
-    let (text, next_offset) = match opcode {
+    let (text, next_offset, nested) = match opcode {
         Some(op) => disassemble_opcode(op, code, offset),
-        None => (format!("??? 0x{:02X}", opcode_byte), offset),
+        None => (format!("??? 0x{:02X}", opcode_byte), offset, None),
     };
 
     let size = next_offset - start_pc;
@@ -80,6 +130,7 @@ pub fn disassemble_one(code: &[u8], pc: usize) -> Option<(DisassembledInstr, usi
             size,
             text,
             bytes,
+            nested,
         },
         next_offset,
     ))
@@ -95,88 +146,89 @@ fn format_bytes(bytes: &[u8]) -> String {
 }
 
 /// Disassemble a known opcode with its operands.
-fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, usize) {
+/// Returns (text, next_offset, nested_instructions).
+fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, usize, Option<Vec<DisassembledInstr>>) {
     match op {
         // No operands
-        Opcode::Unreachable => ("Unreachable".into(), offset),
-        Opcode::Nop => ("Nop".into(), offset),
-        Opcode::Else => ("Else".into(), offset),
-        Opcode::End => ("End".into(), offset),
-        Opcode::Return => ("Return".into(), offset),
-        Opcode::Drop => ("Drop".into(), offset),
-        Opcode::Select => ("Select".into(), offset),
-        Opcode::ThrowRef => ("ThrowRef".into(), offset),
-        Opcode::PopLocalScope => ("PopLocalScope".into(), offset),
+        Opcode::Unreachable => ("Unreachable".into(), offset, None),
+        Opcode::Nop => ("Nop".into(), offset, None),
+        Opcode::Else => ("Else".into(), offset, None),
+        Opcode::End => ("End".into(), offset, None),
+        Opcode::Return => ("Return".into(), offset, None),
+        Opcode::Drop => ("Drop".into(), offset, None),
+        Opcode::Select => ("Select".into(), offset, None),
+        Opcode::ThrowRef => ("ThrowRef".into(), offset, None),
+        Opcode::PopLocalScope => ("PopLocalScope".into(), offset, None),
 
         // i64 comparison (no operands)
-        Opcode::I64Eqz => ("I64Eqz".into(), offset),
-        Opcode::I64Eq => ("I64Eq".into(), offset),
-        Opcode::I64Ne => ("I64Ne".into(), offset),
-        Opcode::I64LtS => ("I64LtS".into(), offset),
-        Opcode::I64LtU => ("I64LtU".into(), offset),
-        Opcode::I64GtS => ("I64GtS".into(), offset),
-        Opcode::I64GtU => ("I64GtU".into(), offset),
-        Opcode::I64LeS => ("I64LeS".into(), offset),
-        Opcode::I64LeU => ("I64LeU".into(), offset),
-        Opcode::I64GeS => ("I64GeS".into(), offset),
-        Opcode::I64GeU => ("I64GeU".into(), offset),
+        Opcode::I64Eqz => ("I64Eqz".into(), offset, None),
+        Opcode::I64Eq => ("I64Eq".into(), offset, None),
+        Opcode::I64Ne => ("I64Ne".into(), offset, None),
+        Opcode::I64LtS => ("I64LtS".into(), offset, None),
+        Opcode::I64LtU => ("I64LtU".into(), offset, None),
+        Opcode::I64GtS => ("I64GtS".into(), offset, None),
+        Opcode::I64GtU => ("I64GtU".into(), offset, None),
+        Opcode::I64LeS => ("I64LeS".into(), offset, None),
+        Opcode::I64LeU => ("I64LeU".into(), offset, None),
+        Opcode::I64GeS => ("I64GeS".into(), offset, None),
+        Opcode::I64GeU => ("I64GeU".into(), offset, None),
 
         // f64 comparison (no operands)
-        Opcode::F64Eq => ("F64Eq".into(), offset),
-        Opcode::F64Ne => ("F64Ne".into(), offset),
-        Opcode::F64Lt => ("F64Lt".into(), offset),
-        Opcode::F64Gt => ("F64Gt".into(), offset),
-        Opcode::F64Le => ("F64Le".into(), offset),
-        Opcode::F64Ge => ("F64Ge".into(), offset),
+        Opcode::F64Eq => ("F64Eq".into(), offset, None),
+        Opcode::F64Ne => ("F64Ne".into(), offset, None),
+        Opcode::F64Lt => ("F64Lt".into(), offset, None),
+        Opcode::F64Gt => ("F64Gt".into(), offset, None),
+        Opcode::F64Le => ("F64Le".into(), offset, None),
+        Opcode::F64Ge => ("F64Ge".into(), offset, None),
 
         // i64 arithmetic (no operands)
-        Opcode::I64Add => ("I64Add".into(), offset),
-        Opcode::I64Sub => ("I64Sub".into(), offset),
-        Opcode::I64Mul => ("I64Mul".into(), offset),
-        Opcode::I64DivS => ("I64DivS".into(), offset),
-        Opcode::I64DivU => ("I64DivU".into(), offset),
-        Opcode::I64RemS => ("I64RemS".into(), offset),
-        Opcode::I64RemU => ("I64RemU".into(), offset),
-        Opcode::I64And => ("I64And".into(), offset),
-        Opcode::I64Or => ("I64Or".into(), offset),
-        Opcode::I64Xor => ("I64Xor".into(), offset),
-        Opcode::I64Shl => ("I64Shl".into(), offset),
-        Opcode::I64ShrS => ("I64ShrS".into(), offset),
-        Opcode::I64ShrU => ("I64ShrU".into(), offset),
+        Opcode::I64Add => ("I64Add".into(), offset, None),
+        Opcode::I64Sub => ("I64Sub".into(), offset, None),
+        Opcode::I64Mul => ("I64Mul".into(), offset, None),
+        Opcode::I64DivS => ("I64DivS".into(), offset, None),
+        Opcode::I64DivU => ("I64DivU".into(), offset, None),
+        Opcode::I64RemS => ("I64RemS".into(), offset, None),
+        Opcode::I64RemU => ("I64RemU".into(), offset, None),
+        Opcode::I64And => ("I64And".into(), offset, None),
+        Opcode::I64Or => ("I64Or".into(), offset, None),
+        Opcode::I64Xor => ("I64Xor".into(), offset, None),
+        Opcode::I64Shl => ("I64Shl".into(), offset, None),
+        Opcode::I64ShrS => ("I64ShrS".into(), offset, None),
+        Opcode::I64ShrU => ("I64ShrU".into(), offset, None),
 
         // f64 arithmetic (no operands)
-        Opcode::F64Abs => ("F64Abs".into(), offset),
-        Opcode::F64Neg => ("F64Neg".into(), offset),
-        Opcode::F64Ceil => ("F64Ceil".into(), offset),
-        Opcode::F64Floor => ("F64Floor".into(), offset),
-        Opcode::F64Trunc => ("F64Trunc".into(), offset),
-        Opcode::F64Sqrt => ("F64Sqrt".into(), offset),
-        Opcode::F64Add => ("F64Add".into(), offset),
-        Opcode::F64Sub => ("F64Sub".into(), offset),
-        Opcode::F64Mul => ("F64Mul".into(), offset),
-        Opcode::F64Div => ("F64Div".into(), offset),
+        Opcode::F64Abs => ("F64Abs".into(), offset, None),
+        Opcode::F64Neg => ("F64Neg".into(), offset, None),
+        Opcode::F64Ceil => ("F64Ceil".into(), offset, None),
+        Opcode::F64Floor => ("F64Floor".into(), offset, None),
+        Opcode::F64Trunc => ("F64Trunc".into(), offset, None),
+        Opcode::F64Sqrt => ("F64Sqrt".into(), offset, None),
+        Opcode::F64Add => ("F64Add".into(), offset, None),
+        Opcode::F64Sub => ("F64Sub".into(), offset, None),
+        Opcode::F64Mul => ("F64Mul".into(), offset, None),
+        Opcode::F64Div => ("F64Div".into(), offset, None),
 
         // Conversions (no operands)
-        Opcode::F64ConvertI64S => ("F64ConvertI64S".into(), offset),
-        Opcode::I64TruncF64S => ("I64TruncF64S".into(), offset),
+        Opcode::F64ConvertI64S => ("F64ConvertI64S".into(), offset, None),
+        Opcode::I64TruncF64S => ("I64TruncF64S".into(), offset, None),
 
         // Block type operands with u32 offsets
         Opcode::Block => {
             let (block_type, new_offset) = read_block_type(code, offset);
             offset = new_offset;
             if let Some(end_offset) = read_u32(code, &mut offset) {
-                (format!("Block {} end=@{}", block_type, end_offset), offset)
+                (format!("Block {} end=@{}", block_type, end_offset), offset, None)
             } else {
-                ("Block ???".into(), code.len())
+                ("Block ???".into(), code.len(), None)
             }
         }
         Opcode::Loop => {
             let (block_type, new_offset) = read_block_type(code, offset);
             offset = new_offset;
             if let Some(end_offset) = read_u32(code, &mut offset) {
-                (format!("Loop {} end=@{}", block_type, end_offset), offset)
+                (format!("Loop {} end=@{}", block_type, end_offset), offset, None)
             } else {
-                ("Loop ???".into(), code.len())
+                ("Loop ???".into(), code.len(), None)
             }
         }
         Opcode::If => {
@@ -186,81 +238,81 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 (read_u32(code, &mut offset), read_u32(code, &mut offset))
             {
                 if else_offset == end_offset {
-                    (format!("If {} end=@{}", block_type, end_offset), offset)
+                    (format!("If {} end=@{}", block_type, end_offset), offset, None)
                 } else {
-                    (format!("If {} else=@{} end=@{}", block_type, else_offset, end_offset), offset)
+                    (format!("If {} else=@{} end=@{}", block_type, else_offset, end_offset), offset, None)
                 }
             } else {
-                ("If ???".into(), code.len())
+                ("If ???".into(), code.len(), None)
             }
         }
 
         // LEB128 u32 operands
         Opcode::Br => {
             if let Some(label) = read_leb128_u32(code, &mut offset) {
-                (format!("Br {}", label), offset)
+                (format!("Br {}", label), offset, None)
             } else {
-                ("Br ???".into(), code.len())
+                ("Br ???".into(), code.len(), None)
             }
         }
         Opcode::BrIf => {
             if let Some(label) = read_leb128_u32(code, &mut offset) {
-                (format!("BrIf {}", label), offset)
+                (format!("BrIf {}", label), offset, None)
             } else {
-                ("BrIf ???".into(), code.len())
+                ("BrIf ???".into(), code.len(), None)
             }
         }
         Opcode::LocalGet => {
             if let Some(idx) = read_leb128_u32(code, &mut offset) {
-                (format!("LocalGet {}", idx), offset)
+                (format!("LocalGet {}", idx), offset, None)
             } else {
-                ("LocalGet ???".into(), code.len())
+                ("LocalGet ???".into(), code.len(), None)
             }
         }
         Opcode::LocalSet => {
             if let Some(idx) = read_leb128_u32(code, &mut offset) {
-                (format!("LocalSet {}", idx), offset)
+                (format!("LocalSet {}", idx), offset, None)
             } else {
-                ("LocalSet ???".into(), code.len())
+                ("LocalSet ???".into(), code.len(), None)
             }
         }
         Opcode::LocalTee => {
             if let Some(idx) = read_leb128_u32(code, &mut offset) {
-                (format!("LocalTee {}", idx), offset)
+                (format!("LocalTee {}", idx), offset, None)
             } else {
-                ("LocalTee ???".into(), code.len())
+                ("LocalTee ???".into(), code.len(), None)
             }
         }
         Opcode::Throw => {
             if let Some(tag) = read_leb128_u32(code, &mut offset) {
-                (format!("Throw {}", tag), offset)
+                (format!("Throw {}", tag), offset, None)
             } else {
-                ("Throw ???".into(), code.len())
+                ("Throw ???".into(), code.len(), None)
             }
         }
         Opcode::MakeList => {
             if let Some(count) = read_leb128_u32(code, &mut offset) {
-                (format!("MakeList {}", count), offset)
+                (format!("MakeList {}", count), offset, None)
             } else {
-                ("MakeList ???".into(), code.len())
+                ("MakeList ???".into(), code.len(), None)
             }
         }
 
         // I64Const - LEB128 signed
         Opcode::I64Const => {
             if let Some(val) = read_leb128_i64(code, &mut offset) {
-                (format!("I64Const {}", val), offset)
+                (format!("I64Const {}", val), offset, None)
             } else {
-                ("I64Const ???".into(), code.len())
+                ("I64Const ???".into(), code.len(), None)
             }
         }
 
         // F64Const - 8 bytes IEEE 754
         Opcode::F64Const => {
             if let Some(val) = read_f64(code, &mut offset) {
-                (format!("F64Const {}", val), offset)
+                (format!("F64Const {}", val), offset, None)
             } else {
-                ("F64Const ???".into(), code.len())
+                ("F64Const ???".into(), code.len(), None)
             }
         }
 
@@ -270,9 +322,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 (read_u16(code, &mut offset), read_u16(code, &mut offset))
             {
                 let lib_name = lib_name(lib_id);
-                (format!("CallLib {}:{}", lib_name, cmd_id), offset)
+                (format!("CallLib {}:{}", lib_name, cmd_id), offset, None)
             } else {
-                ("CallLib ???".into(), code.len())
+                ("CallLib ???".into(), code.len(), None)
             }
         }
 
@@ -283,9 +335,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 read_leb128_u32(code, &mut offset),
                 read_leb128_u32(code, &mut offset),
             ) {
-                (format!("StringConst @{}:{}", str_offset, len), offset)
+                (format!("StringConst @{}:{}", str_offset, len), offset, None)
             } else {
-                ("StringConst ???".into(), code.len())
+                ("StringConst ???".into(), code.len(), None)
             }
         }
         Opcode::SymbolicConst => {
@@ -293,9 +345,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 read_leb128_u32(code, &mut offset),
                 read_leb128_u32(code, &mut offset),
             ) {
-                (format!("SymbolicConst @{}:{}", sym_offset, len), offset)
+                (format!("SymbolicConst @{}:{}", sym_offset, len), offset, None)
             } else {
-                ("SymbolicConst ???".into(), code.len())
+                ("SymbolicConst ???".into(), code.len(), None)
             }
         }
         Opcode::BlobConst => {
@@ -303,9 +355,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 read_leb128_u32(code, &mut offset),
                 read_leb128_u32(code, &mut offset),
             ) {
-                (format!("BlobConst @{}:{}", blob_offset, len), offset)
+                (format!("BlobConst @{}:{}", blob_offset, len), offset, None)
             } else {
-                ("BlobConst ???".into(), code.len())
+                ("BlobConst ???".into(), code.len(), None)
             }
         }
 
@@ -315,9 +367,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 read_leb128_u32(code, &mut offset),
                 read_leb128_u32(code, &mut offset),
             ) {
-                (format!("EvalName @{}:{}", name_offset, len), offset)
+                (format!("EvalName @{}:{}", name_offset, len), offset, None)
             } else {
-                ("EvalName ???".into(), code.len())
+                ("EvalName ???".into(), code.len(), None)
             }
         }
 
@@ -330,13 +382,18 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 if let Some(rodata_len) = read_leb128_u32(code, &mut offset) {
                     let rodata_len = rodata_len as usize;
                     if offset + rodata_len > code.len() {
-                        return ("MakeProgram ???".into(), code.len());
+                        return ("MakeProgram ???".into(), code.len(), None);
                     }
+                    // Skip rodata bytes
                     offset += rodata_len;
                     // Read code section
                     if let Some(code_len) = read_leb128_u32(code, &mut offset) {
                         let code_len = code_len as usize;
                         if offset + code_len <= code.len() {
+                            // Extract the embedded code for recursive disassembly
+                            let embedded_code = &code[offset..offset + code_len];
+                            let nested = disassemble(embedded_code, 0, embedded_code.len());
+
                             offset += code_len;
                             // Read span count (u16)
                             if let Some(span_count) = read_u16(code, &mut offset) {
@@ -350,21 +407,21 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                                     let _ = read_leb128_u32(code, &mut offset);
                                 }
                                 let kind = if param_count > 0 { "Function" } else { "Program" };
-                                (format!("Make{} <{} bytes, {} rodata, {} params>", kind, code_len, rodata_len, param_count), offset.min(code.len()))
+                                (format!("Make{} <{} bytes, {} rodata, {} params>", kind, code_len, rodata_len, param_count), offset.min(code.len()), Some(nested))
                             } else {
-                                (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()))
+                                (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()), Some(nested))
                             }
                         } else {
-                            ("MakeProgram ???".into(), code.len())
+                            ("MakeProgram ???".into(), code.len(), None)
                         }
                     } else {
-                        ("MakeProgram ???".into(), code.len())
+                        ("MakeProgram ???".into(), code.len(), None)
                     }
                 } else {
-                    ("MakeProgram ???".into(), code.len())
+                    ("MakeProgram ???".into(), code.len(), None)
                 }
             } else {
-                ("MakeProgram ???".into(), code.len())
+                ("MakeProgram ???".into(), code.len(), None)
             }
         }
 
@@ -395,12 +452,13 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                     (
                         format!("TryTable {} end=@{} catches={}", block_type, end_offset, catch_count),
                         offset,
+                        None,
                     )
                 } else {
-                    ("TryTable ???".into(), code.len())
+                    ("TryTable ???".into(), code.len(), None)
                 }
             } else {
-                ("TryTable ???".into(), code.len())
+                ("TryTable ???".into(), code.len(), None)
             }
         }
 
@@ -415,9 +473,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                     // local_idx
                     let _ = read_leb128_u32(code, &mut offset);
                 }
-                (format!("PushLocalScope {}", count), offset)
+                (format!("PushLocalScope {}", count), offset, None)
             } else {
-                ("PushLocalScope ???".into(), code.len())
+                ("PushLocalScope ???".into(), code.len(), None)
             }
         }
     }
@@ -455,6 +513,128 @@ fn lib_name(lib_id: u16) -> &'static str {
         102 => "USERLIB",
         _ => "???",
     }
+}
+
+// ============================================================================
+// Display Implementation
+// ============================================================================
+
+impl Display for DisassembledProgram {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // Name header
+        if let Some(n) = &self.name {
+            writeln!(f, "{}:", n)?;
+        }
+
+        // Rodata section
+        if !self.rodata.is_empty() {
+            format_rodata_section(f, &self.rodata)?;
+        }
+
+        // Instructions
+        format_instrs(f, &self.instructions, 0)
+    }
+}
+
+/// Format rodata as a separate section.
+fn format_rodata_section(f: &mut Formatter<'_>, rodata: &[u8]) -> fmt::Result {
+    writeln!(f, "  [rodata: {} bytes]", rodata.len())?;
+
+    // Parse and display rodata entries (null-terminated strings)
+    let mut offset = 0;
+    while offset < rodata.len() {
+        let start = offset;
+        // Find null terminator or end
+        while offset < rodata.len() && rodata[offset] != 0 {
+            offset += 1;
+        }
+        if offset > start {
+            if let Ok(s) = std::str::from_utf8(&rodata[start..offset]) {
+                writeln!(f, "    @{}: {:?}", start, s)?;
+            } else {
+                writeln!(f, "    @{}: <{} bytes>", start, offset - start)?;
+            }
+        }
+        offset += 1; // Skip null terminator
+    }
+    writeln!(f)
+}
+
+fn format_instrs(f: &mut Formatter<'_>, instrs: &[DisassembledInstr], base_depth: usize) -> fmt::Result {
+    let mut block_stack: Vec<usize> = Vec::new(); // Stack of end PCs
+
+    for instr in instrs {
+        // Pop blocks that have ended
+        while let Some(&end_pc) = block_stack.last() {
+            if instr.pc >= end_pc {
+                block_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        let depth = base_depth + block_stack.len();
+
+        // Build the prefix with │ characters
+        let prefix = build_block_prefix(depth);
+
+        // Check if this instruction starts a block (Block, Loop, If, TryTable)
+        // and extract the end offset
+        let end_offset = extract_end_offset(&instr.text);
+
+        // Format: "  0000  │ │ InstructionText"
+        writeln!(f, "  {:04X}  {}{}", instr.pc, prefix, instr.text)?;
+
+        // If this is a block-starting instruction, push to stack
+        if let Some(end_pc) = end_offset {
+            block_stack.push(end_pc);
+        }
+
+        // Handle nested instructions (from MakeProgram/MakeFunction)
+        if let Some(nested) = &instr.nested {
+            format_instrs(f, nested, depth + 1)?;
+        }
+    }
+    Ok(())
+}
+
+fn build_block_prefix(depth: usize) -> String {
+    if depth == 0 {
+        String::new()
+    } else {
+        let mut s = String::with_capacity(depth * 2);
+        for _ in 0..depth {
+            s.push_str("│ ");
+        }
+        s
+    }
+}
+
+/// Extract the end offset from a block instruction's text.
+/// Returns Some(end_pc) for Block, Loop, If, TryTable instructions.
+fn extract_end_offset(text: &str) -> Option<usize> {
+    // Look for "end=@N" or just "@N" pattern
+    if let Some(pos) = text.find("end=@") {
+        let after = &text[pos + 5..];
+        parse_decimal_prefix(after)
+    } else if text.starts_with("Block @") || text.starts_with("Loop @") {
+        // Alternative format: "Block @005F"
+        let at_pos = text.find('@')?;
+        let after = &text[at_pos + 1..];
+        parse_hex_prefix(after)
+    } else {
+        None
+    }
+}
+
+fn parse_decimal_prefix(s: &str) -> Option<usize> {
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    s[..end].parse().ok()
+}
+
+fn parse_hex_prefix(s: &str) -> Option<usize> {
+    let end = s.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(s.len());
+    usize::from_str_radix(&s[..end], 16).ok()
 }
 
 #[cfg(test)]
@@ -598,7 +778,7 @@ mod tests {
         let lowerers = LowererRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-        let analysis = analysis::analyze(&nodes, &interfaces, &interner);
+        let analysis = analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
         let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lower failed");
         program.code
     }

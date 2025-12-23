@@ -1,0 +1,7 @@
+<<
+    @ Main entry point
+    @ Compute 3 squared plus 4 squared using lib functions
+    3 lib/square
+    4 lib/square
+    +
+>>

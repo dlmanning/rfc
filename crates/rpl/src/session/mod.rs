@@ -49,7 +49,7 @@ use crate::core::Interner;
 use crate::source::{SourceCache, SourceFile, SourceId};
 
 use crate::analysis::{
-    AnalysisResult, Diagnostic, IncrementalAnalysis, Severity, SpanEdit,
+    AnalysisResult, Context, Diagnostic, IncrementalAnalysis, Severity, SpanEdit,
 };
 use crate::lower::{lower, CompiledProgram};
 use crate::parse::parse;
@@ -240,6 +240,8 @@ pub struct AnalysisSession {
     interfaces: InterfaceRegistry,
     interner: Interner,
     analysis_cache: HashMap<SourceId, IncrementalAnalysis>,
+    /// Context providing known external names (e.g., from project directory).
+    context: Context,
 }
 
 impl Default for AnalysisSession {
@@ -256,7 +258,39 @@ impl AnalysisSession {
             interfaces: InterfaceRegistry::new(),
             interner: Interner::new(),
             analysis_cache: HashMap::new(),
+            context: Context::empty(),
         }
+    }
+
+    /// Create a new analysis session with a context.
+    pub fn with_context(context: Context) -> Self {
+        Self {
+            sources: SourceCache::new(),
+            interfaces: InterfaceRegistry::new(),
+            interner: Interner::new(),
+            analysis_cache: HashMap::new(),
+            context,
+        }
+    }
+
+    /// Set the context for external name resolution.
+    ///
+    /// This clears the analysis cache since changing context affects diagnostics.
+    pub fn set_context(&mut self, context: Context) {
+        self.context = context;
+        self.analysis_cache.clear();
+    }
+
+    /// Get a reference to the context.
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// Get a mutable reference to the context.
+    pub fn context_mut(&mut self) -> &mut Context {
+        // Clear cache since context is about to change
+        self.analysis_cache.clear();
+        &mut self.context
     }
 
     /// Set or update source code for a file.
@@ -281,7 +315,7 @@ impl AnalysisSession {
     /// Apply an incremental edit to a source file.
     pub fn edit_source(&mut self, id: SourceId, edit: SpanEdit) {
         if let Some(analysis) = self.analysis_cache.get_mut(&id) {
-            analysis.apply_edit(edit, &self.interfaces, &mut self.interner);
+            analysis.apply_edit(edit, &self.interfaces, &mut self.interner, &self.context);
             if let Some(file) = self.sources.get_mut(id) {
                 let name = file.name().to_string();
                 *file = SourceFile::new(id, name, analysis.source().into());
@@ -291,8 +325,9 @@ impl AnalysisSession {
                 file.source(),
                 &self.interfaces,
                 &mut self.interner,
+                &self.context,
             );
-            analysis.apply_edit(edit, &self.interfaces, &mut self.interner);
+            analysis.apply_edit(edit, &self.interfaces, &mut self.interner, &self.context);
             let name = file.name().to_string();
             *file = SourceFile::new(id, name, analysis.source().into());
             self.analysis_cache.insert(id, analysis);
@@ -307,6 +342,7 @@ impl AnalysisSession {
                 source.source(),
                 &self.interfaces,
                 &mut self.interner,
+                &self.context,
             );
             self.analysis_cache.insert(id, analysis);
         }

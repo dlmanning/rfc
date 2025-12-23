@@ -1,0 +1,16 @@
+[package]
+name = "rpl-ide"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rpl = {workspace = true}
+rpl-stdlib = {workspace = true}
+rpl-project = {workspace = true}
+wit-bindgen = {workspace = true}

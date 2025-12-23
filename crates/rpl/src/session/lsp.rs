@@ -453,10 +453,38 @@ pub fn find_references(
 
 /// Get semantic tokens for syntax highlighting.
 pub fn semantic_tokens(analysis: &IncrementalAnalysis) -> Vec<SemanticToken> {
+    use crate::parse::tokenize_with_source_map;
+
     let mut tokens = Vec::new();
     let result = analysis.result();
+    let source = analysis.source();
 
-    // Add tokens for definitions
+    // Tokenize source to get lexical tokens and comments
+    let (lexical_tokens, source_map) = tokenize_with_source_map(source);
+
+    // Add comments
+    for comment in &source_map.comments {
+        tokens.push(SemanticToken {
+            start: comment.span.start(),
+            length: comment.span.len(),
+            token_type: SemanticTokenType::Comment.index(),
+            modifiers: 0,
+        });
+    }
+
+    // Add lexical tokens (numbers, strings, keywords, operators)
+    for tok in &lexical_tokens {
+        if let Some(token_type) = classify_token(&tok.text) {
+            tokens.push(SemanticToken {
+                start: tok.span.start(),
+                length: tok.span.len(),
+                token_type: token_type.index(),
+                modifiers: 0,
+            });
+        }
+    }
+
+    // Add tokens for definitions (override lexical classification)
     for def in result.symbols.definitions() {
         let token_type = match def.kind {
             DefinitionKind::Global => SemanticTokenType::Variable,
@@ -481,10 +509,82 @@ pub fn semantic_tokens(analysis: &IncrementalAnalysis) -> Vec<SemanticToken> {
         });
     }
 
-    // Sort by position
+    // Sort by position and deduplicate (later tokens win for same position)
     tokens.sort_by_key(|t| t.start.offset());
+    dedup_tokens(&mut tokens);
 
     tokens
+}
+
+/// Classify a token by its text.
+fn classify_token(text: &str) -> Option<SemanticTokenType> {
+    // Skip delimiters
+    if text.len() == 1 && "{}()[]«»;',".contains(text) {
+        return None;
+    }
+
+    // Strings
+    if text.starts_with('"') {
+        return Some(SemanticTokenType::String);
+    }
+
+    // Numbers (decimal, hex, binary, HP-style)
+    if text.starts_with(|c: char| c.is_ascii_digit())
+        || text.starts_with('#')
+        || (text.starts_with('-') && text.len() > 1 && text.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+    {
+        return Some(SemanticTokenType::Number);
+    }
+
+    // Keywords (control flow, definition)
+    let upper = text.to_uppercase();
+    if matches!(
+        upper.as_str(),
+        "IF" | "THEN" | "ELSE" | "END" | "IFERR" | "CASE" | "DEFAULT"
+            | "FOR" | "NEXT" | "STEP" | "DO" | "UNTIL" | "WHILE" | "REPEAT"
+            | "START" | "RETURN" | "KILL" | "HALT" | "CONT"
+    ) {
+        return Some(SemanticTokenType::Keyword);
+    }
+
+    // Definition keywords
+    if matches!(upper.as_str(), "LOCAL" | "DEF" | "CONST") {
+        return Some(SemanticTokenType::Keyword);
+    }
+
+    // Programs are functions
+    if text.starts_with('«') || text.starts_with("<<") {
+        return Some(SemanticTokenType::Function);
+    }
+
+    // Operators (common ones)
+    if matches!(
+        text,
+        "+" | "-" | "*" | "/" | "^" | "==" | "!=" | "<" | ">" | "<=" | ">="
+            | "AND" | "OR" | "NOT" | "XOR" | "MOD" | "DIV"
+    ) || matches!(upper.as_str(), "AND" | "OR" | "NOT" | "XOR" | "MOD" | "DIV")
+    {
+        return Some(SemanticTokenType::Operator);
+    }
+
+    // Uppercase words are likely commands/functions
+    if text.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '→' || c == '▶') {
+        return Some(SemanticTokenType::Function);
+    }
+
+    None
+}
+
+/// Remove duplicate tokens at the same position (keep last one).
+fn dedup_tokens(tokens: &mut Vec<SemanticToken>) {
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        if tokens[i].start == tokens[i + 1].start {
+            tokens.remove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Encode semantic tokens for LSP (delta encoding).

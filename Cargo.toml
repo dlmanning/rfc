@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-vector-plot", "crates/rpl-sr5", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
-default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-vector-plot", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm"]
+members = ["crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-tui", "crates/rpl-vector-plot", "crates/rpl-sr5", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm", "crates/rpl-project", "crates/rpl-ide"]
+default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "crates/rpl-sr5", "crates/rpl-vector-plot", "crates/rpl", "crates/rpl-stdlib", "crates/rpl-vm", "crates/rpl-project"]
 
     [workspace.package]
     version = "0.1.0"
@@ -20,6 +20,8 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     rpl = {path = "crates/rpl"}
     rpl-stdlib = {path = "crates/rpl-stdlib"}
     rpl-vm = {path = "crates/rpl-vm"}
+    rpl-project = {path = "crates/rpl-project"}
+    rpl-ide = {path = "crates/rpl-ide"}
 
     # External dependencies
     smallvec = "1"
@@ -36,6 +38,7 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     unicode-segmentation = "1"
     pixels = "0.15"
     winit = "0.30"
+    wit-bindgen = "0.41"
 
 # Root package for integration tests
 [package]
@@ -47,3 +50,4 @@ edition = "2024"
 rpl-dap = {workspace = true}
 rpl = {workspace = true}
 rpl-stdlib = {workspace = true}
+rpl-project = {workspace = true}

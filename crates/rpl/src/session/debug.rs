@@ -113,7 +113,7 @@ mod tests {
         let mut interner = Interner::new();
 
         let nodes = parse(source, &interfaces, &mut interner).unwrap();
-        let analysis = analysis::analyze(&nodes, &interfaces, &interner);
+        let analysis = analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
         let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         let source_file = SourceFile::new(SourceId::new(0), "test.rpl".into(), source.into());
