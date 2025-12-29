@@ -78,7 +78,8 @@ impl State {
             let project = Project::load(&project_path).ok()?;
             let index = ProjectIndex::build_with(Path::new(&project_path), |reg| {
                 rpl_sr5::register_interfaces(reg);
-            }).ok()?;
+            })
+            .ok()?;
             self.projects
                 .insert(project_path.clone(), LoadedProject { project, index });
         }
@@ -221,13 +222,11 @@ impl FileGuest for RplIde {
                 if let Some(project_path) = state.ensure_project(path) {
                     if let Some(loaded) = state.projects.get(&project_path) {
                         if let Some(key) = loaded.index.key_for_path(Path::new(path)) {
-                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content) {
+                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content)
+                            {
                                 // Use cached diagnostics directly
-                                let file = SourceFile::new(
-                                    SourceId::new(0),
-                                    "cached.rpl".into(),
-                                    content,
-                                );
+                                let file =
+                                    SourceFile::new(SourceId::new(0), "cached.rpl".into(), content);
                                 return analysis
                                     .diagnostics
                                     .iter()
@@ -330,7 +329,9 @@ impl FileGuest for RplIde {
                     let project_symbols = loaded.index.symbols();
                     for sym in &mut symbols {
                         // Look up in project's shared symbol table for resolved types
-                        if let Some(def) = project_symbols.find_definitions_by_name(&sym.name).next() {
+                        if let Some(def) =
+                            project_symbols.find_definitions_by_name(&sym.name).next()
+                        {
                             // Update detail with resolved type info
                             if let Some(ref sig) = def.signature {
                                 sym.detail = Some(sig.to_string());
@@ -361,7 +362,9 @@ impl FileGuest for RplIde {
                 if let Some(loaded) = state.projects.get(project_path) {
                     if let Some((word, span)) = word_at(&content, byte_pos.offset() as usize) {
                         // Look up in project's shared symbol table for resolved types
-                        if let Some(def) = loaded.index.symbols().find_definitions_by_name(word).next() {
+                        if let Some(def) =
+                            loaded.index.symbols().find_definitions_by_name(word).next()
+                        {
                             let hover = ::rpl::lsp::make_definition_hover(def);
                             return Some(HoverInfo {
                                 contents: hover.contents,
@@ -382,7 +385,8 @@ impl FileGuest for RplIde {
                     // For project files with unchanged content, use cached analysis for commands
                     if let Some(ref path) = file_path {
                         if let Some(key) = loaded.index.key_for_path(Path::new(path)) {
-                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content) {
+                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content)
+                            {
                                 // Use cached analysis for command hover
                                 if let Some(hover) = ::rpl::lsp::hover(
                                     analysis,
@@ -522,7 +526,8 @@ impl ProjectGuest for RplIde {
             let project = Project::load(&path).map_err(|e| e.to_string())?;
             let index = ProjectIndex::build_with(Path::new(&path), |reg| {
                 rpl_sr5::register_interfaces(reg);
-            }).map_err(|e| e.to_string())?;
+            })
+            .map_err(|e| e.to_string())?;
             state
                 .projects
                 .insert(path, LoadedProject { project, index });

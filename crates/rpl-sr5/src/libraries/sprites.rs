@@ -8,7 +8,10 @@ use png::ColorType;
 use rpl::{
     Span,
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryInterface, LibraryLowerer},
+    libs::{
+        CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor,
+        LibraryInterface, LibraryLowerer,
+    },
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -26,20 +29,20 @@ pub const SR5_SPRITES_LIB: LibId = 203;
 
 impl Sr5SpritesLib {
     // Loading commands
-    const CMD_PNGLOAD: u16 = 0;   // bytes -- id w h
-    const CMD_SPRLOAD: u16 = 1;   // data w h -- id
-    const CMD_SPRFREE: u16 = 2;   // id --
+    const CMD_PNGLOAD: u16 = 0; // bytes -- id w h
+    const CMD_SPRLOAD: u16 = 1; // data w h -- id
+    const CMD_SPRFREE: u16 = 2; // id --
 
     // Drawing commands
-    const CMD_SPR: u16 = 3;       // id x y --
-    const CMD_SPRFLIP: u16 = 4;   // id x y flags --
-    const CMD_SPRSCALE: u16 = 5;  // id x y sx sy --
-    const CMD_SPRROT: u16 = 6;    // id x y angle --
-    const CMD_SPREX: u16 = 7;     // id x y sx sy angle flags --
+    const CMD_SPR: u16 = 3; // id x y --
+    const CMD_SPRFLIP: u16 = 4; // id x y flags --
+    const CMD_SPRSCALE: u16 = 5; // id x y sx sy --
+    const CMD_SPRROT: u16 = 6; // id x y angle --
+    const CMD_SPREX: u16 = 7; // id x y sx sy angle flags --
 
     // Info commands
-    const CMD_SPRW: u16 = 8;      // id -- width
-    const CMD_SPRH: u16 = 9;      // id -- height
+    const CMD_SPRW: u16 = 8; // id -- width
+    const CMD_SPRH: u16 = 9; // id -- height
 
     pub fn new(hardware: Arc<Mutex<Sr5Hardware>>) -> Self {
         Self { hardware }
@@ -130,7 +133,9 @@ impl LibraryExecutor for Sr5SpritesLib {
                 let mut reader = decoder.read_info().map_err(|e| format!("PNGLOAD: {}", e))?;
 
                 let mut buf = vec![0; reader.output_buffer_size()];
-                let info = reader.next_frame(&mut buf).map_err(|e| format!("PNGLOAD: {}", e))?;
+                let info = reader
+                    .next_frame(&mut buf)
+                    .map_err(|e| format!("PNGLOAD: {}", e))?;
 
                 let width = info.width as u16;
                 let height = info.height as u16;
@@ -205,7 +210,10 @@ impl LibraryExecutor for Sr5SpritesLib {
                 if data.len() != expected_size {
                     return Err(format!(
                         "SPRLOAD: expected {} bytes for {}x{} RGBA, got {}",
-                        expected_size, w, h, data.len()
+                        expected_size,
+                        w,
+                        h,
+                        data.len()
                     ));
                 }
 

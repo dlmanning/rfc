@@ -93,12 +93,17 @@ impl PlotBuilder {
     }
 
     /// Cubic Bézier curve.
-    pub fn cubic_to(&mut self, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) -> &mut Self {
-        self.path.cubic_to(
-            Point::new(c1x, c1y),
-            Point::new(c2x, c2y),
-            Point::new(x, y),
-        );
+    pub fn cubic_to(
+        &mut self,
+        c1x: f32,
+        c1y: f32,
+        c2x: f32,
+        c2y: f32,
+        x: f32,
+        y: f32,
+    ) -> &mut Self {
+        self.path
+            .cubic_to(Point::new(c1x, c1y), Point::new(c2x, c2y), Point::new(x, y));
         self
     }
 
@@ -148,7 +153,8 @@ impl PlotBuilder {
                 path,
                 fill: self.state.fill.clone(),
                 stroke: None,
-            }).with_transform(self.state.transform);
+            })
+            .with_transform(self.state.transform);
             self.add_element(elem);
         }
         self
@@ -162,7 +168,8 @@ impl PlotBuilder {
                 path,
                 fill: None,
                 stroke: self.state.stroke.clone(),
-            }).with_transform(self.state.transform);
+            })
+            .with_transform(self.state.transform);
             self.add_element(elem);
         }
         self
@@ -176,7 +183,8 @@ impl PlotBuilder {
                 path,
                 fill: self.state.fill.clone(),
                 stroke: self.state.stroke.clone(),
-            }).with_transform(self.state.transform);
+            })
+            .with_transform(self.state.transform);
             self.add_element(elem);
         }
         self
@@ -188,11 +196,8 @@ impl PlotBuilder {
 
     /// Add text at a position.
     pub fn text(&mut self, x: f32, y: f32, text: &str, size: f32) -> &mut Self {
-        let elem = Element::new(ElementKind::text(
-            Point::new(x, y),
-            text.to_string(),
-            size,
-        )).with_transform(self.state.transform);
+        let elem = Element::new(ElementKind::text(Point::new(x, y), text.to_string(), size))
+            .with_transform(self.state.transform);
         self.add_element(elem);
         self
     }

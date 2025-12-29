@@ -155,7 +155,12 @@ fn encode_path(out: &mut Vec<u8>, path: &Path) {
                 write_point(out, *c2);
                 write_point(out, *end);
             }
-            PathCmd::Arc { center, radius, start_angle, sweep_angle } => {
+            PathCmd::Arc {
+                center,
+                radius,
+                start_angle,
+                sweep_angle,
+            } => {
                 out.push(cmd::ARC);
                 write_point(out, *center);
                 write_f32(out, *radius);
@@ -189,7 +194,11 @@ fn encode_paint(out: &mut Vec<u8>, paint: Option<&Paint>) {
                 write_color(out, stop.color);
             }
         }
-        Some(Paint::RadialGradient { center, radius, stops }) => {
+        Some(Paint::RadialGradient {
+            center,
+            radius,
+            stops,
+        }) => {
             out.push(cmd::PAINT_RADIAL);
             write_point(out, *center);
             write_f32(out, *radius);

@@ -3,21 +3,68 @@
 //! Decodes plot objects into drawable commands for the TUI viewer.
 //! Uses rpl-vector-plot's Renderer trait for decoding.
 
-use rpl_vector_plot::{decode, render, Color, Paint, Point, Renderer, Stroke};
+use rpl_vector_plot::{Color, Paint, Point, Renderer, Stroke, decode, render};
 
 /// A decoded plot command ready for rendering.
 #[derive(Debug, Clone)]
 pub enum PlotCommand {
-    MoveTo { x: f64, y: f64 },
-    LineTo { x: f64, y: f64 },
-    QuadTo { cx: f64, cy: f64, x: f64, y: f64 },
-    CubicTo { c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64 },
-    Arc { cx: f64, cy: f64, radius: f64, start: f64, sweep: f64 },
+    MoveTo {
+        x: f64,
+        y: f64,
+    },
+    LineTo {
+        x: f64,
+        y: f64,
+    },
+    QuadTo {
+        cx: f64,
+        cy: f64,
+        x: f64,
+        y: f64,
+    },
+    CubicTo {
+        c1x: f64,
+        c1y: f64,
+        c2x: f64,
+        c2y: f64,
+        x: f64,
+        y: f64,
+    },
+    Arc {
+        cx: f64,
+        cy: f64,
+        radius: f64,
+        start: f64,
+        sweep: f64,
+    },
     ClosePath,
-    Fill { r: u8, g: u8, b: u8, a: u8 },
-    Stroke { r: u8, g: u8, b: u8, a: u8, width: f64 },
-    Text { x: f64, y: f64, text: String, size: f64 },
-    PushTransform { a: f64, b: f64, c: f64, d: f64, e: f64, f: f64 },
+    Fill {
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    },
+    Stroke {
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+        width: f64,
+    },
+    Text {
+        x: f64,
+        y: f64,
+        text: String,
+        size: f64,
+    },
+    PushTransform {
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+        e: f64,
+        f: f64,
+    },
     PopTransform,
 }
 
@@ -28,17 +75,25 @@ struct CommandCollector {
 
 impl CommandCollector {
     fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self {
+            commands: Vec::new(),
+        }
     }
 }
 
 impl Renderer for CommandCollector {
     fn move_to(&mut self, p: Point) {
-        self.commands.push(PlotCommand::MoveTo { x: p.x as f64, y: p.y as f64 });
+        self.commands.push(PlotCommand::MoveTo {
+            x: p.x as f64,
+            y: p.y as f64,
+        });
     }
 
     fn line_to(&mut self, p: Point) {
-        self.commands.push(PlotCommand::LineTo { x: p.x as f64, y: p.y as f64 });
+        self.commands.push(PlotCommand::LineTo {
+            x: p.x as f64,
+            y: p.y as f64,
+        });
     }
 
     fn quad_to(&mut self, ctrl: Point, end: Point) {
@@ -175,18 +230,46 @@ pub fn decompile_plot(bytes: &[u8]) -> String {
             PlotCommand::MoveTo { x, y } => format!("  {} {} MOVETO", fmt_num(x), fmt_num(y)),
             PlotCommand::LineTo { x, y } => format!("  {} {} LINETO", fmt_num(x), fmt_num(y)),
             PlotCommand::QuadTo { cx, cy, x, y } => {
-                format!("  {} {} {} {} QUADTO", fmt_num(cx), fmt_num(cy), fmt_num(x), fmt_num(y))
-            }
-            PlotCommand::CubicTo { c1x, c1y, c2x, c2y, x, y } => {
                 format!(
-                    "  {} {} {} {} {} {} CUBICTO",
-                    fmt_num(c1x), fmt_num(c1y), fmt_num(c2x), fmt_num(c2y), fmt_num(x), fmt_num(y)
+                    "  {} {} {} {} QUADTO",
+                    fmt_num(cx),
+                    fmt_num(cy),
+                    fmt_num(x),
+                    fmt_num(y)
                 )
             }
-            PlotCommand::Arc { cx, cy, radius, start, sweep } => {
+            PlotCommand::CubicTo {
+                c1x,
+                c1y,
+                c2x,
+                c2y,
+                x,
+                y,
+            } => {
+                format!(
+                    "  {} {} {} {} {} {} CUBICTO",
+                    fmt_num(c1x),
+                    fmt_num(c1y),
+                    fmt_num(c2x),
+                    fmt_num(c2y),
+                    fmt_num(x),
+                    fmt_num(y)
+                )
+            }
+            PlotCommand::Arc {
+                cx,
+                cy,
+                radius,
+                start,
+                sweep,
+            } => {
                 format!(
                     "  {} {} {} {} {} ARC",
-                    fmt_num(cx), fmt_num(cy), fmt_num(radius), fmt_num(start), fmt_num(sweep)
+                    fmt_num(cx),
+                    fmt_num(cy),
+                    fmt_num(radius),
+                    fmt_num(start),
+                    fmt_num(sweep)
                 )
             }
             PlotCommand::ClosePath => "  CLOSEPATH".to_string(),
@@ -194,15 +277,33 @@ pub fn decompile_plot(bytes: &[u8]) -> String {
                 format!("  {} {} {} {} RGBA FILLCOLOR FILL", r, g, b, a)
             }
             PlotCommand::Stroke { r, g, b, a, width } => {
-                format!("  {} {} {} {} RGBA {} STROKECOLOR STROKE", r, g, b, a, fmt_num(width))
+                format!(
+                    "  {} {} {} {} RGBA {} STROKECOLOR STROKE",
+                    r,
+                    g,
+                    b,
+                    a,
+                    fmt_num(width)
+                )
             }
             PlotCommand::Text { x, y, text, size } => {
-                format!("  {} {} \"{}\" {} TEXT", fmt_num(x), fmt_num(y), text, fmt_num(size))
+                format!(
+                    "  {} {} \"{}\" {} TEXT",
+                    fmt_num(x),
+                    fmt_num(y),
+                    text,
+                    fmt_num(size)
+                )
             }
             PlotCommand::PushTransform { a, b, c, d, e, f } => {
                 format!(
                     "  ; transform [{} {} {} {} {} {}]",
-                    fmt_num(a), fmt_num(b), fmt_num(c), fmt_num(d), fmt_num(e), fmt_num(f)
+                    fmt_num(a),
+                    fmt_num(b),
+                    fmt_num(c),
+                    fmt_num(d),
+                    fmt_num(e),
+                    fmt_num(f)
                 )
             }
             PlotCommand::PopTransform => "  ; pop transform".to_string(),
@@ -225,7 +326,7 @@ fn fmt_num(n: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rpl_vector_plot::{encode, Plot};
+    use rpl_vector_plot::{Plot, encode};
 
     fn make_simple_plot() -> Vec<u8> {
         let mut plot = Plot::new();

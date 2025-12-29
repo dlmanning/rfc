@@ -70,7 +70,11 @@ impl AppLayout {
                     Constraint::Percentage(25), // Stack
                 ])
                 .split(main_chunks[1]);
-            (content_chunks[0], Some(content_chunks[1]), content_chunks[2])
+            (
+                content_chunks[0],
+                Some(content_chunks[1]),
+                content_chunks[2],
+            )
         } else {
             // Two-column layout: Editor | Stack
             let content_chunks = Layout::default()

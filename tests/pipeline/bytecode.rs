@@ -5,10 +5,10 @@
 
 use rpl::analysis::analyze;
 use rpl::core::Interner;
-use rpl::lower::{lower, CompiledProgram};
+use rpl::lower::{CompiledProgram, lower};
 use rpl::parse::parse;
 use rpl::registry::{InterfaceRegistry, LowererRegistry};
-use rpl::vm::disasm::{disassemble, DisassembledInstr, DisassembledProgram};
+use rpl::vm::disasm::{DisassembledInstr, DisassembledProgram, disassemble};
 
 /// Compile RPL source to bytecode.
 fn compile(source: &str) -> CompiledProgram {
@@ -20,7 +20,12 @@ fn compile(source: &str) -> CompiledProgram {
     rpl_stdlib::register_lowerers(&mut lowerers);
 
     let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-    let analysis = analyze(&nodes, &interfaces, &interner, &rpl::analysis::Context::empty());
+    let analysis = analyze(
+        &nodes,
+        &interfaces,
+        &interner,
+        &rpl::analysis::Context::empty(),
+    );
 
     lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lowering failed")
 }
@@ -429,14 +434,23 @@ fn factorial_fixture_bytecode() {
     // 5. EvalName (call fact)
     let make_prog_idx = instrs.iter().position(|i| i.text.contains("MakeProgram"));
     let symbolic_idx = instrs.iter().position(|i| i.text.contains("SymbolicConst"));
-    let sto_idx = instrs.iter().position(|i| i.text.contains("CallLib DIRECTORY"));
+    let sto_idx = instrs
+        .iter()
+        .position(|i| i.text.contains("CallLib DIRECTORY"));
     let const5_idx = instrs.iter().position(|i| i.text == "I64Const 5");
     let eval_idx = instrs.iter().position(|i| i.text.contains("EvalName"));
 
     assert!(
-        make_prog_idx < symbolic_idx && symbolic_idx < sto_idx && sto_idx < const5_idx && const5_idx < eval_idx,
+        make_prog_idx < symbolic_idx
+            && symbolic_idx < sto_idx
+            && sto_idx < const5_idx
+            && const5_idx < eval_idx,
         "Instructions not in expected order: MakeProgram@{:?}, SymbolicConst@{:?}, STO@{:?}, I64Const5@{:?}, EvalName@{:?}",
-        make_prog_idx, symbolic_idx, sto_idx, const5_idx, eval_idx
+        make_prog_idx,
+        symbolic_idx,
+        sto_idx,
+        const5_idx,
+        eval_idx
     );
 }
 

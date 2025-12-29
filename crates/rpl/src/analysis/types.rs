@@ -179,10 +179,7 @@ impl fmt::Display for Type {
                 }
             }
             Type::OneOf(ts) => {
-                let syms: Vec<_> = ts
-                    .iter()
-                    .map(|t| t.symbol().unwrap_or("?"))
-                    .collect();
+                let syms: Vec<_> = ts.iter().map(|t| t.symbol().unwrap_or("?")).collect();
                 write!(f, "{}", syms.join(" ∪ "))
             }
             Type::TypeVar(v) => write!(f, "{}", v),
@@ -339,10 +336,7 @@ impl fmt::Display for Requirement {
                 }
             }
             Requirement::OneOf(ts) => {
-                let syms: Vec<_> = ts
-                    .iter()
-                    .map(|t| t.symbol().unwrap_or("?"))
-                    .collect();
+                let syms: Vec<_> = ts.iter().map(|t| t.symbol().unwrap_or("?")).collect();
                 write!(f, "{}", syms.join(" ∪ "))
             }
             Requirement::Any => write!(f, "∀"),

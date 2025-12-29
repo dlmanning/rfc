@@ -52,23 +52,23 @@ mod types;
 
 // Re-exports: Core infrastructure
 pub use context::{Context, EntryInfo};
-pub use incremental::{line_edit_to_span_edit, IncrementalAnalysis, SpanEdit};
+pub use incremental::{IncrementalAnalysis, SpanEdit, line_edit_to_span_edit};
 pub use result::{AnalysisResult, Diagnostic, DiagnosticKind, Severity};
 pub use scopes::{Scope, ScopeId, ScopeKind, ScopeTree};
 pub use symbols::{
     Definition, DefinitionId, DefinitionKind, Reference, ReferenceId, ReferenceKind, SymbolTable,
 };
-pub use visitor::{walk_node, walk_nodes, Visitor};
+pub use visitor::{Visitor, walk_node, walk_nodes};
 
 // Re-exports: Analyzer phases
 pub use globals::{
-    collect_global_variables, collect_globals, make_global_var_key, GlobalInfo, GlobalMap,
-    GlobalVarInfo, GlobalVariableMap,
+    GlobalInfo, GlobalMap, GlobalVarInfo, GlobalVariableMap, collect_global_variables,
+    collect_globals, make_global_var_key,
 };
-pub use patterns::{collect_global_defines, recognize_patterns, ParamInfo, Pattern, PatternMap};
+pub use patterns::{ParamInfo, Pattern, PatternMap, collect_global_defines, recognize_patterns};
 pub use resolve::{finalize_signatures, resolve_constraints};
 pub use state::{StackState, Substitution};
-pub use traverse::{Traverser, TraversalResult};
+pub use traverse::{TraversalResult, Traverser};
 pub use types::{Constraint, Origin, Requirement, StackSnapshot, Type, TypeVar};
 
 use crate::core::Interner;
@@ -198,7 +198,10 @@ fn post_analysis_checks(symbols: &SymbolTable, context: &Context) -> Vec<Diagnos
     // Check for unresolved references (skip if known in context)
     for reference in symbols.unresolved_references() {
         if !context.is_known(&reference.name) {
-            diagnostics.push(Diagnostic::undefined_variable(&reference.name, reference.span));
+            diagnostics.push(Diagnostic::undefined_variable(
+                &reference.name,
+                reference.span,
+            ));
         }
     }
 

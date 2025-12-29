@@ -33,13 +33,14 @@ mod vm;
 
 // Re-export public types
 pub use bytecode::{
-    BlockType, CatchKind, Opcode,
-    read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
+    BlockType, CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
     write_f64, write_leb128_i64, write_leb128_u32, write_u16, write_u32,
 };
 pub use debug::{DebugEvent, DebugMode, DebugState};
 pub use directory::Directory;
-pub use executor::{ExecuteContext, ExecuteResult, ExecutorRegistry, LibraryExecutor, RplException};
+pub use executor::{
+    ExecuteContext, ExecuteResult, ExecutorRegistry, LibraryExecutor, RplException,
+};
 pub use locals::{Locals, LocalsError};
 pub use source_map::SourceMap;
 pub use span::{Pos, Span};

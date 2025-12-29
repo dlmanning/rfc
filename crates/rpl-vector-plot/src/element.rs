@@ -71,11 +71,9 @@ impl Element {
                 let width = text.len() as f32 * size * 0.6;
                 Rect::new(pos.x, pos.y - size, width, *size)
             }
-            ElementKind::Group { children } => {
-                children.iter().fold(Rect::EMPTY, |acc, child| {
-                    acc.union(child.bounds())
-                })
-            }
+            ElementKind::Group { children } => children
+                .iter()
+                .fold(Rect::EMPTY, |acc, child| acc.union(child.bounds())),
         }
     }
 }
@@ -90,15 +88,9 @@ pub enum ElementKind {
         stroke: Option<Stroke>,
     },
     /// Text at a position.
-    Text {
-        pos: Point,
-        text: String,
-        size: f32,
-    },
+    Text { pos: Point, text: String, size: f32 },
     /// A group of child elements.
-    Group {
-        children: Vec<Element>,
-    },
+    Group { children: Vec<Element> },
 }
 
 impl ElementKind {
@@ -136,7 +128,9 @@ impl ElementKind {
 
     /// Create an empty group.
     pub fn group() -> Self {
-        Self::Group { children: Vec::new() }
+        Self::Group {
+            children: Vec::new(),
+        }
     }
 
     /// Create a group with children.

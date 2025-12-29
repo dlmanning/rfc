@@ -156,7 +156,8 @@ impl InputLine {
         let curr_char: String = self.buffer[pos..curr_end].to_string();
 
         // Replace with swapped order
-        self.buffer.replace_range(prev_start..curr_end, &format!("{}{}", curr_char, prev_char));
+        self.buffer
+            .replace_range(prev_start..curr_end, &format!("{}{}", curr_char, prev_char));
 
         // Move cursor forward
         self.cursor = curr_end;

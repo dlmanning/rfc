@@ -136,7 +136,11 @@ fn parse_id_prefix(line: &str) -> Result<(u16, &str), String> {
 
 /// Collect tokens inside parentheses, handling nesting.
 /// `start_offset` is how many chars into the first token the `(` appears (e.g., 1 for "(Int", 3 for "a:(Int")
-fn collect_parenthesized(tokens: &[&str], i: &mut usize, start_offset: usize) -> Result<String, String> {
+fn collect_parenthesized(
+    tokens: &[&str],
+    i: &mut usize,
+    start_offset: usize,
+) -> Result<String, String> {
     let first_token = tokens[*i];
     let mut parts = vec![&first_token[start_offset..]]; // After the opening (
     let mut depth = 1;
@@ -145,8 +149,12 @@ fn collect_parenthesized(tokens: &[&str], i: &mut usize, start_offset: usize) ->
     while *i < tokens.len() && depth > 0 {
         let t = tokens[*i];
         for c in t.chars() {
-            if c == '(' { depth += 1; }
-            if c == ')' { depth -= 1; }
+            if c == '(' {
+                depth += 1;
+            }
+            if c == ')' {
+                depth -= 1;
+            }
         }
         parts.push(t);
         *i += 1;
@@ -212,7 +220,10 @@ fn parse_types(s: &str) -> Result<Vec<Type>, String> {
                     inner_types.len()
                 ));
             }
-            types.push(Type::ConstrainedVar(var, Box::new(inner_types.into_iter().next().unwrap())));
+            types.push(Type::ConstrainedVar(
+                var,
+                Box::new(inner_types.into_iter().next().unwrap()),
+            ));
             continue;
         }
 
@@ -675,8 +686,7 @@ mod tests {
 
     #[test]
     fn test_syntax_for() {
-        let decl =
-            parse_declaration("20: Int Int -> FOR $name:Sym body:Prog NEXT ->").unwrap();
+        let decl = parse_declaration("20: Int Int -> FOR $name:Sym body:Prog NEXT ->").unwrap();
         assert_eq!(decl.id, 20);
         assert_eq!(decl.inputs.len(), 2);
         assert!(decl.outputs.is_empty());
@@ -715,7 +725,8 @@ library Stack 72
 
     #[test]
     fn test_constrained_type_variable() {
-        let decl = parse_declaration("0: a:(Int | Real) b:(Int | Real) -> (+) -> Numeric a b").unwrap();
+        let decl =
+            parse_declaration("0: a:(Int | Real) b:(Int | Real) -> (+) -> Numeric a b").unwrap();
         assert_eq!(decl.id, 0);
         assert_eq!(decl.inputs.len(), 2);
         // Check that a is constrained to Int | Real

@@ -72,7 +72,9 @@ impl Console {
 
         // Call init if it exists
         if self.session.vm().directory.lookup("init").is_some() {
-            self.session.eval("'init' RCL EVAL").map_err(|e| format!("{}", e))?;
+            self.session
+                .eval("'init' RCL EVAL")
+                .map_err(|e| format!("{}", e))?;
         }
 
         Ok(())
@@ -81,7 +83,9 @@ impl Console {
     /// Call the `update` entry point (called each frame before draw).
     pub fn update(&mut self) -> Result<(), String> {
         if self.session.vm().directory.lookup("update").is_some() {
-            self.session.eval("'update' RCL EVAL").map_err(|e| format!("{}", e))?;
+            self.session
+                .eval("'update' RCL EVAL")
+                .map_err(|e| format!("{}", e))?;
         }
         Ok(())
     }
@@ -97,7 +101,9 @@ impl Console {
 
         // Execute draw.rpl for sprites and dynamic elements
         if self.session.vm().directory.lookup("draw").is_some() {
-            self.session.eval("'draw' RCL EVAL").map_err(|e| format!("{}", e))?;
+            self.session
+                .eval("'draw' RCL EVAL")
+                .map_err(|e| format!("{}", e))?;
         }
         Ok(())
     }

@@ -7,7 +7,8 @@ use std::{collections::HashMap, path::PathBuf};
 
 use rpl::{
     CompiledProgram, DebugState, ExecuteOutcome, Pos, ReturnEntry, SourceFile, debug_helpers,
-    registry::{InterfaceRegistry, LowererRegistry, ExecutorRegistry}, vm::Vm,
+    registry::{ExecutorRegistry, InterfaceRegistry, LowererRegistry},
+    vm::Vm,
 };
 
 /// A debug session manages the state of debugging a single RPL program.
@@ -55,7 +56,14 @@ impl DebugSession {
     /// Create a new debug session with standard libraries.
     pub fn new(program: CompiledProgram, source: SourceFile, source_path: PathBuf) -> Self {
         let (interfaces, lowerers, executors) = Self::stdlib_registries();
-        Self::with_registries(interfaces, lowerers, executors, program, source, source_path)
+        Self::with_registries(
+            interfaces,
+            lowerers,
+            executors,
+            program,
+            source,
+            source_path,
+        )
     }
 
     /// Create a new debug session with pre-configured registries.
@@ -77,7 +85,15 @@ impl DebugSession {
         source: SourceFile,
         source_path: PathBuf,
     ) -> Self {
-        Self::with_vm_and_registries(Vm::new(), interfaces, lowerers, executors, program, source, source_path)
+        Self::with_vm_and_registries(
+            Vm::new(),
+            interfaces,
+            lowerers,
+            executors,
+            program,
+            source,
+            source_path,
+        )
     }
 
     /// Create a new debug session with an existing VM.
@@ -88,7 +104,15 @@ impl DebugSession {
         source_path: PathBuf,
     ) -> Self {
         let (interfaces, lowerers, executors) = Self::stdlib_registries();
-        Self::with_vm_and_registries(vm, interfaces, lowerers, executors, program, source, source_path)
+        Self::with_vm_and_registries(
+            vm,
+            interfaces,
+            lowerers,
+            executors,
+            program,
+            source,
+            source_path,
+        )
     }
 
     /// Create a new debug session with an existing VM and registries.

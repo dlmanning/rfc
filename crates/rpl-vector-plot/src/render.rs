@@ -79,7 +79,12 @@ fn render_element<R: Renderer>(renderer: &mut R, elem: &Element) {
                     PathCmd::LineTo(p) => renderer.line_to(*p),
                     PathCmd::QuadTo { ctrl, end } => renderer.quad_to(*ctrl, *end),
                     PathCmd::CubicTo { c1, c2, end } => renderer.cubic_to(*c1, *c2, *end),
-                    PathCmd::Arc { center, radius, start_angle, sweep_angle } => {
+                    PathCmd::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        sweep_angle,
+                    } => {
                         renderer.arc(*center, *radius, *start_angle, *sweep_angle);
                     }
                     PathCmd::Close => renderer.close_path(),
@@ -178,7 +183,10 @@ mod tests {
         }
 
         fn text(&mut self, pos: Point, text: &str, size: f32) {
-            self.calls.push(format!("text({}, {}, \"{}\", {})", pos.x, pos.y, text, size));
+            self.calls.push(format!(
+                "text({}, {}, \"{}\", {})",
+                pos.x, pos.y, text, size
+            ));
         }
     }
 

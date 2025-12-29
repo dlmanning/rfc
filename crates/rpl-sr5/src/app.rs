@@ -113,7 +113,8 @@ impl ApplicationHandler for Sr5App {
         }
 
         // Create window with default size (may resize after init)
-        let default_size = LogicalSize::new(DEFAULT_SCREEN_WIDTH * SCALE, DEFAULT_SCREEN_HEIGHT * SCALE);
+        let default_size =
+            LogicalSize::new(DEFAULT_SCREEN_WIDTH * SCALE, DEFAULT_SCREEN_HEIGHT * SCALE);
         let attrs = Window::default_attributes()
             .with_title("Space Robot 5")
             .with_inner_size(default_size)

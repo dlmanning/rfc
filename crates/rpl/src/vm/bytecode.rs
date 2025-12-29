@@ -165,7 +165,6 @@ pub enum Opcode {
     // === RPL extensions (0xC0+) ===
     // These are necessary extensions for RPL semantics that WASM doesn't have.
     // Stack operations (DUP, SWAP, etc.) use CallLib dispatch to libraries.
-
     /// Call a library command. Followed by lib_id (u16) and cmd_id (u16).
     CallLib = 0xC0,
     /// Push a string constant from rodata. Followed by offset (LEB128) and length (LEB128).

@@ -51,8 +51,18 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub const ZERO: Rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
-    pub const EMPTY: Rect = Rect { x: f32::INFINITY, y: f32::INFINITY, w: 0.0, h: 0.0 };
+    pub const ZERO: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    };
+    pub const EMPTY: Rect = Rect {
+        x: f32::INFINITY,
+        y: f32::INFINITY,
+        w: 0.0,
+        h: 0.0,
+    };
 
     #[inline]
     pub const fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
@@ -71,13 +81,21 @@ impl Rect {
     }
 
     #[inline]
-    pub fn min_x(self) -> f32 { self.x }
+    pub fn min_x(self) -> f32 {
+        self.x
+    }
     #[inline]
-    pub fn min_y(self) -> f32 { self.y }
+    pub fn min_y(self) -> f32 {
+        self.y
+    }
     #[inline]
-    pub fn max_x(self) -> f32 { self.x + self.w }
+    pub fn max_x(self) -> f32 {
+        self.x + self.w
+    }
     #[inline]
-    pub fn max_y(self) -> f32 { self.y + self.h }
+    pub fn max_y(self) -> f32 {
+        self.y + self.h
+    }
 
     #[inline]
     pub fn center(self) -> Point {
@@ -114,8 +132,12 @@ impl Rect {
     /// Union of two rects.
     #[inline]
     pub fn union(self, other: Rect) -> Rect {
-        if self.is_empty() { return other; }
-        if other.is_empty() { return self; }
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return self;
+        }
         Rect::from_bounds(
             self.min_x().min(other.min_x()),
             self.min_y().min(other.min_y()),
@@ -173,10 +195,7 @@ impl Color {
     /// Pack to 0xRRGGBBAA format.
     #[inline]
     pub const fn to_packed(self) -> u32 {
-        ((self.r as u32) << 24)
-            | ((self.g as u32) << 16)
-            | ((self.b as u32) << 8)
-            | (self.a as u32)
+        ((self.r as u32) << 24) | ((self.g as u32) << 16) | ((self.b as u32) << 8) | (self.a as u32)
     }
 }
 

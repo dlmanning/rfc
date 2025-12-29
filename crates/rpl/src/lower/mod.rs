@@ -188,7 +188,10 @@ enum ControlFixup {
     /// Loop: needs end_offset patched (branch target is loop start, not end).
     Loop { end_offset_pos: usize },
     /// If: needs else_offset and end_offset patched.
-    If { else_offset_pos: usize, end_offset_pos: usize },
+    If {
+        else_offset_pos: usize,
+        end_offset_pos: usize,
+    },
     /// TryTable: needs end_offset patched.
     TryTable { end_offset_pos: usize },
 }
@@ -473,7 +476,8 @@ impl BytecodeBuffer {
         self.emit_opcode(Opcode::Block);
         self.emit_byte(0x40); // Empty block type
         let end_offset_pos = self.emit_u32_placeholder();
-        self.control_fixups.push(ControlFixup::Block { end_offset_pos });
+        self.control_fixups
+            .push(ControlFixup::Block { end_offset_pos });
     }
 
     /// Emit loop with empty type and placeholder for end offset.
@@ -483,7 +487,8 @@ impl BytecodeBuffer {
         self.emit_opcode(Opcode::Loop);
         self.emit_byte(0x40); // Empty block type
         let end_offset_pos = self.emit_u32_placeholder();
-        self.control_fixups.push(ControlFixup::Loop { end_offset_pos });
+        self.control_fixups
+            .push(ControlFixup::Loop { end_offset_pos });
     }
 
     /// Emit if with empty type and placeholders for else/end offsets.
@@ -494,14 +499,20 @@ impl BytecodeBuffer {
         self.emit_byte(0x40); // Empty block type
         let else_offset_pos = self.emit_u32_placeholder();
         let end_offset_pos = self.emit_u32_placeholder();
-        self.control_fixups.push(ControlFixup::If { else_offset_pos, end_offset_pos });
+        self.control_fixups.push(ControlFixup::If {
+            else_offset_pos,
+            end_offset_pos,
+        });
     }
 
     /// Emit else and patch the else offset in the corresponding If.
     pub fn emit_else(&mut self) {
         self.emit_opcode(Opcode::Else);
         // Patch the else_offset in the If entry to point here
-        if let Some(ControlFixup::If { else_offset_pos, .. }) = self.control_fixups.last() {
+        if let Some(ControlFixup::If {
+            else_offset_pos, ..
+        }) = self.control_fixups.last()
+        {
             let current_pos = self.code.len() as u32;
             self.patch_u32(*else_offset_pos, current_pos);
         }
@@ -520,7 +531,10 @@ impl BytecodeBuffer {
                 ControlFixup::Loop { end_offset_pos } => {
                     self.patch_u32(end_offset_pos, current_pos);
                 }
-                ControlFixup::If { else_offset_pos, end_offset_pos } => {
+                ControlFixup::If {
+                    else_offset_pos,
+                    end_offset_pos,
+                } => {
                     // If there was no Else, else_offset should point to End
                     // Check if else_offset was already patched (non-zero)
                     let else_val = u32::from_le_bytes([
@@ -565,7 +579,8 @@ impl BytecodeBuffer {
         write_leb128_u32(1, &mut self.code); // 1 catch clause
         self.emit_byte(CatchKind::CatchAll.as_byte()); // catch_all
         write_leb128_u32(label, &mut self.code); // branch target
-        self.control_fixups.push(ControlFixup::TryTable { end_offset_pos });
+        self.control_fixups
+            .push(ControlFixup::TryTable { end_offset_pos });
     }
 
     /// Emit try_table with a single catch_all_ref clause.
@@ -578,7 +593,8 @@ impl BytecodeBuffer {
         write_leb128_u32(1, &mut self.code); // 1 catch clause
         self.emit_byte(CatchKind::CatchAllRef.as_byte()); // catch_all_ref
         write_leb128_u32(label, &mut self.code); // branch target
-        self.control_fixups.push(ControlFixup::TryTable { end_offset_pos });
+        self.control_fixups
+            .push(ControlFixup::TryTable { end_offset_pos });
     }
 
     /// Emit throw instruction with a tag index.
@@ -779,9 +795,10 @@ impl<'a> LowerContext<'a> {
     fn stack_snapshot(&self) -> StackSnapshot {
         // Try to get from analysis-computed node_stacks
         if let Some(span) = self.output.current_span()
-            && let Some(snapshot) = self.analysis.node_stacks.get(&span) {
-                return snapshot.clone();
-            }
+            && let Some(snapshot) = self.analysis.node_stacks.get(&span)
+        {
+            return snapshot.clone();
+        }
 
         // Fallback: Unknown types with current depth
         // This happens for non-command contexts where analysis didn't store a snapshot
@@ -834,13 +851,7 @@ impl<'a> LowerContext<'a> {
     /// - If both operands are integers: emits int_op
     /// - If at least one is real and can be coerced: emits real_op
     /// - Otherwise: emits CallLib for runtime type checking
-    pub fn emit_binary_numeric(
-        &mut self,
-        int_op: Opcode,
-        real_op: Opcode,
-        lib: u16,
-        cmd: u16,
-    ) {
+    pub fn emit_binary_numeric(&mut self, int_op: Opcode, real_op: Opcode, lib: u16, cmd: u16) {
         let snapshot = self.stack_snapshot();
         let (tos, nos) = (&snapshot.tos, &snapshot.nos);
 
@@ -870,12 +881,7 @@ impl<'a> LowerContext<'a> {
     ///
     /// Note: Does not update type stack - that's handled by lower_command
     /// which queries the command_effect after this returns.
-    pub fn emit_binary_real_only(
-        &mut self,
-        real_op: Opcode,
-        lib: u16,
-        cmd: u16,
-    ) {
+    pub fn emit_binary_real_only(&mut self, real_op: Opcode, lib: u16, cmd: u16) {
         let snapshot = self.stack_snapshot();
         let (tos, nos) = (&snapshot.tos, &snapshot.nos);
 
@@ -895,13 +901,7 @@ impl<'a> LowerContext<'a> {
     }
 
     /// Emit a binary comparison operation, choosing optimal opcode based on operand types.
-    pub fn emit_binary_comparison(
-        &mut self,
-        int_op: Opcode,
-        real_op: Opcode,
-        lib: u16,
-        cmd: u16,
-    ) {
+    pub fn emit_binary_comparison(&mut self, int_op: Opcode, real_op: Opcode, lib: u16, cmd: u16) {
         let snapshot = self.stack_snapshot();
         let (tos, nos) = (&snapshot.tos, &snapshot.nos);
         let both_int = tos.is_integer() && nos.is_integer();
@@ -1195,7 +1195,13 @@ impl<'a> LowerContext<'a> {
             CompositeKind::Program => {
                 // Compile the program body to separate bytecode with its own string table
                 if let Some(body) = branches.first() {
-                    let nested_program = lower_to_program(body, self.interfaces, self.lowerers, self.interner, self.analysis)?;
+                    let nested_program = lower_to_program(
+                        body,
+                        self.interfaces,
+                        self.lowerers,
+                        self.interner,
+                        self.analysis,
+                    )?;
                     self.output.emit_make_program(&nested_program);
                 } else {
                     self.output.emit_make_program(&CompiledProgram::new());
@@ -1285,7 +1291,7 @@ mod tests {
     use super::*;
     use crate::{
         ir::Node,
-        libs::{ARITH_LIB, arith_cmd, StackEffect, binary_numeric_effect},
+        libs::{ARITH_LIB, StackEffect, arith_cmd, binary_numeric_effect},
     };
 
     fn dummy_span() -> Span {
@@ -1298,10 +1304,19 @@ mod tests {
     struct MockArithInterface;
 
     impl crate::libs::LibraryInterface for MockArithInterface {
-        fn id(&self) -> LibId { ARITH_LIB }
-        fn name(&self) -> &'static str { "Arith" }
+        fn id(&self) -> LibId {
+            ARITH_LIB
+        }
+        fn name(&self) -> &'static str {
+            "Arith"
+        }
 
-        fn command_effect(&self, cmd: u16, tos: Option<TypeId>, nos: Option<TypeId>) -> StackEffect {
+        fn command_effect(
+            &self,
+            cmd: u16,
+            tos: Option<TypeId>,
+            nos: Option<TypeId>,
+        ) -> StackEffect {
             match cmd {
                 arith_cmd::ADD | arith_cmd::SUB | arith_cmd::MUL | arith_cmd::DIV => {
                     binary_numeric_effect(tos, nos)
@@ -1317,7 +1332,9 @@ mod tests {
     struct MockArithImpl;
 
     impl crate::libs::LibraryLowerer for MockArithImpl {
-        fn id(&self) -> LibId { ARITH_LIB }
+        fn id(&self) -> LibId {
+            ARITH_LIB
+        }
 
         fn lower_command(
             &self,
@@ -1326,11 +1343,21 @@ mod tests {
             ctx: &mut LowerContext,
         ) -> Result<(), LowerError> {
             match cmd {
-                arith_cmd::ADD => ctx.emit_binary_numeric(Opcode::I64Add, Opcode::F64Add, ARITH_LIB, cmd),
-                arith_cmd::SUB => ctx.emit_binary_numeric(Opcode::I64Sub, Opcode::F64Sub, ARITH_LIB, cmd),
-                arith_cmd::MUL => ctx.emit_binary_numeric(Opcode::I64Mul, Opcode::F64Mul, ARITH_LIB, cmd),
-                arith_cmd::DIV => ctx.emit_binary_numeric(Opcode::I64DivS, Opcode::F64Div, ARITH_LIB, cmd),
-                arith_cmd::GT => ctx.emit_binary_comparison(Opcode::I64GtS, Opcode::F64Gt, ARITH_LIB, cmd),
+                arith_cmd::ADD => {
+                    ctx.emit_binary_numeric(Opcode::I64Add, Opcode::F64Add, ARITH_LIB, cmd)
+                }
+                arith_cmd::SUB => {
+                    ctx.emit_binary_numeric(Opcode::I64Sub, Opcode::F64Sub, ARITH_LIB, cmd)
+                }
+                arith_cmd::MUL => {
+                    ctx.emit_binary_numeric(Opcode::I64Mul, Opcode::F64Mul, ARITH_LIB, cmd)
+                }
+                arith_cmd::DIV => {
+                    ctx.emit_binary_numeric(Opcode::I64DivS, Opcode::F64Div, ARITH_LIB, cmd)
+                }
+                arith_cmd::GT => {
+                    ctx.emit_binary_comparison(Opcode::I64GtS, Opcode::F64Gt, ARITH_LIB, cmd)
+                }
                 _ => ctx.output.emit_call_lib(ARITH_LIB, cmd),
             }
             Ok(())
@@ -1338,7 +1365,9 @@ mod tests {
     }
 
     impl crate::libs::LibraryExecutor for MockArithImpl {
-        fn id(&self) -> LibId { ARITH_LIB }
+        fn id(&self) -> LibId {
+            ARITH_LIB
+        }
         // Not needed for lowering tests
     }
 
@@ -1617,10 +1646,7 @@ mod tests {
         let analysis = empty_analysis();
         let span1 = Span::new(Pos::new(0), Pos::new(2));
         let span2 = Span::new(Pos::new(3), Pos::new(5));
-        let nodes = vec![
-            Node::integer(1, span1),
-            Node::integer(2, span2),
-        ];
+        let nodes = vec![Node::integer(1, span1), Node::integer(2, span2)];
         let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         // Should have recorded both spans

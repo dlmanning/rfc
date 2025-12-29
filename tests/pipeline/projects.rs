@@ -216,11 +216,7 @@ entry = "main"
     .unwrap();
 
     // Create main.rpl that uses these functions
-    std::fs::write(
-        project_dir.join("main.rpl"),
-        r#"<< 3 square 4 double + >>"#,
-    )
-    .unwrap();
+    std::fs::write(project_dir.join("main.rpl"), r#"<< 3 square 4 double + >>"#).unwrap();
 
     // Build index and verify globals are found
     let index = ProjectIndex::build(&project_dir).expect("failed to build index");
@@ -240,14 +236,8 @@ entry = "main"
 
     // Verify context includes these functions
     let context = index.to_context();
-    assert!(
-        context.is_known("square"),
-        "square should be in context"
-    );
-    assert!(
-        context.is_known("double"),
-        "double should be in context"
-    );
+    assert!(context.is_known("square"), "square should be in context");
+    assert!(context.is_known("double"), "double should be in context");
 
     // Clean up
     std::fs::remove_dir_all(&project_dir).ok();
@@ -310,7 +300,7 @@ fn space_shooter_globals_are_recognized() {
     let context = index.to_context();
     for func_name in &expected_funcs {
         assert!(
-            context.is_known(*func_name),
+            context.is_known(func_name),
             "Expected function '{}' not found in context",
             func_name
         );

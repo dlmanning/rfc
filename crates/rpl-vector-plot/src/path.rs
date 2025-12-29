@@ -110,8 +110,10 @@ impl Path {
             sweep_angle,
         });
         // Conservative bounds: use full circle bounds
-        self.bounds.include_point(Point::new(center.x - radius, center.y - radius));
-        self.bounds.include_point(Point::new(center.x + radius, center.y + radius));
+        self.bounds
+            .include_point(Point::new(center.x - radius, center.y - radius));
+        self.bounds
+            .include_point(Point::new(center.x + radius, center.y + radius));
         // Update current point to arc endpoint
         let end_angle = start_angle + sweep_angle;
         self.current = Point::new(

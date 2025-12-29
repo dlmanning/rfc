@@ -185,14 +185,15 @@ pub fn resolve_constraints(
         let mut representative_tv: Option<super::TypeVar> = None;
         for &member in members {
             if let Some(def) = symbols.get_definition(member)
-                && let Some(Type::TypeVar(tv)) = &def.value_type {
-                    if let Some(repr) = representative_tv {
-                        // Unify this TypeVar with the representative
-                        substitution.unify(*tv, Type::TypeVar(repr));
-                    } else {
-                        representative_tv = Some(*tv);
-                    }
+                && let Some(Type::TypeVar(tv)) = &def.value_type
+            {
+                if let Some(repr) = representative_tv {
+                    // Unify this TypeVar with the representative
+                    substitution.unify(*tv, Type::TypeVar(repr));
+                } else {
+                    representative_tv = Some(*tv);
                 }
+            }
         }
     }
 
@@ -376,7 +377,9 @@ pub fn finalize_signatures(
         // Now apply the updates with a mutable borrow
         if let Some((param_types, mut new_outputs)) = updates {
             // If any output is Unknown or TypeVar, try to resolve from return origin
-            if new_outputs.iter().any(|o| o.is_unknown() || o.is_type_var())
+            if new_outputs
+                .iter()
+                .any(|o| o.is_unknown() || o.is_type_var())
                 && let Some(origin) = return_origins.get(&def_name)
             {
                 // Get all def_ids from the origin (handles Phi nodes)

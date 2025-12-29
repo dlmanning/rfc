@@ -197,7 +197,12 @@ impl Renderer for Sr5Renderer<'_> {
     }
 
     fn stroke(&mut self, stroke: &Stroke) {
-        let color = rgba_to_555(stroke.color.r, stroke.color.g, stroke.color.b, stroke.color.a);
+        let color = rgba_to_555(
+            stroke.color.r,
+            stroke.color.g,
+            stroke.color.b,
+            stroke.color.a,
+        );
         for shape in &self.shapes {
             match shape {
                 PathShape::Line(x1, y1, x2, y2) => {

@@ -469,9 +469,10 @@ fn format_for_edit(value: &Value) -> String {
         Value::Program(data) => {
             // Return the program source if available from source map
             if let Some(ref source_map) = data.source_map
-                && !source_map.source.is_empty() {
-                    return source_map.source.clone();
-                }
+                && !source_map.source.is_empty()
+            {
+                return source_map.source.clone();
+            }
             format!("<< {} bytes >>", data.code.len())
         }
         Value::Symbolic(expr) => format!("'{}", expr),

@@ -1,8 +1,8 @@
 //! Tests for program literals and local bindings.
 
-use rpl::value::Value;
 #[allow(unused_imports)]
 use rpl::Session;
+use rpl::value::Value;
 
 use super::assert_stack_eq;
 
@@ -115,10 +115,7 @@ fn local_binding_with_computation() {
 // The interner is stored in the VM and available during nested EVAL calls.
 #[test]
 fn local_binding_in_stored_program() {
-    assert_stack_eq(
-        r#"<< -> n << n 1 + >> >> 'add1' STO 5 add1"#,
-        &[6.0],
-    );
+    assert_stack_eq(r#"<< -> n << n 1 + >> >> 'add1' STO 5 add1"#, &[6.0]);
 }
 
 // Jump targets in stored programs are compiled as relative offsets to the

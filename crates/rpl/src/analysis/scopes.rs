@@ -255,10 +255,7 @@ mod tests {
             Scope::new(ScopeKind::LocalBinding, make_span(10, 90), None),
             s1,
         );
-        let s3 = tree.add_scope(
-            Scope::new(ScopeKind::Loop, make_span(20, 80), None),
-            s2,
-        );
+        let s3 = tree.add_scope(Scope::new(ScopeKind::Loop, make_span(20, 80), None), s2);
 
         let ancestors = tree.ancestors(s3);
         assert_eq!(ancestors, vec![s2, s1, ScopeId::root()]);

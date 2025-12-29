@@ -1198,9 +1198,7 @@ fn local_in_nested_program_is_referenced() {
     let unused_x: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| {
-            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("'x'")
-        })
+        .filter(|d| matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("'x'"))
         .collect();
 
     assert!(
@@ -1258,10 +1256,7 @@ fn local_in_stored_function_is_referenced() {
         .filter(|d| d.name == "btns")
         .collect();
 
-    assert!(
-        !btns_defs.is_empty(),
-        "Should find definition for 'btns'"
-    );
+    assert!(!btns_defs.is_empty(), "Should find definition for 'btns'");
 
     let btns_def = btns_defs[0];
     assert!(
@@ -1273,9 +1268,7 @@ fn local_in_stored_function_is_referenced() {
     let unused_btns: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| {
-            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns")
-        })
+        .filter(|d| matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns"))
         .collect();
 
     assert!(
@@ -1308,9 +1301,7 @@ fn local_in_nested_if_is_referenced() {
     let unused_btns: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| {
-            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns")
-        })
+        .filter(|d| matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns"))
         .collect();
 
     assert!(

@@ -43,7 +43,10 @@ fn load_nested_project() {
 
     // Check manifest
     assert_eq!(project.manifest().project.name, "nested");
-    assert_eq!(project.manifest().project.version, Some("1.0.0".to_string()));
+    assert_eq!(
+        project.manifest().project.version,
+        Some("1.0.0".to_string())
+    );
 
     // Check nested directory contents
     let square = project.session().vm().directory.lookup("math.square");
@@ -186,10 +189,7 @@ fn index_infers_explicit_parameters() {
 
     // lib.add_one uses explicit parameter: -> x << x 1 + >>
     let add_one_sig = index.get_signature("lib.add_one");
-    assert!(
-        add_one_sig.is_some(),
-        "lib.add_one should have a signature"
-    );
+    assert!(add_one_sig.is_some(), "lib.add_one should have a signature");
     let sig = add_one_sig.unwrap();
     eprintln!("lib.add_one signature: {:?}", sig);
 
@@ -233,20 +233,20 @@ fn index_analysis_has_no_errors() {
 
     // Check that all program entries have clean analysis (no errors)
     for (key, entry) in &index.entries {
-        if entry.value_type.is_program() {
-            if let Some(ref analysis) = entry.analysis {
-                let errors: Vec<_> = analysis
-                    .diagnostics
-                    .iter()
-                    .filter(|d| d.severity == rpl::analysis::Severity::Error)
-                    .collect();
-                assert!(
-                    errors.is_empty(),
-                    "Program '{}' has errors: {:?}",
-                    key,
-                    errors
-                );
-            }
+        if entry.value_type.is_program()
+            && let Some(ref analysis) = entry.analysis
+        {
+            let errors: Vec<_> = analysis
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == rpl::analysis::Severity::Error)
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "Program '{}' has errors: {:?}",
+                key,
+                errors
+            );
         }
     }
 }

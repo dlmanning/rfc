@@ -92,7 +92,13 @@ pub trait Visitor {
     }
 
     /// Visit an extended composite (library-defined construct).
-    fn visit_extended(&mut self, lib: crate::ir::LibId, construct_id: u16, branches: &[Branch], node: &Node) {
+    fn visit_extended(
+        &mut self,
+        lib: crate::ir::LibId,
+        construct_id: u16,
+        branches: &[Branch],
+        node: &Node,
+    ) {
         let _ = (lib, construct_id, branches, node);
     }
 }
@@ -141,7 +147,12 @@ fn walk_atom<V: Visitor>(visitor: &mut V, atom: &AtomKind, node: &Node) {
 }
 
 /// Walk a composite, calling specific visitor methods.
-fn walk_composite<V: Visitor>(visitor: &mut V, kind: &CompositeKind, branches: &[Branch], node: &Node) {
+fn walk_composite<V: Visitor>(
+    visitor: &mut V,
+    kind: &CompositeKind,
+    branches: &[Branch],
+    node: &Node,
+) {
     match kind {
         CompositeKind::Program => {
             if let Some(body) = branches.first() {
@@ -171,8 +182,8 @@ fn walk_composite<V: Visitor>(visitor: &mut V, kind: &CompositeKind, branches: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Node;
     use crate::core::{Pos, Span};
+    use crate::ir::Node;
 
     fn dummy_span() -> Span {
         Span::new(Pos::new(0), Pos::new(1))
@@ -289,20 +300,22 @@ mod tests {
     fn skip_children() {
         let nodes = vec![
             Node::integer(1, dummy_span()),
-            Node::program(
-                vec![Node::integer(99, dummy_span())],
-                dummy_span(),
-            ),
+            Node::program(vec![Node::integer(99, dummy_span())], dummy_span()),
             Node::integer(2, dummy_span()),
         ];
 
-        let mut visitor = SkippingVisitor { visited: Vec::new() };
+        let mut visitor = SkippingVisitor {
+            visited: Vec::new(),
+        };
         walk_nodes(&mut visitor, &nodes);
 
-        assert_eq!(visitor.visited, vec![
-            "int(1)".to_string(),
-            "program(skipped)".to_string(),
-            "int(2)".to_string(),
-        ]);
+        assert_eq!(
+            visitor.visited,
+            vec![
+                "int(1)".to_string(),
+                "program(skipped)".to_string(),
+                "int(2)".to_string(),
+            ]
+        );
     }
 }

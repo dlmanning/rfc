@@ -59,7 +59,11 @@ impl Paint {
 
     /// Create a radial gradient.
     pub fn radial_gradient(center: Point, radius: f32, stops: Vec<GradientStop>) -> Self {
-        Paint::RadialGradient { center, radius, stops }
+        Paint::RadialGradient {
+            center,
+            radius,
+            stops,
+        }
     }
 }
 

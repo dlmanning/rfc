@@ -134,8 +134,7 @@ impl ParseError {
     pub fn to_diagnostic(&self) -> crate::error::Diagnostic {
         use crate::error::{Diagnostic, ErrorCode};
 
-        let mut builder = Diagnostic::error(ErrorCode::E100, self.span)
-            .message(&self.message);
+        let mut builder = Diagnostic::error(ErrorCode::E100, self.span).message(&self.message);
 
         // Add expected/found as a label if available
         if let (Some(expected), Some(found)) = (&self.expected, &self.found) {
@@ -755,7 +754,8 @@ fn parse_symbolic(ctx: &mut ParseContext, open_span: Span) -> Result<Node, Parse
             // Check if this is a simple path name (identifiers, numbers, and dots only)
             // Examples: 'x', 'entities', 'entities.0.x'
             let is_simple_path = tokens.iter().all(|t| {
-                t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                t.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
             });
 
             if is_simple_path {

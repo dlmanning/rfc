@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use rpl::{
     Span,
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryInterface, LibraryLowerer},
+    libs::{
+        CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor,
+        LibraryInterface, LibraryLowerer,
+    },
     lower::{LowerContext, LowerError},
     value::Value,
 };
@@ -110,18 +113,28 @@ impl LibraryExecutor for Sr5SystemLib {
                 let height = match ctx.pop() {
                     Ok(Value::Integer(v)) => v as u32,
                     Ok(Value::Real(v)) => v as u32,
-                    Ok(other) => return Err(format!("SCREEN: expected number for height, got {:?}", other)),
+                    Ok(other) => {
+                        return Err(format!(
+                            "SCREEN: expected number for height, got {:?}",
+                            other
+                        ));
+                    }
                     Err(_) => return Err("SCREEN: stack underflow".into()),
                 };
                 let width = match ctx.pop() {
                     Ok(Value::Integer(v)) => v as u32,
                     Ok(Value::Real(v)) => v as u32,
-                    Ok(other) => return Err(format!("SCREEN: expected number for width, got {:?}", other)),
+                    Ok(other) => {
+                        return Err(format!(
+                            "SCREEN: expected number for width, got {:?}",
+                            other
+                        ));
+                    }
                     Err(_) => return Err("SCREEN: stack underflow".into()),
                 };
 
                 // Validate reasonable bounds
-                if width < 128 || width > 1920 || height < 128 || height > 1080 {
+                if !(128..=1920).contains(&width) || !(128..=1080).contains(&height) {
                     return Err("SCREEN: resolution must be 128-1920 x 128-1080".into());
                 }
 

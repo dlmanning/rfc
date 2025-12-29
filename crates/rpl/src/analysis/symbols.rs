@@ -5,8 +5,8 @@
 
 use crate::core::Span;
 
-use super::scopes::ScopeId;
 use super::Type;
+use super::scopes::ScopeId;
 use crate::types::{ConstraintSource, Signature};
 
 /// Unique identifier for a definition.
@@ -292,7 +292,10 @@ impl SymbolTable {
     }
 
     /// Find definitions by name.
-    pub fn find_definitions_by_name<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Definition> + 'a {
+    pub fn find_definitions_by_name<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a Definition> + 'a {
         self.definitions.iter().filter(move |d| d.name == name)
     }
 

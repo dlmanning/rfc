@@ -22,7 +22,10 @@ pub fn format_value(value: &Value) -> String {
             }
         }
         Value::Program(data) => {
-            let has_source = data.source_map.as_ref().is_some_and(|sm| !sm.source.is_empty());
+            let has_source = data
+                .source_map
+                .as_ref()
+                .is_some_and(|sm| !sm.source.is_empty());
             let debug_marker = if has_source { " [source]" } else { "" };
             format!("<< {} bytes{} >>", data.code.len(), debug_marker)
         }

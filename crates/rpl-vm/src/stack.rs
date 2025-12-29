@@ -70,9 +70,10 @@ impl Stack {
     /// Push a value onto the stack.
     pub fn push(&mut self, value: Value) -> Result<(), StackError> {
         if let Some(max) = self.max_size
-            && self.items.len() >= max {
-                return Err(StackError::Overflow);
-            }
+            && self.items.len() >= max
+        {
+            return Err(StackError::Overflow);
+        }
         self.items.push(value);
         Ok(())
     }

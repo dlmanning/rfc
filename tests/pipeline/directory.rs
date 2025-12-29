@@ -23,10 +23,7 @@ fn var_sto_rcl_real() {
 #[test]
 fn var_sto_multiple() {
     // Store two different variables
-    assert_stack_eq(
-        "10 'a' STO 20 'b' STO 'a' RCL 'b' RCL",
-        &[10.0, 20.0],
-    );
+    assert_stack_eq("10 'a' STO 20 'b' STO 'a' RCL 'b' RCL", &[10.0, 20.0]);
 }
 
 #[test]
@@ -173,9 +170,7 @@ fn var_rename() {
 fn var_rename_old_gone() {
     // After RENAME, old name should not exist
     let mut session = crate::session_with_stdlib();
-    session
-        .eval("42 'old' STO 'old' 'new' RENAME")
-        .unwrap();
+    session.eval("42 'old' STO 'old' 'new' RENAME").unwrap();
     assert!(
         session.eval("'old' RCL").is_err(),
         "old name should not exist after RENAME"
@@ -301,9 +296,7 @@ fn packdir_roundtrip_single_var() {
     // Pack directory, clear, unpack, verify value restored
     // All in one eval to preserve stack between operations
     let mut session = crate::session_with_stdlib();
-    session
-        .eval("42 'x' STO PACKDIR CLVAR UNPACKDIR")
-        .unwrap();
+    session.eval("42 'x' STO PACKDIR CLVAR UNPACKDIR").unwrap();
     let values = session.eval("'x' RCL").unwrap();
     assert_eq!(values.len(), 1);
     match &values[0] {
@@ -417,14 +410,10 @@ fn packdir_with_subdirectories() {
     // Note: We can only test with empty subdirectories since there's no
     // RPL command to enter a directory programmatically
     let mut session = crate::session_with_stdlib();
-    session
-        .eval("CLVAR 1 'rootvar' STO 'sub' CRDIR")
-        .unwrap();
+    session.eval("CLVAR 1 'rootvar' STO 'sub' CRDIR").unwrap();
 
     // Pack root (includes empty subdirectory), clear, then unpack
-    session
-        .eval("PACKDIR 'sub' PGDIR CLVAR UNPACKDIR")
-        .unwrap();
+    session.eval("PACKDIR 'sub' PGDIR CLVAR UNPACKDIR").unwrap();
 
     // Verify root variable was restored
     let values = session.eval("'rootvar' RCL").unwrap();

@@ -107,10 +107,7 @@ fn render_editor(frame: &mut Frame, app: &App, area: Rect) {
 
         // Reserve first line for error
         if inner.height > 1 {
-            let error_area = Rect {
-                height: 1,
-                ..inner
-            };
+            let error_area = Rect { height: 1, ..inner };
             frame.render_widget(error_para, error_area);
 
             // Render editor content below error
@@ -145,7 +142,12 @@ fn render_editor_content(frame: &mut Frame, app: &App, area: Rect) {
 
     // Build visible lines
     let mut display_lines: Vec<Line> = Vec::new();
-    for (i, line) in lines.iter().enumerate().skip(scroll_offset).take(visible_lines) {
+    for (i, line) in lines
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_lines)
+    {
         let line_num = i + 1;
         let line_num_str = format!("{:3} ", line_num);
 
@@ -159,9 +161,10 @@ fn render_editor_content(frame: &mut Frame, app: &App, area: Rect) {
     while display_lines.len() < visible_lines {
         let line_num = scroll_offset + display_lines.len() + 1;
         let line_num_str = format!("{:3} ", line_num);
-        display_lines.push(Line::from(vec![
-            Span::styled(line_num_str, Style::default().fg(Color::DarkGray)),
-        ]));
+        display_lines.push(Line::from(vec![Span::styled(
+            line_num_str,
+            Style::default().fg(Color::DarkGray),
+        )]));
     }
 
     let paragraph = Paragraph::new(display_lines);
@@ -192,7 +195,11 @@ fn render_search_overlay(frame: &mut Frame, app: &App) {
 
         let query = search.query();
         let match_info = if search.has_matches() {
-            format!(" ({}/{})", search.current_match_index(), search.match_count())
+            format!(
+                " ({}/{})",
+                search.current_match_index(),
+                search.match_count()
+            )
         } else if !query.is_empty() {
             " (no match)".to_string()
         } else {
@@ -261,12 +268,16 @@ fn render_menu(frame: &mut Frame, app: &App, area: Rect) {
             (item_width - 1) as usize
         };
         let padding_left = (cell_width.saturating_sub(text_len)) / 2;
-        let padding_right = cell_width.saturating_sub(text_len).saturating_sub(padding_left);
+        let padding_right = cell_width
+            .saturating_sub(text_len)
+            .saturating_sub(padding_left);
 
         spans.push(Span::raw(" ".repeat(padding_left)));
         spans.push(Span::styled(
             *item,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" ".repeat(padding_right)));
     }

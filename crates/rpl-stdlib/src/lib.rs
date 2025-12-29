@@ -158,7 +158,12 @@ mod tests {
         register_interfaces(&mut registry);
         let mut interner = rpl::core::Interner::new();
         let nodes = rpl::parse::parse(source, &registry, &mut interner).expect("parse failed");
-        rpl::analysis::analyze(&nodes, &registry, &interner, &rpl::analysis::Context::empty())
+        rpl::analysis::analyze(
+            &nodes,
+            &registry,
+            &interner,
+            &rpl::analysis::Context::empty(),
+        )
     }
 
     #[test]

@@ -26,9 +26,13 @@ pub fn load_source(source: &str, path: &Path) -> Result<rpl::value::Value, LoadE
         source: e,
     })?;
 
-    session.vm_mut().stack.pop().map_err(|_| LoadError::NoValue {
-        path: path.to_owned(),
-    })
+    session
+        .vm_mut()
+        .stack
+        .pop()
+        .map_err(|_| LoadError::NoValue {
+            path: path.to_owned(),
+        })
 }
 
 /// Collect all files matching include patterns, excluding exclude patterns.
@@ -120,10 +124,7 @@ pub fn path_to_key(project_dir: &Path, file_path: &Path) -> Result<String, LoadE
     let without_ext = rel_path.with_extension("");
 
     // Use dots as separators (/ is division operator, . is not used for anything else)
-    Ok(without_ext
-        .to_string_lossy()
-        .replace('\\', ".")
-        .replace('/', "."))
+    Ok(without_ext.to_string_lossy().replace(['\\', '/'], "."))
 }
 
 #[cfg(test)]

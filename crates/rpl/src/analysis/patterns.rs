@@ -81,14 +81,14 @@ pub fn recognize_patterns(nodes: &[Node], registry: &InterfaceRegistry) -> Patte
         if i + 2 < nodes.len()
             && let Some((pattern, name_pattern, sto_pattern)) =
                 try_function_def(&nodes[i], &nodes[i + 1], &nodes[i + 2], registry)
-            {
-                let body_span = nodes[i].span;
-                patterns.insert(body_span, pattern);
-                patterns.insert(nodes[i + 1].span, name_pattern);
-                patterns.insert(nodes[i + 2].span, sto_pattern);
-                i += 3;
-                continue;
-            }
+        {
+            let body_span = nodes[i].span;
+            patterns.insert(body_span, pattern);
+            patterns.insert(nodes[i + 1].span, name_pattern);
+            patterns.insert(nodes[i + 2].span, sto_pattern);
+            i += 3;
+            continue;
+        }
 
         // Recurse into composite nodes
         if let NodeKind::Composite(_, branches) = &nodes[i].kind {
@@ -273,7 +273,10 @@ fn is_define_command(node: &Node, registry: &InterfaceRegistry) -> bool {
 /// Extract parameters from a program body.
 ///
 /// Returns (param_count, param_info_list).
-fn extract_program_params(body_branches: &[Branch], registry: &InterfaceRegistry) -> (usize, Vec<ParamInfo>) {
+fn extract_program_params(
+    body_branches: &[Branch],
+    registry: &InterfaceRegistry,
+) -> (usize, Vec<ParamInfo>) {
     // A program with parameters starts with a local binding construct (->)
     // Body structure: [[binding_construct, ...rest]]
     if body_branches.is_empty() || body_branches[0].is_empty() {
@@ -291,7 +294,10 @@ fn extract_program_params(body_branches: &[Branch], registry: &InterfaceRegistry
     };
 
     // Get binding branches for this construct
-    let binding_indices = registry.get(lib).map(|i| i.binding_branches(construct_id, inner_branches.len())).unwrap_or_default();
+    let binding_indices = registry
+        .get(lib)
+        .map(|i| i.binding_branches(construct_id, inner_branches.len()))
+        .unwrap_or_default();
     if binding_indices.is_empty() {
         return (0, vec![]);
     }

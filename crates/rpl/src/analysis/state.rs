@@ -1,18 +1,15 @@
-//! Stack state and traversal context for analyzer-v2.
+//! Stack state for analyzer-v2.
 //!
 //! This module provides:
 //! - `StackState`: Parallel tracking of types and origins on the abstract stack
 //! - `Substitution`: Type variable substitution map
-//! - `Context`: Traversal context carrying state through analysis
 
 use std::collections::HashMap;
 
-use super::ScopeId;
-use crate::core::{Interner, Span};
+use crate::core::Span;
 use crate::libs::StackEffect;
-use crate::registry::InterfaceRegistry;
 
-use super::types::{Constraint, Origin, Type, TypeVar};
+use super::types::{Origin, Type, TypeVar};
 
 /// Parallel tracking of types and origins on the abstract stack.
 ///
@@ -213,14 +210,16 @@ impl StackState {
                         }
                         crate::libs::ResultType::OneOf(ts) => {
                             // Convert SmallVec<[TypeId; 2]> to SmallVec<[TypeId; 4]>
-                            (Type::OneOf(ts.iter().copied().collect()), Origin::Result(span))
+                            (
+                                Type::OneOf(ts.iter().copied().collect()),
+                                Origin::Result(span),
+                            )
                         }
-                        crate::libs::ResultType::Unknown => {
-                            (Type::Unknown, Origin::Result(span))
-                        }
+                        crate::libs::ResultType::Unknown => (Type::Unknown, Origin::Result(span)),
                         crate::libs::ResultType::FromInput(i) => {
                             // Preserve both type AND origin from input
-                            input_items.get(*i as usize)
+                            input_items
+                                .get(*i as usize)
                                 .cloned()
                                 .unwrap_or((Type::Unknown, Origin::Unknown))
                         }
@@ -320,79 +319,6 @@ impl Substitution {
         for (var, ty) in other.map {
             self.unify(var, ty);
         }
-    }
-}
-
-/// Traversal context carrying state through analysis.
-///
-/// This is passed through the visitor methods during Phase 3.
-pub struct Context<'a> {
-    /// Registry for querying effects and bindings.
-    pub registry: &'a InterfaceRegistry,
-    /// Interner for symbol resolution.
-    pub interner: &'a Interner,
-    /// Current scope ID.
-    pub current_scope: ScopeId,
-    /// Abstract stack state with types and origins.
-    pub stack: StackState,
-    /// Saved stacks for nested programs.
-    pub saved_stacks: Vec<StackState>,
-    /// Collected constraints to solve in Phase 4.
-    pub constraints: Vec<Constraint>,
-    /// Type variable substitutions.
-    pub substitution: Substitution,
-    /// Counter for generating fresh type variables.
-    next_type_var: u32,
-}
-
-impl<'a> Context<'a> {
-    /// Create a new context.
-    pub fn new(registry: &'a InterfaceRegistry, interner: &'a Interner) -> Self {
-        Self {
-            registry,
-            interner,
-            current_scope: ScopeId::root(),
-            stack: StackState::new(),
-            saved_stacks: Vec::new(),
-            constraints: Vec::new(),
-            substitution: Substitution::new(),
-            next_type_var: 0,
-        }
-    }
-
-    /// Generate a fresh type variable.
-    pub fn fresh_type_var(&mut self) -> TypeVar {
-        let var = TypeVar(self.next_type_var);
-        self.next_type_var += 1;
-        var
-    }
-
-    /// Get the current type variable counter (for resuming after global collection).
-    pub fn type_var_counter(&self) -> u32 {
-        self.next_type_var
-    }
-
-    /// Set the type variable counter (after global collection).
-    pub fn set_type_var_counter(&mut self, counter: u32) {
-        self.next_type_var = counter;
-    }
-
-    /// Add a constraint to be solved in Phase 4.
-    pub fn add_constraint(&mut self, constraint: Constraint) {
-        self.constraints.push(constraint);
-    }
-
-    /// Save the current stack state (entering a program body).
-    pub fn save_stack(&mut self) {
-        self.saved_stacks.push(std::mem::take(&mut self.stack));
-        self.stack = StackState::new();
-    }
-
-    /// Restore the saved stack state (exiting a program body).
-    pub fn restore_stack(&mut self) -> Option<StackState> {
-        self.saved_stacks.pop().map(|saved| {
-            std::mem::replace(&mut self.stack, saved)
-        })
     }
 }
 

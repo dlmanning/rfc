@@ -5,7 +5,7 @@ use ratatui::symbols::Marker;
 use ratatui::widgets::canvas::{Canvas, Circle, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::plot_decoder::{decode_plot, plot_bounds, PlotCommand};
+use crate::plot_decoder::{PlotCommand, decode_plot, plot_bounds};
 
 /// 2D affine transform matrix (row-major: [[a, b, tx], [c, d, ty]]).
 #[derive(Clone, Copy, Debug)]
@@ -177,7 +177,12 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
     frame.render_widget(block, area);
 
     // Reserve space for help text at bottom (1 line)
-    let canvas_area = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
+    let canvas_area = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
     let help_area = Rect::new(
         inner.x,
         inner.y + inner.height.saturating_sub(1),
@@ -249,7 +254,14 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
                             path.push((px, py));
                         }
                     }
-                    PlotCommand::CubicTo { c1x, c1y, c2x, c2y, x, y } => {
+                    PlotCommand::CubicTo {
+                        c1x,
+                        c1y,
+                        c2x,
+                        c2y,
+                        x,
+                        y,
+                    } => {
                         // Approximate cubic bezier with line segments
                         let (tc1x, tc1y) = transform.apply(c1x, c1y);
                         let (tc2x, tc2y) = transform.apply(c2x, c2y);
@@ -277,7 +289,13 @@ pub fn render_plot_view(frame: &mut Frame, state: &PlotViewState, area: Rect) {
                             path.push((px, py));
                         }
                     }
-                    PlotCommand::Arc { cx, cy, radius, start, sweep } => {
+                    PlotCommand::Arc {
+                        cx,
+                        cy,
+                        radius,
+                        start,
+                        sweep,
+                    } => {
                         let (tcx, tcy) = transform.apply(cx, cy);
                         let scaled_radius = radius * transform.average_scale();
 

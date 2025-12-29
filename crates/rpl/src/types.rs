@@ -7,7 +7,7 @@
 use crate::analysis::DefinitionId;
 use crate::analysis::Type;
 use crate::core::{Span, TypeId};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 // ============================================================================
 // Program Signatures

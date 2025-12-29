@@ -15,7 +15,7 @@
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
-use crate::hardware::{Sr5Hardware, NUM_TILE_LAYERS};
+use crate::hardware::{NUM_TILE_LAYERS, Sr5Hardware};
 
 /// Uniform buffer layout for a single tile layer.
 ///
@@ -105,12 +105,30 @@ struct Vertex {
 }
 
 const QUAD_VERTICES: [Vertex; 6] = [
-    Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0] },
-    Vertex { position: [ 1.0, -1.0], uv: [1.0, 1.0] },
-    Vertex { position: [ 1.0,  1.0], uv: [1.0, 0.0] },
-    Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0] },
-    Vertex { position: [ 1.0,  1.0], uv: [1.0, 0.0] },
-    Vertex { position: [-1.0,  1.0], uv: [0.0, 0.0] },
+    Vertex {
+        position: [-1.0, -1.0],
+        uv: [0.0, 1.0],
+    },
+    Vertex {
+        position: [1.0, -1.0],
+        uv: [1.0, 1.0],
+    },
+    Vertex {
+        position: [1.0, 1.0],
+        uv: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-1.0, -1.0],
+        uv: [0.0, 1.0],
+    },
+    Vertex {
+        position: [1.0, 1.0],
+        uv: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-1.0, 1.0],
+        uv: [0.0, 0.0],
+    },
 ];
 
 const TILE_SHADER: &str = include_str!("shaders/tile.wgsl");
@@ -125,51 +143,52 @@ impl GpuTileRenderer {
         });
 
         // Create bind group layout
-        let layer_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Tile Layer Bind Group Layout"),
-            entries: &[
-                // Uniforms
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let layer_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Tile Layer Bind Group Layout"),
+                entries: &[
+                    // Uniforms
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Tilesheet texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    // Tilesheet texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Tilemap storage buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    // Tilemap storage buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -289,6 +308,7 @@ impl GpuTileRenderer {
 
     /// Ensure tilesheet texture exists and is up to date.
     /// Returns true if the texture was created/updated.
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_tilesheet(
         &mut self,
         device: &wgpu::Device,
@@ -470,19 +490,27 @@ impl GpuTileRenderer {
                     let map = hw.tilemaps.get(tilemap_id)?;
 
                     // Check if we need to sync tilesheet (bank generation changed)
-                    let need_sheet_sync = self.tilesheet_generations.get(tilesheet_id)
-                        .map_or(true, |g| *g != Some(sheet_bank_gen));
+                    let need_sheet_sync = self
+                        .tilesheet_generations
+                        .get(tilesheet_id)
+                        .is_none_or(|g| *g != Some(sheet_bank_gen));
 
                     // Check if we need to sync tilemap (map generation changed)
-                    let need_map_sync = self.tilemap_generations.get(tilemap_id)
-                        .map_or(true, |g| *g != Some(map.generation));
+                    let need_map_sync = self
+                        .tilemap_generations
+                        .get(tilemap_id)
+                        .is_none_or(|g| *g != Some(map.generation));
 
                     Some((
                         layer_idx,
                         tilemap_id,
                         tilesheet_id,
                         // Only clone if needed
-                        if need_sheet_sync { Some(sheet.data.clone()) } else { None },
+                        if need_sheet_sync {
+                            Some(sheet.data.clone())
+                        } else {
+                            None
+                        },
                         sheet.width,
                         sheet.height,
                         sheet.tile_size,
@@ -490,7 +518,11 @@ impl GpuTileRenderer {
                         sheet.rows,
                         sheet_bank_gen,
                         // Only clone if needed
-                        if need_map_sync { Some(map.tiles.clone()) } else { None },
+                        if need_map_sync {
+                            Some(map.tiles.clone())
+                        } else {
+                            None
+                        },
                         map.width,
                         map.height,
                         map.generation,
@@ -543,12 +575,8 @@ impl GpuTileRenderer {
                 sheet_bank_gen,
             );
 
-            let map_updated = self.sync_tilemap(
-                device,
-                tilemap_id,
-                map_tiles.as_deref(),
-                map_generation,
-            );
+            let map_updated =
+                self.sync_tilemap(device, tilemap_id, map_tiles.as_deref(), map_generation);
 
             let uniforms = LayerUniforms {
                 screen_size: [self.screen_width as f32, self.screen_height as f32],
@@ -572,7 +600,13 @@ impl GpuTileRenderer {
 
             // Only recreate bind group if resources changed
             let force_bind_group = sheet_updated || map_updated;
-            self.update_layer_bind_group(device, layer_idx, tilesheet_id, tilemap_id, force_bind_group);
+            self.update_layer_bind_group(
+                device,
+                layer_idx,
+                tilesheet_id,
+                tilemap_id,
+                force_bind_group,
+            );
         }
 
         // Create command encoder

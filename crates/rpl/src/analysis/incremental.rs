@@ -27,10 +27,10 @@
 
 use crate::core::{Interner, Pos, Span};
 
+use super::analyze;
 use super::context::Context;
 use super::result::AnalysisResult;
 use super::scopes::ScopeId;
-use super::analyze;
 use crate::ir::Node;
 use crate::parse::parse;
 use crate::registry::InterfaceRegistry;
@@ -218,9 +218,8 @@ impl IncrementalAnalysis {
         let end = end.min(self.source.len());
 
         // Replace the range with new text
-        let mut new_source = String::with_capacity(
-            self.source.len() - (end - start) + edit.new_text.len(),
-        );
+        let mut new_source =
+            String::with_capacity(self.source.len() - (end - start) + edit.new_text.len());
         new_source.push_str(&self.source[..start]);
         new_source.push_str(&edit.new_text);
         new_source.push_str(&self.source[end..]);
@@ -296,7 +295,12 @@ impl IncrementalAnalysis {
     }
 
     /// Perform a full re-parse and re-analyze.
-    fn full_update(&mut self, registry: &InterfaceRegistry, interner: &mut Interner, context: &Context) {
+    fn full_update(
+        &mut self,
+        registry: &InterfaceRegistry,
+        interner: &mut Interner,
+        context: &Context,
+    ) {
         self.nodes = parse(&self.source, registry, interner).unwrap_or_default();
 
         self.result = analyze(&self.nodes, registry, interner, context);
@@ -468,7 +472,12 @@ mod tests {
         assert_eq!(state.version(), 0);
 
         // Replace "2" with "3"
-        state.apply_edit(SpanEdit::new(2, 3, "3".into()), &registry, &mut interner, &context);
+        state.apply_edit(
+            SpanEdit::new(2, 3, "3".into()),
+            &registry,
+            &mut interner,
+            &context,
+        );
 
         assert_eq!(state.source(), "1 3 +");
         assert_eq!(state.version(), 1);
@@ -483,7 +492,12 @@ mod tests {
         let mut state = IncrementalAnalysis::new("1 2", &registry, &mut interner, &context);
 
         // Insert " +" at end
-        state.apply_edit(SpanEdit::insert(3, " +".into()), &registry, &mut interner, &context);
+        state.apply_edit(
+            SpanEdit::insert(3, " +".into()),
+            &registry,
+            &mut interner,
+            &context,
+        );
 
         assert_eq!(state.source(), "1 2 +");
     }
@@ -508,13 +522,19 @@ mod tests {
         let mut interner = Interner::new();
         let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
+        let mut state =
+            IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
 
         // Should have one definition
         assert_eq!(state.result().definition_count(), 1);
 
         // Change value from 42 to 100
-        state.apply_edit(SpanEdit::new(0, 2, "100".into()), &registry, &mut interner, &context);
+        state.apply_edit(
+            SpanEdit::new(0, 2, "100".into()),
+            &registry,
+            &mut interner,
+            &context,
+        );
 
         assert_eq!(state.source(), "100 \"x\" STO");
         // Should still have one definition
@@ -527,7 +547,8 @@ mod tests {
         let mut interner = Interner::new();
         let context = Context::empty();
 
-        let mut state = IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
+        let mut state =
+            IncrementalAnalysis::new("42 \"x\" STO", &registry, &mut interner, &context);
         assert_eq!(state.result().definition_count(), 1);
 
         // Add another definition
@@ -554,8 +575,8 @@ mod tests {
 
         // Apply multiple edits at once
         let edits = vec![
-            SpanEdit::new(0, 1, "10".into()),  // 1 -> 10
-            SpanEdit::new(4, 5, "30".into()),  // 3 -> 30
+            SpanEdit::new(0, 1, "10".into()), // 1 -> 10
+            SpanEdit::new(4, 5, "30".into()), // 3 -> 30
         ];
         state.apply_edits(edits, &registry, &mut interner, &context);
 
@@ -599,10 +620,20 @@ mod tests {
         let mut state = IncrementalAnalysis::new("1", &registry, &mut interner, &context);
         assert_eq!(state.version(), 0);
 
-        state.apply_edit(SpanEdit::new(0, 1, "2".into()), &registry, &mut interner, &context);
+        state.apply_edit(
+            SpanEdit::new(0, 1, "2".into()),
+            &registry,
+            &mut interner,
+            &context,
+        );
         assert_eq!(state.version(), 1);
 
-        state.apply_edit(SpanEdit::new(0, 1, "3".into()), &registry, &mut interner, &context);
+        state.apply_edit(
+            SpanEdit::new(0, 1, "3".into()),
+            &registry,
+            &mut interner,
+            &context,
+        );
         assert_eq!(state.version(), 2);
     }
 }

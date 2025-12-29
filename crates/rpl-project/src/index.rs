@@ -6,9 +6,7 @@
 use crate::error::LoadError;
 use crate::loader;
 use crate::manifest::Manifest;
-use rpl::analysis::{
-    AnalysisResult, Context, GlobalMap, GlobalVariableMap, ParamInfo, Pattern,
-};
+use rpl::analysis::{AnalysisResult, Context, GlobalMap, GlobalVariableMap, ParamInfo, Pattern};
 use rpl::core::Interner;
 use rpl::ir::{AtomKind, CompositeKind, Node, NodeKind};
 use rpl::registry::InterfaceRegistry;
@@ -162,9 +160,9 @@ impl ProjectIndex {
         F: FnOnce(&mut InterfaceRegistry),
     {
         use rpl::analysis::{
-            collect_global_defines, collect_global_variables, collect_globals,
-            finalize_signatures, recognize_patterns, resolve_constraints, Constraint, GlobalMap,
-            PatternMap, Substitution, SymbolTable, Traverser,
+            Constraint, GlobalMap, PatternMap, Substitution, SymbolTable, Traverser,
+            collect_global_defines, collect_global_variables, collect_globals, finalize_signatures,
+            recognize_patterns, resolve_constraints,
         };
 
         // Load manifest
@@ -200,10 +198,7 @@ impl ProjectIndex {
             let key = loader::path_to_key(project_dir, file_path)?;
 
             // Handle binary files (non-.rpl) separately
-            let is_rpl = file_path
-                .extension()
-                .map(|e| e == "rpl")
-                .unwrap_or(false);
+            let is_rpl = file_path.extension().map(|e| e == "rpl").unwrap_or(false);
 
             if !is_rpl {
                 // Binary file - add to index as Bytes type without parsing
@@ -258,20 +253,20 @@ impl ProjectIndex {
 
             // For programs: inject synthetic FunctionDef pattern
             if value_type.is_program()
-                && let NodeKind::Composite(CompositeKind::Program, branches) = &nodes[0].kind {
-                    let (param_count, params) =
-                        extract_program_params(branches, &index.interfaces);
-                    patterns.insert(
-                        nodes[0].span,
-                        Pattern::FunctionDef {
-                            name: key.clone(),
-                            name_span: nodes[0].span,
-                            body_span: nodes[0].span,
-                            param_count,
-                            params,
-                        },
-                    );
-                }
+                && let NodeKind::Composite(CompositeKind::Program, branches) = &nodes[0].kind
+            {
+                let (param_count, params) = extract_program_params(branches, &index.interfaces);
+                patterns.insert(
+                    nodes[0].span,
+                    Pattern::FunctionDef {
+                        name: key.clone(),
+                        name_span: nodes[0].span,
+                        body_span: nodes[0].span,
+                        param_count,
+                        params,
+                    },
+                );
+            }
 
             files.push(FileData {
                 key,
@@ -446,10 +441,10 @@ impl ProjectIndex {
         // Update globals with resolved signatures from symbols
         // This ensures the GlobalMap reflects the resolved types after constraint resolution
         for (name, info) in &mut index.globals {
-            if let Some(def) = symbols.find_definitions_by_name(name).next() {
-                if let Some(sig) = def.signature.clone() {
-                    info.signature = sig;
-                }
+            if let Some(def) = symbols.find_definitions_by_name(name).next()
+                && let Some(sig) = def.signature.clone()
+            {
+                info.signature = sig;
             }
         }
 
@@ -535,15 +530,15 @@ impl ProjectIndex {
         }
 
         // Add global variables defined via STO across the project
-        for (key, _info) in &self.global_variables {
+        for key in self.global_variables.keys() {
             // Use the full key (path/to/var) and also just the variable name
             context.add_value(key.clone());
 
             // Also add just the variable name for simple references
-            if let Some(name) = key.rsplit('/').next() {
-                if name != key {
-                    context.add_value(name.to_string());
-                }
+            if let Some(name) = key.rsplit('/').next()
+                && name != key
+            {
+                context.add_value(name.to_string());
             }
         }
 

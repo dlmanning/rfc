@@ -555,7 +555,11 @@ mod tests {
         let mut dir = Directory::new();
 
         // Store at .SETTINGS.LIBDATA.TEST.myvar
-        dir.store_at_path(&["SETTINGS", "LIBDATA", "TEST"], "myvar", Value::integer(42));
+        dir.store_at_path(
+            &["SETTINGS", "LIBDATA", "TEST"],
+            "myvar",
+            Value::integer(42),
+        );
 
         // Should be able to look it up
         assert_eq!(

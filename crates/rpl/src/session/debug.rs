@@ -11,7 +11,11 @@ use crate::lower::CompiledProgram;
 ///
 /// Returns the PC of the first instruction that starts on or after
 /// the given line, or None if no instruction is on that line.
-pub fn find_pc_for_line(program: &CompiledProgram, source: &SourceFile, line: u32) -> Option<usize> {
+pub fn find_pc_for_line(
+    program: &CompiledProgram,
+    source: &SourceFile,
+    line: u32,
+) -> Option<usize> {
     // Get the byte offset range for this line
     let line_start = source.line_start(line)? as usize;
     let line_end = source
@@ -64,10 +68,7 @@ pub fn line_col_for_pc(
 ///
 /// Returns a list of (pc, line) pairs for all instruction positions
 /// that have source mappings.
-pub fn breakpoint_locations(
-    program: &CompiledProgram,
-    source: &SourceFile,
-) -> Vec<(usize, u32)> {
+pub fn breakpoint_locations(program: &CompiledProgram, source: &SourceFile) -> Vec<(usize, u32)> {
     program
         .span_offsets
         .iter()
@@ -102,10 +103,14 @@ pub fn verify_breakpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{lower::lower, parse::parse, registry::{InterfaceRegistry, LowererRegistry}};
+    use crate::analysis;
     use crate::core::Interner;
     use crate::source::SourceId;
-    use crate::analysis;
+    use crate::{
+        lower::lower,
+        parse::parse,
+        registry::{InterfaceRegistry, LowererRegistry},
+    };
 
     fn compile_source(source: &str) -> (CompiledProgram, SourceFile) {
         let interfaces = InterfaceRegistry::new();
@@ -113,7 +118,8 @@ mod tests {
         let mut interner = Interner::new();
 
         let nodes = parse(source, &interfaces, &mut interner).unwrap();
-        let analysis = analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
+        let analysis =
+            analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
         let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).unwrap();
 
         let source_file = SourceFile::new(SourceId::new(0), "test.rpl".into(), source.into());

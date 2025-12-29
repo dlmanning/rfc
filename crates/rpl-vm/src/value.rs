@@ -246,10 +246,7 @@ impl Value {
     }
 
     /// Create a program value with bytecode and rodata.
-    pub fn program_with_rodata(
-        code: impl Into<Arc<[u8]>>,
-        rodata: impl Into<Arc<[u8]>>,
-    ) -> Self {
+    pub fn program_with_rodata(code: impl Into<Arc<[u8]>>, rodata: impl Into<Arc<[u8]>>) -> Self {
         Value::Program(Arc::new(ProgramData::with_rodata(code, rodata)))
     }
 
@@ -259,7 +256,9 @@ impl Value {
         rodata: impl Into<Arc<[u8]>>,
         source_map: SourceMap,
     ) -> Self {
-        Value::Program(Arc::new(ProgramData::with_source_map(code, rodata, source_map)))
+        Value::Program(Arc::new(ProgramData::with_source_map(
+            code, rodata, source_map,
+        )))
     }
 
     /// Create a symbolic expression value.

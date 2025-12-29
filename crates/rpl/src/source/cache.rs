@@ -73,7 +73,11 @@ impl<'a> Files<'a> for SourceCache {
         Ok((file.line_col(Pos::new(byte_index as u32)).line - 1) as usize)
     }
 
-    fn line_range(&self, id: Self::FileId, line_index: usize) -> Result<Range<usize>, files::Error> {
+    fn line_range(
+        &self,
+        id: Self::FileId,
+        line_index: usize,
+    ) -> Result<Range<usize>, files::Error> {
         let file = self.get(id).ok_or(files::Error::FileMissing)?;
         let line = (line_index + 1) as u32; // Convert 0-indexed to 1-indexed
 

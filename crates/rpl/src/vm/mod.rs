@@ -336,13 +336,11 @@ impl Vm {
 
         // Execute main program
         self.control_stack.clear();
-        if let Some(event) = self.execute_inner_debug(
-            &program.code,
-            registry,
-            &program.rodata,
-            debug,
-            |pc| program.source_offset_for_pc(pc),
-        )? {
+        if let Some(event) =
+            self.execute_inner_debug(&program.code, registry, &program.rodata, debug, |pc| {
+                program.source_offset_for_pc(pc)
+            })?
+        {
             return Ok(ExecuteOutcome::Debug(event));
         }
 
@@ -548,12 +546,12 @@ impl Vm {
 
         match action {
             ExecuteAction::Continue => Ok(Flow::Continue),
-            ExecuteAction::CallProgram { program, name, preserve_locals } => {
-                self.execute_program(program, name, preserve_locals, registry, debug)
-            }
-            ExecuteAction::EvalSymbolic { expr } => {
-                self.eval_symbolic(&expr)
-            }
+            ExecuteAction::CallProgram {
+                program,
+                name,
+                preserve_locals,
+            } => self.execute_program(program, name, preserve_locals, registry, debug),
+            ExecuteAction::EvalSymbolic { expr } => self.eval_symbolic(&expr),
         }
     }
 
@@ -584,9 +582,10 @@ impl Vm {
     ) -> Result<Flow, VmError> {
         // Check hook - if it returns false, stop execution
         if let Some(ref mut hook) = self.program_call_hook
-            && !hook(&prog, name.as_deref()) {
-                return Ok(Flow::Return);
-            }
+            && !hook(&prog, name.as_deref())
+        {
+            return Ok(Flow::Return);
+        }
 
         let code = prog.code.clone();
         let rodata = prog.rodata.clone();
@@ -647,7 +646,10 @@ impl Vm {
             SymbolicConst => {
                 let s = self.read_string_from_rodata(code, rodata)?;
                 // Check if this is a simple variable name (possibly with dots for paths)
-                let expr = if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+                let expr = if s
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                {
                     crate::symbolic::SymExpr::var(s)
                 } else {
                     crate::parse::infix::InfixParser::parse_str(s)
@@ -914,7 +916,12 @@ impl Vm {
                         offsets,
                         spans,
                     };
-                    ProgramData::function_with_source_map(prog_code, prog_rodata, source_map, param_count)
+                    ProgramData::function_with_source_map(
+                        prog_code,
+                        prog_rodata,
+                        source_map,
+                        param_count,
+                    )
                 } else if param_count > 0 {
                     ProgramData::function(prog_code, prog_rodata, param_count)
                 } else {
@@ -1165,7 +1172,11 @@ impl Vm {
     }
 
     /// Read a string from rodata. The bytecode contains offset and length as LEB128.
-    fn read_string_from_rodata<'a>(&mut self, code: &[u8], rodata: &'a [u8]) -> Result<&'a str, VmError> {
+    fn read_string_from_rodata<'a>(
+        &mut self,
+        code: &[u8],
+        rodata: &'a [u8],
+    ) -> Result<&'a str, VmError> {
         let offset = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
         let len = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
         if offset + len > rodata.len() {
@@ -1176,7 +1187,11 @@ impl Vm {
     }
 
     /// Read bytes from rodata. The bytecode contains offset and length as LEB128.
-    fn read_bytes_from_rodata<'a>(&mut self, code: &[u8], rodata: &'a [u8]) -> Result<&'a [u8], VmError> {
+    fn read_bytes_from_rodata<'a>(
+        &mut self,
+        code: &[u8],
+        rodata: &'a [u8],
+    ) -> Result<&'a [u8], VmError> {
         let offset = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
         let len = read_leb128_u32(code, &mut self.pc).ok_or(VmError::UnexpectedEnd)? as usize;
         if offset + len > rodata.len() {

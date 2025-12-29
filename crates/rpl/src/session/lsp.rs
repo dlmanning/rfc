@@ -354,7 +354,10 @@ fn hover_command(
         } else {
             (None, None)
         };
-        let effect = registry.get(lib_id).map(|i| i.command_effect(cmd_id, tos, nos)).unwrap_or(StackEffect::Dynamic);
+        let effect = registry
+            .get(lib_id)
+            .map(|i| i.command_effect(cmd_id, tos, nos))
+            .unwrap_or(StackEffect::Dynamic);
         let notation = effect.to_notation();
         if notation != "(dynamic)" {
             parts.push(format!("Effect: `{}`", notation));
@@ -534,7 +537,9 @@ fn classify_token(text: &str) -> Option<SemanticTokenType> {
     // Numbers (decimal, hex, binary, HP-style)
     if text.starts_with(|c: char| c.is_ascii_digit())
         || text.starts_with('#')
-        || (text.starts_with('-') && text.len() > 1 && text.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+        || (text.starts_with('-')
+            && text.len() > 1
+            && text.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
     {
         return Some(SemanticTokenType::Number);
     }
@@ -543,9 +548,24 @@ fn classify_token(text: &str) -> Option<SemanticTokenType> {
     let upper = text.to_uppercase();
     if matches!(
         upper.as_str(),
-        "IF" | "THEN" | "ELSE" | "END" | "IFERR" | "CASE" | "DEFAULT"
-            | "FOR" | "NEXT" | "STEP" | "DO" | "UNTIL" | "WHILE" | "REPEAT"
-            | "START" | "RETURN" | "KILL" | "HALT" | "CONT"
+        "IF" | "THEN"
+            | "ELSE"
+            | "END"
+            | "IFERR"
+            | "CASE"
+            | "DEFAULT"
+            | "FOR"
+            | "NEXT"
+            | "STEP"
+            | "DO"
+            | "UNTIL"
+            | "WHILE"
+            | "REPEAT"
+            | "START"
+            | "RETURN"
+            | "KILL"
+            | "HALT"
+            | "CONT"
     ) {
         return Some(SemanticTokenType::Keyword);
     }
@@ -563,15 +583,32 @@ fn classify_token(text: &str) -> Option<SemanticTokenType> {
     // Operators (common ones)
     if matches!(
         text,
-        "+" | "-" | "*" | "/" | "^" | "==" | "!=" | "<" | ">" | "<=" | ">="
-            | "AND" | "OR" | "NOT" | "XOR" | "MOD" | "DIV"
+        "+" | "-"
+            | "*"
+            | "/"
+            | "^"
+            | "=="
+            | "!="
+            | "<"
+            | ">"
+            | "<="
+            | ">="
+            | "AND"
+            | "OR"
+            | "NOT"
+            | "XOR"
+            | "MOD"
+            | "DIV"
     ) || matches!(upper.as_str(), "AND" | "OR" | "NOT" | "XOR" | "MOD" | "DIV")
     {
         return Some(SemanticTokenType::Operator);
     }
 
     // Uppercase words are likely commands/functions
-    if text.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '→' || c == '▶') {
+    if text
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '→' || c == '▶')
+    {
         return Some(SemanticTokenType::Function);
     }
 

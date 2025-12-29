@@ -40,7 +40,8 @@ impl LibraryLowerer for ProgLib {
         _span: Span,
         _ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
+        Err(LowerError {
+            span: None,
             message: "Program library has no composites".into(),
         })
     }

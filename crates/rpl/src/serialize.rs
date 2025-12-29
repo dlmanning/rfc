@@ -170,7 +170,11 @@ fn serialize_into(buf: &mut Vec<u8>, value: &Value, opts: &SerializeOptions) {
         Value::Program(prog) => {
             // Set debug flag if program has source map and we want to include it
             let has_debug = opts.include_source_maps && prog.source_map.is_some();
-            buf.push(if has_debug { TAG_PROGRAM | DEBUG_FLAG } else { TAG_PROGRAM });
+            buf.push(if has_debug {
+                TAG_PROGRAM | DEBUG_FLAG
+            } else {
+                TAG_PROGRAM
+            });
             serialize_program_data(buf, prog, opts);
         }
         Value::Symbolic(expr) => {
@@ -210,7 +214,9 @@ fn serialize_program_data(buf: &mut Vec<u8>, prog: &ProgramData, opts: &Serializ
     buf.extend(prog.code.iter());
 
     // Source map (if present and requested)
-    if opts.include_source_maps && let Some(ref source_map) = prog.source_map {
+    if opts.include_source_maps
+        && let Some(ref source_map) = prog.source_map
+    {
         serialize_source_map(buf, source_map);
     }
 }
@@ -307,7 +313,10 @@ pub fn deserialize_value(bytes: &[u8]) -> Result<(Value, usize), SerializeError>
             let (s, consumed) = read_string(rest)?;
             // Store as a variable reference with the full expression string
             // This preserves the expression text for later re-parsing if needed
-            Ok((Value::symbolic(crate::symbolic::SymExpr::var(s)), 1 + consumed))
+            Ok((
+                Value::symbolic(crate::symbolic::SymExpr::var(s)),
+                1 + consumed,
+            ))
         }
         TAG_LIBRARY => {
             let (lib, consumed) = deserialize_library_data(rest, _has_debug)?;
@@ -353,7 +362,10 @@ pub fn deserialize_value(bytes: &[u8]) -> Result<(Value, usize), SerializeError>
 }
 
 /// Deserialize program data.
-fn deserialize_program_data(bytes: &[u8], has_debug: bool) -> Result<(ProgramData, usize), SerializeError> {
+fn deserialize_program_data(
+    bytes: &[u8],
+    has_debug: bool,
+) -> Result<(ProgramData, usize), SerializeError> {
     let mut offset = 0;
 
     // Rodata section
@@ -401,7 +413,10 @@ fn deserialize_program_data(bytes: &[u8], has_debug: bool) -> Result<(ProgramDat
 }
 
 /// Deserialize library data.
-fn deserialize_library_data(bytes: &[u8], _has_debug: bool) -> Result<(LibraryData, usize), SerializeError> {
+fn deserialize_library_data(
+    bytes: &[u8],
+    _has_debug: bool,
+) -> Result<(LibraryData, usize), SerializeError> {
     let mut offset = 0;
 
     // Library ID (u8 len + string)
@@ -528,7 +543,9 @@ fn deserialize_source_map(bytes: &[u8]) -> Result<(SourceMap, usize), SerializeE
         offset += 12;
 
         source_map.offsets.push(bc_offset);
-        source_map.spans.push(Span::new(Pos::new(start), Pos::new(end)));
+        source_map
+            .spans
+            .push(Span::new(Pos::new(start), Pos::new(end)));
     }
 
     Ok((source_map, offset))
@@ -887,8 +904,8 @@ pub fn unpack_directory_checked(
             }
             ENTRY_SUBDIR => {
                 let subnode = node.ensure_subdir(&name);
-                let consumed = unpack_directory_inner(&bytes[offset..], subnode, true)
-                    .map_err(Ok)?;
+                let consumed =
+                    unpack_directory_inner(&bytes[offset..], subnode, true).map_err(Ok)?;
                 offset += consumed;
             }
             _ => return Err(Ok(SerializeError::InvalidTag(kind))),
@@ -973,7 +990,11 @@ mod tests {
 
     #[test]
     fn test_list_primitives() {
-        let list = Value::list(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
+        let list = Value::list(vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+        ]);
         let result = round_trip(list);
         match result {
             Value::List(items) => {
@@ -1064,7 +1085,7 @@ mod tests {
     fn test_program_with_rodata() {
         let prog = Value::program_with_rodata(
             vec![0xAB, 0xCD],
-            vec![b'f', b'o', b'o', b'b', b'a', b'r'],  // "foobar" as rodata
+            vec![b'f', b'o', b'o', b'b', b'a', b'r'], // "foobar" as rodata
         );
         let result = round_trip(prog);
 
@@ -1084,18 +1105,20 @@ mod tests {
         let source = "2 * DUP +";
         let mut source_map = SourceMap::with_source(source);
         source_map.offsets.push(0);
-        source_map.spans.push(Span::new(Pos::new(0), Pos::new(1)));  // "2"
+        source_map.spans.push(Span::new(Pos::new(0), Pos::new(1))); // "2"
         source_map.offsets.push(3);
-        source_map.spans.push(Span::new(Pos::new(2), Pos::new(3)));  // "*"
+        source_map.spans.push(Span::new(Pos::new(2), Pos::new(3))); // "*"
 
         let prog = Value::program_with_source_map(
             vec![0x01, 0x02, 0x03],
-            vec![b'x'],  // rodata containing "x"
+            vec![b'x'], // rodata containing "x"
             source_map,
         );
 
         // Serialize with debug info
-        let opts = SerializeOptions { include_source_maps: true };
+        let opts = SerializeOptions {
+            include_source_maps: true,
+        };
         let bytes = serialize_value_with_options(&prog, opts);
 
         // Check that debug flag is set (TAG_PROGRAM | DEBUG_FLAG = 0x15)
@@ -1134,12 +1157,14 @@ mod tests {
 
         let prog = Value::program_with_source_map(
             vec![0xFF],
-            Vec::<u8>::new(),  // empty rodata
+            Vec::<u8>::new(), // empty rodata
             source_map,
         );
 
         // Serialize WITHOUT debug info
-        let opts = SerializeOptions { include_source_maps: false };
+        let opts = SerializeOptions {
+            include_source_maps: false,
+        };
         let bytes = serialize_value_with_options(&prog, opts);
 
         // Check that debug flag is NOT set
@@ -1150,7 +1175,10 @@ mod tests {
         match result {
             Value::Program(data) => {
                 assert_eq!(data.code.as_ref(), &[0xFF]);
-                assert!(data.source_map.is_none(), "source map should not be present when debug flag is off");
+                assert!(
+                    data.source_map.is_none(),
+                    "source map should not be present when debug flag is off"
+                );
             }
             _ => panic!("expected program"),
         }
@@ -1176,9 +1204,9 @@ mod tests {
         let source = "1 2 + DUP * SWAP DROP";
         let mut source_map = SourceMap::with_source(source);
         source_map.offsets.push(0);
-        source_map.spans.push(Span::new(Pos::new(0), Pos::new(1)));   // "1"
+        source_map.spans.push(Span::new(Pos::new(0), Pos::new(1))); // "1"
         source_map.offsets.push(5);
-        source_map.spans.push(Span::new(Pos::new(4), Pos::new(5)));   // "+"
+        source_map.spans.push(Span::new(Pos::new(4), Pos::new(5))); // "+"
 
         let mut buf = Vec::new();
         serialize_source_map(&mut buf, &source_map);
@@ -1239,7 +1267,7 @@ mod tests {
                 LibraryCommand::new(
                     "TRIPLE",
                     vec![0x03, 0x04, 0x05],
-                    vec![b'x'],  // rodata containing "x"
+                    vec![b'x'], // rodata containing "x"
                 ),
             ],
         );

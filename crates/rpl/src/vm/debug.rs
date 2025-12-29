@@ -133,8 +133,12 @@ impl DebugState {
     /// The breakpoint will hit if the source offset is >= start and < end.
     pub fn add_source_line_breakpoint(&mut self, start_offset: u32, end_offset: u32) {
         // Avoid duplicates
-        if !self.source_line_breakpoints.contains(&(start_offset, end_offset)) {
-            self.source_line_breakpoints.push((start_offset, end_offset));
+        if !self
+            .source_line_breakpoints
+            .contains(&(start_offset, end_offset))
+        {
+            self.source_line_breakpoints
+                .push((start_offset, end_offset));
         }
     }
 
@@ -145,12 +149,15 @@ impl DebugState {
 
     /// Remove a source line breakpoint.
     pub fn remove_source_line_breakpoint(&mut self, start_offset: u32, end_offset: u32) {
-        self.source_line_breakpoints.retain(|&(s, e)| s != start_offset || e != end_offset);
+        self.source_line_breakpoints
+            .retain(|&(s, e)| s != start_offset || e != end_offset);
     }
 
     /// Check if a source offset falls within any source line breakpoint.
     pub fn has_source_breakpoint(&self, offset: u32) -> bool {
-        self.source_line_breakpoints.iter().any(|&(start, end)| offset >= start && offset < end)
+        self.source_line_breakpoints
+            .iter()
+            .any(|&(start, end)| offset >= start && offset < end)
     }
 
     /// Clear all breakpoints.
@@ -254,7 +261,8 @@ impl DebugState {
         // Check source line breakpoint (uses range matching)
         if let Some(offset) = source_offset {
             // Find which breakpoint range this offset falls into
-            if let Some(&(start, end)) = self.source_line_breakpoints
+            if let Some(&(start, end)) = self
+                .source_line_breakpoints
                 .iter()
                 .find(|&&(s, e)| offset >= s && offset < e)
             {
@@ -510,7 +518,10 @@ mod tests {
 
         // Resume at same PC - should NOT retrigger breakpoint (haven't executed yet)
         let event = state.check(10, 0, None);
-        assert!(event.is_none(), "Should not retrigger breakpoint at same PC");
+        assert!(
+            event.is_none(),
+            "Should not retrigger breakpoint at same PC"
+        );
 
         // Execute the instruction at PC 10
         state.mark_executed();

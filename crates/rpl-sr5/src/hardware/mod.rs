@@ -9,11 +9,9 @@ mod input;
 mod sprite;
 mod tiles;
 
-pub use input::{buttons, InputState};
+pub use input::{InputState, buttons};
 pub use sprite::{Sprite, SpriteBank, SpriteOptions};
-pub use tiles::{
-    TileLayer, TileMap, TileMapBank, TileSheet, TileSheetBank, NUM_TILE_LAYERS,
-};
+pub use tiles::{NUM_TILE_LAYERS, TileLayer, TileMap, TileMapBank, TileSheet, TileSheetBank};
 
 /// Shared hardware reference for libraries to access.
 pub type HardwareRef = Arc<Mutex<Sr5Hardware>>;
@@ -24,7 +22,9 @@ pub const DEFAULT_SCREEN_WIDTH: u32 = 400;
 pub const DEFAULT_SCREEN_HEIGHT: u32 = 240;
 
 // Legacy aliases for compatibility
+#[allow(dead_code)]
 pub const SCREEN_WIDTH: u32 = DEFAULT_SCREEN_WIDTH;
+#[allow(dead_code)]
 pub const SCREEN_HEIGHT: u32 = DEFAULT_SCREEN_HEIGHT;
 
 // Planned memory sizes (not yet allocated)
@@ -141,7 +141,10 @@ impl Sr5Hardware {
 
     /// Set the background image.
     pub fn set_background(&mut self, width: u32, height: u32, data: Vec<u8>) {
-        let generation = self.background.as_ref().map_or(1, |bg| bg.generation.wrapping_add(1));
+        let generation = self
+            .background
+            .as_ref()
+            .map_or(1, |bg| bg.generation.wrapping_add(1));
         self.background = Some(Background {
             width,
             height,

@@ -33,8 +33,7 @@ impl<'a> DiagnosticRenderer<'a> {
         let config = term::Config::default();
         let mut writer = NoColor::new(out);
 
-        term::emit(&mut writer, &config, &file, &cs_diag)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        term::emit(&mut writer, &config, &file, &cs_diag).map_err(io::Error::other)
     }
 
     /// Render a diagnostic to a string.
@@ -64,12 +63,12 @@ fn convert_diagnostic(
         .labels
         .iter()
         .map(|label| {
-            let mut new_label = if label.style == codespan_reporting::diagnostic::LabelStyle::Primary
-            {
-                Label::primary((), label.range.clone())
-            } else {
-                Label::secondary((), label.range.clone())
-            };
+            let mut new_label =
+                if label.style == codespan_reporting::diagnostic::LabelStyle::Primary {
+                    Label::primary((), label.range.clone())
+                } else {
+                    Label::secondary((), label.range.clone())
+                };
             new_label.message = label.message.clone();
             new_label
         })
@@ -94,8 +93,7 @@ pub fn emit_diagnostic<W: codespan_reporting::term::termcolor::WriteColor>(
     let cs_diag = diag.to_codespan(file_id);
     let config = term::Config::default();
 
-    term::emit(writer, &config, files, &cs_diag)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    term::emit(writer, &config, files, &cs_diag).map_err(io::Error::other)
 }
 
 #[cfg(test)]
@@ -148,7 +146,10 @@ mod tests {
 
         let diag = Diagnostic::error(ErrorCode::E102, Span::new(Pos::new(0), Pos::new(1)))
             .message("unclosed parenthesis")
-            .secondary(Span::new(Pos::new(2), Pos::new(5)), "expected ')' after this")
+            .secondary(
+                Span::new(Pos::new(2), Pos::new(5)),
+                "expected ')' after this",
+            )
             .build();
 
         let output = renderer.render_to_string(&diag);

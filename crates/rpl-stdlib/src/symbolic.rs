@@ -90,7 +90,10 @@ impl LibraryExecutor for SymbolicLib {
                         ctx.push(Value::Real(n))?;
                         Ok(ExecuteAction::ok())
                     }
-                    _ => Err(format!("→NUM: expected symbolic or number, got {}", val.type_name())),
+                    _ => Err(format!(
+                        "→NUM: expected symbolic or number, got {}",
+                        val.type_name()
+                    )),
                 }
             }
             cmd::SYM_EVAL => {

@@ -1,8 +1,8 @@
 //! Tests for user library system.
 
-use rpl::value::Value;
 #[allow(unused_imports)]
 use rpl::Session;
+use rpl::value::Value;
 
 // ============================================================================
 // Library System (CRLIB, ATTACH, LIBPTR)
@@ -258,7 +258,11 @@ fn library_command_resolution() {
 
     // Create a library with a DOUBLE command that doubles a number (2 *)
     let result = session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#);
-    assert!(result.is_ok(), "CRLIB + ATTACH should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "CRLIB + ATTACH should succeed: {:?}",
+        result
+    );
 
     // Now call DOUBLE - it should be found in the attached library
     let result = session.eval("5 DOUBLE");
@@ -279,9 +283,8 @@ fn library_multiple_commands() {
     let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE (2 *) and SQUARE (DUP *)
-    let result = session.eval(
-        r#"{ { "DOUBLE" << 2 * >> } { "SQUARE" << DUP * >> } } "MATH" CRLIB ATTACH"#,
-    );
+    let result =
+        session.eval(r#"{ { "DOUBLE" << 2 * >> } { "SQUARE" << DUP * >> } } "MATH" CRLIB ATTACH"#);
     assert!(result.is_ok(), "CRLIB + ATTACH should succeed");
 
     // Test DOUBLE
@@ -307,7 +310,9 @@ fn library_command_case_sensitive() {
     let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE
-    session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
+    session
+        .eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#)
+        .unwrap();
 
     // Only exact case works (case-sensitive)
     let result = session.eval("5 DOUBLE").unwrap();
@@ -324,7 +329,9 @@ fn library_command_after_detach() {
     let mut session = crate::session_with_stdlib();
 
     // Create and attach a library
-    session.eval(r#"{ { "TRIPLE" << 3 * >> } } "TEST" CRLIB ATTACH"#).unwrap();
+    session
+        .eval(r#"{ { "TRIPLE" << 3 * >> } } "TEST" CRLIB ATTACH"#)
+        .unwrap();
 
     // TRIPLE should work
     let result = session.eval("5 TRIPLE");
@@ -335,7 +342,10 @@ fn library_command_after_detach() {
 
     // TRIPLE should no longer work
     let result = session.eval("5 TRIPLE");
-    assert!(result.is_err(), "TRIPLE should not be callable after DETACH");
+    assert!(
+        result.is_err(),
+        "TRIPLE should not be callable after DETACH"
+    );
 }
 
 /// Test that directory variables take precedence over library commands
@@ -344,7 +354,9 @@ fn library_command_precedence() {
     let mut session = crate::session_with_stdlib();
 
     // Create a library with DOUBLE
-    session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
+    session
+        .eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#)
+        .unwrap();
 
     // Store a variable named DOUBLE in the directory
     session.eval(r#"<< 3 * >> 'DOUBLE' STO"#).unwrap();

@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use rpl::{
     Span,
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryInterface, LibraryLowerer},
+    libs::{
+        CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor,
+        LibraryInterface, LibraryLowerer,
+    },
     lower::{LowerContext, LowerError},
     value::Value,
 };

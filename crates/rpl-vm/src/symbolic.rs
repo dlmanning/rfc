@@ -239,7 +239,8 @@ impl SymExpr {
             }
             4 => {
                 // Call
-                let name_len = read_leb128_u32(bytes, &mut offset).ok_or("invalid call name length")?;
+                let name_len =
+                    read_leb128_u32(bytes, &mut offset).ok_or("invalid call name length")?;
                 let name_end = offset + name_len as usize;
                 if name_end > bytes.len() {
                     return Err("call name truncated");

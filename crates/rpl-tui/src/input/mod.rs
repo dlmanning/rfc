@@ -9,6 +9,6 @@ mod history;
 mod kill_ring;
 mod readline;
 
-pub use history::{default_history_path, History, HistorySearch};
+pub use history::{History, HistorySearch, default_history_path};
 pub use kill_ring::KillRing;
 pub use readline::InputLine;

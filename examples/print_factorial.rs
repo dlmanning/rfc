@@ -32,8 +32,14 @@ fn main() {
     rpl_stdlib::register_lowerers(&mut lowerers);
 
     let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-    let analysis = analyze(&nodes, &interfaces, &interner, &rpl::analysis::Context::empty());
-    let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lowering failed");
+    let analysis = analyze(
+        &nodes,
+        &interfaces,
+        &interner,
+        &rpl::analysis::Context::empty(),
+    );
+    let program =
+        lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lowering failed");
 
     println!("=== Outer Bytecode ({} bytes) ===\n", program.code.len());
 
@@ -60,7 +66,10 @@ fn main() {
     let span_count = read_u16(&program.code, &mut offset).unwrap();
 
     println!("\n=== Inner Program (factorial function) ===");
-    println!("Code: {} bytes, Rodata: {} bytes, Spans: {}\n", code_len, rodata_len, span_count);
+    println!(
+        "Code: {} bytes, Rodata: {} bytes, Spans: {}\n",
+        code_len, rodata_len, span_count
+    );
 
     println!("Inner Rodata: {:?}", String::from_utf8_lossy(inner_rodata));
     println!();
@@ -71,21 +80,26 @@ fn main() {
     }
 
     // Debug: show what analysis knows about types
-    println!("\n=== Analysis: Node Stacks ({} entries) ===", analysis.node_stacks.len());
+    println!(
+        "\n=== Analysis: Node Stacks ({} entries) ===",
+        analysis.node_stacks.len()
+    );
     let mut stacks: Vec<_> = analysis.node_stacks.iter().collect();
     stacks.sort_by_key(|(span, _)| span.start().offset());
     for (span, snapshot) in stacks {
         let src_slice = &source[span.start().offset() as usize..span.end().offset() as usize];
-        println!("  {:3}-{:3} {:20?}: tos={:?}, nos={:?}",
-            span.start().offset(), span.end().offset(),
+        println!(
+            "  {:3}-{:3} {:20?}: tos={:?}, nos={:?}",
+            span.start().offset(),
+            span.end().offset(),
             src_slice,
-            snapshot.tos, snapshot.nos);
+            snapshot.tos,
+            snapshot.nos
+        );
     }
 
     println!("\n=== Analysis: Definitions ===");
     for def in analysis.symbols.definitions() {
-        println!("  {}: {:?} (kind={:?})",
-            def.name, def.value_type, def.kind);
+        println!("  {}: {:?} (kind={:?})", def.name, def.value_type, def.kind);
     }
 }
-

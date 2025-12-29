@@ -118,7 +118,6 @@ pub struct TreeNode {
     pub signature: Option<String>,
 }
 
-
 // ============================================================================
 // State Implementation
 // ============================================================================
@@ -155,7 +154,8 @@ impl IdeState {
             let project = Project::load(&project_path).ok()?;
             let index = ProjectIndex::build_with(Path::new(&project_path), |reg| {
                 ::rpl_sr5::register_interfaces(reg);
-            }).ok()?;
+            })
+            .ok()?;
             self.projects
                 .insert(project_path.clone(), LoadedProject { project, index });
         }
@@ -180,7 +180,8 @@ impl IdeState {
         let project = Project::load(path).map_err(|e| e.to_string())?;
         let index = ProjectIndex::build_with(Path::new(path), |reg| {
             ::rpl_sr5::register_interfaces(reg);
-        }).map_err(|e| e.to_string())?;
+        })
+        .map_err(|e| e.to_string())?;
         self.projects
             .insert(path.to_string(), LoadedProject { project, index });
         Ok(())
@@ -335,7 +336,11 @@ pub fn get_tokens(content: &str) -> Vec<SemanticToken> {
 }
 
 /// Get document symbols.
-pub fn get_symbols(state: &mut IdeState, content: &str, file_path: Option<&str>) -> Vec<DocumentSymbol> {
+pub fn get_symbols(
+    state: &mut IdeState,
+    content: &str,
+    file_path: Option<&str>,
+) -> Vec<DocumentSymbol> {
     // Ensure project loaded
     let project_path = file_path.and_then(|p| state.ensure_project(p));
 

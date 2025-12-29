@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::LibId;
 use crate::directory::Directory;
 use crate::stack::Stack;
 use crate::value::Value;
-use crate::LibId;
 
 /// An RPL exception (for IFERR/THROW).
 #[derive(Clone, Debug)]

@@ -3,14 +3,17 @@ use std::sync::{Arc, Mutex};
 use rpl::{
     Span,
     ir::{Branch, LibId},
-    libs::{CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor, LibraryInterface, LibraryLowerer},
+    libs::{
+        CommandInfo, ExecuteAction, ExecuteContext, ExecuteResult, LibraryExecutor,
+        LibraryInterface, LibraryLowerer,
+    },
     lower::{LowerContext, LowerError},
     value::Value,
 };
 
 use png::ColorType;
 
-use crate::hardware::{rgb_to_555, Sr5Hardware};
+use crate::hardware::{Sr5Hardware, rgb_to_555};
 use crate::renderer::Sr5Renderer;
 use rpl_vector_plot::{decode, render};
 
@@ -159,7 +162,9 @@ impl LibraryExecutor for Sr5GraphicsLib {
                 let mut reader = decoder.read_info().map_err(|e| format!("BGLOAD: {}", e))?;
 
                 let mut buf = vec![0; reader.output_buffer_size()];
-                let info = reader.next_frame(&mut buf).map_err(|e| format!("BGLOAD: {}", e))?;
+                let info = reader
+                    .next_frame(&mut buf)
+                    .map_err(|e| format!("BGLOAD: {}", e))?;
 
                 let width = info.width;
                 let height = info.height;

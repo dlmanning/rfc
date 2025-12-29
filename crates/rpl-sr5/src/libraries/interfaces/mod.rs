@@ -3,6 +3,8 @@
 //! Provides interface specs without requiring hardware, for use in
 //! tools like the IDE that only need parsing/analysis support.
 
+#![allow(dead_code)]
+
 use std::sync::OnceLock;
 
 use rpl::interface::InterfaceSpec;
@@ -73,7 +75,9 @@ mod tests {
         assert_eq!(spec.name(), "SR5Sprites");
         // Check that SPR command exists
         let commands = spec.commands();
-        let spr = commands.iter().find(|c| c.names.contains(&"SPR".to_string()));
+        let spr = commands
+            .iter()
+            .find(|c| c.names.contains(&"SPR".to_string()));
         assert!(spr.is_some(), "SPR command should exist");
     }
 
@@ -84,7 +88,9 @@ mod tests {
         assert_eq!(spec.name(), "SR5Tiles");
         // Check that LSCALE command exists
         let commands = spec.commands();
-        let lscale = commands.iter().find(|c| c.names.contains(&"LSCALE".to_string()));
+        let lscale = commands
+            .iter()
+            .find(|c| c.names.contains(&"LSCALE".to_string()));
         assert!(lscale.is_some(), "LSCALE command should exist");
     }
 

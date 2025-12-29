@@ -53,12 +53,12 @@ pub mod arith_cmd {
     pub const NEG: u16 = 4;
     pub const GT: u16 = 12;
 }
+use crate::core::{Span, TypeId};
 use crate::lower::{LowerContext, LowerError};
 use crate::value::Value;
+use crate::vm::RplException;
 use crate::vm::directory::Directory;
 use crate::vm::stack::{Stack, StackError};
-use crate::vm::RplException;
-use crate::core::{Span, TypeId};
 use smallvec::{SmallVec, smallvec};
 
 // ============================================================================
@@ -187,16 +187,53 @@ impl StackEffect {
     }
 
     // Common stack manipulation effects using FromInput
-    pub fn dup() -> Self { Self::fixed_result(1, &[ResultType::from_input(0), ResultType::from_input(0)]) }
-    pub fn drop() -> Self { Self::fixed_result(1, &[]) }
-    pub fn swap() -> Self { Self::fixed_result(2, &[ResultType::from_input(1), ResultType::from_input(0)]) }
-    pub fn rot() -> Self { Self::fixed_result(3, &[ResultType::from_input(1), ResultType::from_input(2), ResultType::from_input(0)]) }
-    pub fn over() -> Self { Self::fixed_result(2, &[ResultType::from_input(0), ResultType::from_input(1), ResultType::from_input(0)]) }
-    pub fn nip() -> Self { Self::fixed_result(2, &[ResultType::from_input(1)]) }  // (a b -- b)
-    pub fn tuck() -> Self { Self::fixed_result(2, &[ResultType::from_input(1), ResultType::from_input(0), ResultType::from_input(1)]) }  // (a b -- b a b)
+    pub fn dup() -> Self {
+        Self::fixed_result(1, &[ResultType::from_input(0), ResultType::from_input(0)])
+    }
+    pub fn drop() -> Self {
+        Self::fixed_result(1, &[])
+    }
+    pub fn swap() -> Self {
+        Self::fixed_result(2, &[ResultType::from_input(1), ResultType::from_input(0)])
+    }
+    pub fn rot() -> Self {
+        Self::fixed_result(
+            3,
+            &[
+                ResultType::from_input(1),
+                ResultType::from_input(2),
+                ResultType::from_input(0),
+            ],
+        )
+    }
+    pub fn over() -> Self {
+        Self::fixed_result(
+            2,
+            &[
+                ResultType::from_input(0),
+                ResultType::from_input(1),
+                ResultType::from_input(0),
+            ],
+        )
+    }
+    pub fn nip() -> Self {
+        Self::fixed_result(2, &[ResultType::from_input(1)])
+    } // (a b -- b)
+    pub fn tuck() -> Self {
+        Self::fixed_result(
+            2,
+            &[
+                ResultType::from_input(1),
+                ResultType::from_input(0),
+                ResultType::from_input(1),
+            ],
+        )
+    } // (a b -- b a b)
 
     /// DEPTH: (-- n) produces integer, doesn't consume anything
-    pub fn depth() -> Self { Self::fixed(0, &[Some(TypeId::BINT)]) }
+    pub fn depth() -> Self {
+        Self::fixed(0, &[Some(TypeId::BINT)])
+    }
 
     /// Format the stack effect in traditional notation: `(inputs -- outputs)`
     pub fn to_notation(&self) -> String {
@@ -216,7 +253,11 @@ impl StackEffect {
                         ResultType::Known(TypeId::PROGRAM) => "prog".to_string(),
                         ResultType::Known(TypeId::SYMBOLIC) => "sym".to_string(),
                         ResultType::Known(_) => "?".to_string(),
-                        ResultType::OneOf(types) if types.contains(&TypeId::BINT) && types.contains(&TypeId::REAL) => "num".to_string(),
+                        ResultType::OneOf(types)
+                            if types.contains(&TypeId::BINT) && types.contains(&TypeId::REAL) =>
+                        {
+                            "num".to_string()
+                        }
                         ResultType::OneOf(_) => "union".to_string(),
                         ResultType::Unknown => "?".to_string(),
                         ResultType::FromInput(i) => ((b'a' + i) as char).to_string(),
@@ -349,7 +390,8 @@ impl CommandInfo {
         produces: u8,
     ) -> Self {
         // Create a slice of Unknown types for the produces count
-        let results: SmallVec<[ResultType; 4]> = (0..produces).map(|_| ResultType::Unknown).collect();
+        let results: SmallVec<[ResultType; 4]> =
+            (0..produces).map(|_| ResultType::Unknown).collect();
         Self {
             name,
             lib_id,
@@ -508,9 +550,9 @@ impl<'a> ExecuteContext<'a> {
     }
 }
 
-use std::sync::Arc;
 use crate::symbolic::SymExpr;
 use crate::value::ProgramData;
+use std::sync::Arc;
 
 /// Action for VM to take after executor runs.
 #[derive(Debug)]
@@ -528,9 +570,7 @@ pub enum ExecuteAction {
     },
     /// Request VM to evaluate a symbolic expression.
     /// This needs access to locals which executors don't have.
-    EvalSymbolic {
-        expr: Arc<SymExpr>,
-    },
+    EvalSymbolic { expr: Arc<SymExpr> },
 }
 
 impl ExecuteAction {
@@ -541,12 +581,20 @@ impl ExecuteAction {
 
     /// Create a CallProgram action for function calls (new local scope).
     pub fn call(program: Arc<ProgramData>, name: Option<String>) -> Self {
-        Self::CallProgram { program, name, preserve_locals: false }
+        Self::CallProgram {
+            program,
+            name,
+            preserve_locals: false,
+        }
     }
 
     /// Create a CallProgram action for EVAL (preserve current locals).
     pub fn eval(program: Arc<ProgramData>) -> Self {
-        Self::CallProgram { program, name: None, preserve_locals: true }
+        Self::CallProgram {
+            program,
+            name: None,
+            preserve_locals: true,
+        }
     }
 
     /// Create an EvalSymbolic action.
@@ -750,7 +798,6 @@ pub trait LibraryImpl: LibraryLowerer + LibraryExecutor {}
 
 // Blanket impl: any type implementing both traits gets LibraryImpl
 impl<T: LibraryLowerer + LibraryExecutor> LibraryImpl for T {}
-
 
 #[cfg(test)]
 mod tests {

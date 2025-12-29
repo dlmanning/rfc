@@ -78,11 +78,10 @@ impl Manifest {
 
     /// Parse a manifest from a string.
     pub fn from_str(content: &str, path: &Path) -> Result<Self, ManifestError> {
-        let manifest: Manifest =
-            toml::from_str(content).map_err(|e| ManifestError::Parse {
-                path: path.to_owned(),
-                source: e,
-            })?;
+        let manifest: Manifest = toml::from_str(content).map_err(|e| ManifestError::Parse {
+            path: path.to_owned(),
+            source: e,
+        })?;
 
         manifest.validate(path)?;
         Ok(manifest)
@@ -156,7 +155,10 @@ mod tests {
         let result = Manifest::from_str(content, &test_path());
         assert!(matches!(
             result,
-            Err(ManifestError::MissingField { field: "project.name", .. })
+            Err(ManifestError::MissingField {
+                field: "project.name",
+                ..
+            })
         ));
     }
 
@@ -186,9 +188,15 @@ mod tests {
         assert_eq!(manifest.project.name, "my-game");
 
         // Extra sections should be preserved
-        let sprites = manifest.extra.get("sprites").expect("sprites section should exist");
+        let sprites = manifest
+            .extra
+            .get("sprites")
+            .expect("sprites section should exist");
         let sheet = sprites.get("sheet").expect("sheet should exist");
-        assert_eq!(sheet.get("image").and_then(|v| v.as_str()), Some("sheet.png"));
+        assert_eq!(
+            sheet.get("image").and_then(|v| v.as_str()),
+            Some("sheet.png")
+        );
 
         let regions = sheet.get("regions").expect("regions should exist");
         let player = regions.get("player").expect("player region should exist");

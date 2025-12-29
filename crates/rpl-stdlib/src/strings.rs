@@ -75,7 +75,8 @@ impl LibraryLowerer for StringsLib {
         _span: Span,
         _ctx: &mut LowerContext,
     ) -> Result<(), LowerError> {
-        Err(LowerError { span: None,
+        Err(LowerError {
+            span: None,
             message: "Strings library has no composites".into(),
         })
     }

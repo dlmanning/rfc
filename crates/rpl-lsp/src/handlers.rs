@@ -71,7 +71,10 @@ impl ServerState {
     }
 
     /// Get or build a project index for a project root.
-    pub fn get_or_build_project(&mut self, project_root: &std::path::Path) -> Option<&ProjectIndex> {
+    pub fn get_or_build_project(
+        &mut self,
+        project_root: &std::path::Path,
+    ) -> Option<&ProjectIndex> {
         // Check if already cached
         if self.projects.contains_key(project_root) {
             return self.projects.get(project_root);
@@ -86,7 +89,11 @@ impl ServerState {
                 self.projects.get(project_root)
             }
             Err(e) => {
-                log::warn!("Failed to build project index for {:?}: {:?}", project_root, e);
+                log::warn!(
+                    "Failed to build project index for {:?}: {:?}",
+                    project_root,
+                    e
+                );
                 None
             }
         }
@@ -167,16 +174,19 @@ pub fn handle_did_open(state: &mut ServerState, params: DidOpenTextDocumentParam
 
     // Detect if file is in a project
     if let Some(file_path) = uri_to_path(&uri)
-        && let Some(project_root) = ServerState::find_project_root(&file_path) {
-            // Store the document-to-project mapping
-            state.document_projects.insert(uri.clone(), project_root.clone());
-            // Ensure project index is built and update session context
-            state.get_or_build_project(&project_root);
-            // Update context from project (separate borrow scope)
-            if let Some(project) = state.projects.get(&project_root) {
-                state.session.set_context(project.to_context());
-            }
+        && let Some(project_root) = ServerState::find_project_root(&file_path)
+    {
+        // Store the document-to-project mapping
+        state
+            .document_projects
+            .insert(uri.clone(), project_root.clone());
+        // Ensure project index is built and update session context
+        state.get_or_build_project(&project_root);
+        // Update context from project (separate borrow scope)
+        if let Some(project) = state.projects.get(&project_root) {
+            state.session.set_context(project.to_context());
         }
+    }
 
     let id = state.session.set_source(&name, &text);
     state.documents.insert(uri, id);
@@ -324,53 +334,54 @@ pub fn handle_hover(state: &mut ServerState, params: HoverParams) -> Option<Hove
         let word = get_word_at(&source_text, pos.offset() as usize);
         if !word.is_empty()
             && let Some(project) = state.projects.get(&project_root)
-                && let Some(entry) = project.get(&word) {
-                    // Build hover content for project entry
-                    let mut content = format!("**{}**\n\n", word);
+            && let Some(entry) = project.get(&word)
+        {
+            // Build hover content for project entry
+            let mut content = format!("**{}**\n\n", word);
 
-                    match entry.value_type {
-                        rpl_project::ValueType::Program => {
-                            if let Some(ref sig) = entry.signature {
-                                content.push_str(&format!("`{}`\n\n", sig));
-                            }
-                            content.push_str("*Project program*");
-                        }
-                        rpl_project::ValueType::List => {
-                            content.push_str("*Project list*");
-                        }
-                        rpl_project::ValueType::Integer => {
-                            content.push_str("*Project integer*");
-                        }
-                        rpl_project::ValueType::Real => {
-                            content.push_str("*Project real*");
-                        }
-                        rpl_project::ValueType::String => {
-                            content.push_str("*Project string*");
-                        }
-                        _ => {
-                            content.push_str(&format!("*Project {:?}*", entry.value_type));
-                        }
+            match entry.value_type {
+                rpl_project::ValueType::Program => {
+                    if let Some(ref sig) = entry.signature {
+                        content.push_str(&format!("`{}`\n\n", sig));
                     }
-
-                    // Calculate word span for range
-                    let word_start = pos.offset() as usize;
-                    // Find actual start by going back
-                    let bytes = source_text.as_bytes();
-                    let mut start = word_start;
-                    while start > 0 && is_word_char(bytes[start - 1]) {
-                        start -= 1;
-                    }
-                    let end = start + word.len();
-                    let span = Span::new(Pos::new(start as u32), Pos::new(end as u32));
-
-                    return Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: content,
-                        }),
-                        range: Some(span_to_range(span, &source_text)),
-                    });
+                    content.push_str("*Project program*");
                 }
+                rpl_project::ValueType::List => {
+                    content.push_str("*Project list*");
+                }
+                rpl_project::ValueType::Integer => {
+                    content.push_str("*Project integer*");
+                }
+                rpl_project::ValueType::Real => {
+                    content.push_str("*Project real*");
+                }
+                rpl_project::ValueType::String => {
+                    content.push_str("*Project string*");
+                }
+                _ => {
+                    content.push_str(&format!("*Project {:?}*", entry.value_type));
+                }
+            }
+
+            // Calculate word span for range
+            let word_start = pos.offset() as usize;
+            // Find actual start by going back
+            let bytes = source_text.as_bytes();
+            let mut start = word_start;
+            while start > 0 && is_word_char(bytes[start - 1]) {
+                start -= 1;
+            }
+            let end = start + word.len();
+            let span = Span::new(Pos::new(start as u32), Pos::new(end as u32));
+
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: content,
+                }),
+                range: Some(span_to_range(span, &source_text)),
+            });
+        }
     }
 
     None
@@ -416,21 +427,22 @@ pub fn handle_definition(
         if !word.is_empty() {
             // Check if it matches a project entry
             if let Some(project) = state.projects.get(&project_root)
-                && let Some(entry) = project.get(&word) {
-                    // Return location of the project file
-                    let target_uri_str = path_to_uri(&entry.source_path);
-                    let target_uri: Uri = target_uri_str.parse().ok()?;
-                    // Read the target file to get the span as a range
-                    let target_source = std::fs::read_to_string(&entry.source_path).ok()?;
-                    let range = span_to_range(
-                        entry.ast.first().map(|n| n.span).unwrap_or_default(),
-                        &target_source,
-                    );
-                    return Some(GotoDefinitionResponse::Scalar(Location {
-                        uri: target_uri,
-                        range,
-                    }));
-                }
+                && let Some(entry) = project.get(&word)
+            {
+                // Return location of the project file
+                let target_uri_str = path_to_uri(&entry.source_path);
+                let target_uri: Uri = target_uri_str.parse().ok()?;
+                // Read the target file to get the span as a range
+                let target_source = std::fs::read_to_string(&entry.source_path).ok()?;
+                let range = span_to_range(
+                    entry.ast.first().map(|n| n.span).unwrap_or_default(),
+                    &target_source,
+                );
+                return Some(GotoDefinitionResponse::Scalar(Location {
+                    uri: target_uri,
+                    range,
+                }));
+            }
         }
     }
 

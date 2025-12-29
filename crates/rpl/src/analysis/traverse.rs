@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use super::{
-    walk_nodes, Definition, DefinitionId, DefinitionKind, Diagnostic, Reference,
-    ReferenceKind, Scope, ScopeId, ScopeKind, ScopeTree, SymbolTable, Visitor,
+    Definition, DefinitionId, DefinitionKind, Diagnostic, Reference, ReferenceKind, Scope, ScopeId,
+    ScopeKind, ScopeTree, SymbolTable, Visitor, walk_nodes,
 };
 use crate::core::{Interner, Span, Symbol, TypeId};
 use crate::interface::BindingKind;
@@ -77,6 +77,7 @@ pub struct Traverser<'a> {
 
 impl<'a> Traverser<'a> {
     /// Create a new traverser.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         registry: &'a InterfaceRegistry,
         interner: &'a Interner,
@@ -97,10 +98,10 @@ impl<'a> Traverser<'a> {
             // Add by full path
             root_scope_defs.insert(key.clone(), info.def_id);
             // Also add by simple name for convenience
-            if let Some(name) = key.rsplit('/').next() {
-                if name != key {
-                    root_scope_defs.insert(name.to_string(), info.def_id);
-                }
+            if let Some(name) = key.rsplit('/').next()
+                && name != key
+            {
+                root_scope_defs.insert(name.to_string(), info.def_id);
             }
         }
 
@@ -222,19 +223,21 @@ impl<'a> Traverser<'a> {
     }
 
     /// Collect a constraint from an origin.
-    fn collect_constraint(&mut self, origin: &Origin, requirement: Requirement, span: Span, operation: &str) {
+    fn collect_constraint(
+        &mut self,
+        origin: &Origin,
+        requirement: Requirement,
+        span: Span,
+        operation: &str,
+    ) {
         if matches!(requirement, Requirement::Any) {
             return;
         }
 
         match origin {
             Origin::Binding(def_id) | Origin::LoopVar(def_id) => {
-                self.constraints.push(Constraint::must_be(
-                    *def_id,
-                    requirement,
-                    span,
-                    operation,
-                ));
+                self.constraints
+                    .push(Constraint::must_be(*def_id, requirement, span, operation));
             }
             Origin::Phi(origins) => {
                 // Propagate to all merged origins
@@ -270,9 +273,11 @@ impl<'a> Traverser<'a> {
 
                 // If argument has known origin, link it to parameter
                 if let Some(arg_def_id) = origin.def_id()
-                    && let Some(&param_def_id) = info.param_def_ids.get(i) {
-                        self.constraints.push(Constraint::equal(arg_def_id, param_def_id, span));
-                    }
+                    && let Some(&param_def_id) = info.param_def_ids.get(i)
+                {
+                    self.constraints
+                        .push(Constraint::equal(arg_def_id, param_def_id, span));
+                }
 
                 // If argument has known type, record call site type (unioned, not intersected)
                 let arg_ty = self.stack.type_at(stack_pos);
@@ -282,13 +287,11 @@ impl<'a> Traverser<'a> {
                     _ => arg_ty,
                 };
                 if let Type::Known(t) = resolved_ty
-                    && let Some(&param_def_id) = info.param_def_ids.get(i) {
-                        self.constraints.push(Constraint::called_with(
-                            param_def_id,
-                            t,
-                            span,
-                        ));
-                    }
+                    && let Some(&param_def_id) = info.param_def_ids.get(i)
+                {
+                    self.constraints
+                        .push(Constraint::called_with(param_def_id, t, span));
+                }
             }
 
             // Pop arguments
@@ -318,8 +321,12 @@ impl<'a> Traverser<'a> {
         node: &Node,
     ) {
         let iface = self.registry.get(lib);
-        let binding_indices = iface.map(|i| i.binding_branches(construct_id, branches.len())).unwrap_or_default();
-        let is_loop = iface.map(|i| i.is_loop_construct(construct_id)).unwrap_or(false);
+        let binding_indices = iface
+            .map(|i| i.binding_branches(construct_id, branches.len()))
+            .unwrap_or_default();
+        let is_loop = iface
+            .map(|i| i.is_loop_construct(construct_id))
+            .unwrap_or(false);
 
         // Collect binding info from branches BEFORE modifying stack
         let bindings: Vec<(usize, String, Span)> = binding_indices
@@ -337,7 +344,9 @@ impl<'a> Traverser<'a> {
                     } else {
                         None
                     };
-                    local_idx.zip(name).map(|(idx, (name, span))| (idx, name, span))
+                    local_idx
+                        .zip(name)
+                        .map(|(idx, (name, span))| (idx, name, span))
                 } else {
                     None
                 }
@@ -365,7 +374,9 @@ impl<'a> Traverser<'a> {
         };
 
         // Apply construct's stack effect (e.g., FOR consumes start/end ints)
-        let effect = iface.map(|i| i.construct_effect(construct_id)).unwrap_or(StackEffect::Dynamic);
+        let effect = iface
+            .map(|i| i.construct_effect(construct_id))
+            .unwrap_or(StackEffect::Dynamic);
         if !matches!(effect, StackEffect::Dynamic) {
             self.stack.apply_effect(&effect, node.span);
         }
@@ -380,11 +391,19 @@ impl<'a> Traverser<'a> {
         }
 
         // Enter scope for constructs with bindings
-        let scope_kind = if is_loop { ScopeKind::Loop } else { ScopeKind::LocalBinding };
+        let scope_kind = if is_loop {
+            ScopeKind::Loop
+        } else {
+            ScopeKind::LocalBinding
+        };
         self.enter_scope(scope_kind, node.span);
 
         // Create definitions
-        let kind = if is_loop { DefinitionKind::LoopVar } else { DefinitionKind::Local };
+        let kind = if is_loop {
+            DefinitionKind::LoopVar
+        } else {
+            DefinitionKind::Local
+        };
         for (i, (local_idx, name, span)) in bindings.into_iter().enumerate() {
             let existing_def = if !is_loop {
                 self.lookup_local(local_idx)
@@ -401,13 +420,7 @@ impl<'a> Traverser<'a> {
                 }
             } else {
                 let ty = param_types.get(i).cloned().unwrap_or(Type::Unknown);
-                let mut def = Definition::with_type(
-                    name,
-                    span,
-                    kind,
-                    self.current_scope,
-                    ty,
-                );
+                let mut def = Definition::with_type(name, span, kind, self.current_scope, ty);
                 def.local_index = Some(local_idx);
                 self.add_definition(def);
             }
@@ -416,7 +429,9 @@ impl<'a> Traverser<'a> {
         // Walk non-binding branches (body branches only)
         // Skip: bindings (metadata), captures (already evaluated before construct keyword)
         let binding_set: std::collections::HashSet<_> = binding_indices.iter().copied().collect();
-        let capture_indices = iface.map(|i| i.capture_branches(construct_id)).unwrap_or_default();
+        let capture_indices = iface
+            .map(|i| i.capture_branches(construct_id))
+            .unwrap_or_default();
         let capture_set: std::collections::HashSet<_> = capture_indices.iter().copied().collect();
         for (idx, branch) in branches.iter().enumerate() {
             if !binding_set.contains(&idx) && !capture_set.contains(&idx) {
@@ -439,19 +454,31 @@ impl<'a> Traverser<'a> {
         node: &Node,
     ) {
         let iface = self.registry.get(lib);
-        let binding_indices = iface.map(|i| i.binding_branches(construct_id, branches.len())).unwrap_or_default();
-        let alternative_indices = iface.map(|i| i.alternative_branches(construct_id, branches.len())).unwrap_or_default();
-        let is_loop = iface.map(|i| i.is_loop_construct(construct_id)).unwrap_or(false);
+        let binding_indices = iface
+            .map(|i| i.binding_branches(construct_id, branches.len()))
+            .unwrap_or_default();
+        let alternative_indices = iface
+            .map(|i| i.alternative_branches(construct_id, branches.len()))
+            .unwrap_or_default();
+        let is_loop = iface
+            .map(|i| i.is_loop_construct(construct_id))
+            .unwrap_or(false);
 
         // Apply construct's stack effect (e.g., IF consumes a boolean condition)
-        let effect = iface.map(|i| i.construct_effect(construct_id)).unwrap_or(StackEffect::Dynamic);
+        let effect = iface
+            .map(|i| i.construct_effect(construct_id))
+            .unwrap_or(StackEffect::Dynamic);
         if !matches!(effect, StackEffect::Dynamic) {
             self.stack.apply_effect(&effect, node.span);
         }
 
         // Handle bindings (enter scope if needed)
         if !binding_indices.is_empty() {
-            let scope_kind = if is_loop { ScopeKind::Loop } else { ScopeKind::LocalBinding };
+            let scope_kind = if is_loop {
+                ScopeKind::Loop
+            } else {
+                ScopeKind::LocalBinding
+            };
             self.enter_scope(scope_kind, node.span);
 
             // Collect binding info from branches
@@ -460,17 +487,20 @@ impl<'a> Traverser<'a> {
                 .filter_map(|&idx| branches.get(idx))
                 .filter_map(|binding| {
                     if binding.len() >= 2 {
-                        let local_idx = if let NodeKind::Atom(AtomKind::Integer(n)) = &binding[0].kind {
-                            Some(*n as usize)
-                        } else {
-                            None
-                        };
+                        let local_idx =
+                            if let NodeKind::Atom(AtomKind::Integer(n)) = &binding[0].kind {
+                                Some(*n as usize)
+                            } else {
+                                None
+                            };
                         let name = if let NodeKind::Atom(AtomKind::String(s)) = &binding[1].kind {
                             Some((s.to_string(), binding[1].span))
                         } else {
                             None
                         };
-                        local_idx.zip(name).map(|(idx, (name, span))| (idx, name, span))
+                        local_idx
+                            .zip(name)
+                            .map(|(idx, (name, span))| (idx, name, span))
                     } else {
                         None
                     }
@@ -479,7 +509,11 @@ impl<'a> Traverser<'a> {
 
             // Create definitions for bindings
             // Note: Loop variables always get new definitions - they never reuse parent scope defs
-            let kind = if is_loop { DefinitionKind::LoopVar } else { DefinitionKind::Local };
+            let kind = if is_loop {
+                DefinitionKind::LoopVar
+            } else {
+                DefinitionKind::Local
+            };
             for (local_idx, name, span) in bindings {
                 // Only check for existing definitions if this is NOT a loop construct
                 let existing_def = if !is_loop {
@@ -501,13 +535,7 @@ impl<'a> Traverser<'a> {
                     // stack state is saved/restored for merging. Type inference for these
                     // bindings is handled later via constraint resolution.
                     let ty = Type::Unknown;
-                    let mut def = Definition::with_type(
-                        name,
-                        span,
-                        kind,
-                        self.current_scope,
-                        ty,
-                    );
+                    let mut def = Definition::with_type(name, span, kind, self.current_scope, ty);
                     def.local_index = Some(local_idx);
                     self.add_definition(def);
                 }
@@ -522,7 +550,9 @@ impl<'a> Traverser<'a> {
         let binding_set: std::collections::HashSet<_> = binding_indices.iter().copied().collect();
         // Capture branches contain already-evaluated code (e.g., IF condition)
         // We still need to walk them for reference tracking, but not for stack effects
-        let capture_indices = iface.map(|i| i.capture_branches(construct_id)).unwrap_or_default();
+        let capture_indices = iface
+            .map(|i| i.capture_branches(construct_id))
+            .unwrap_or_default();
         let capture_set: std::collections::HashSet<_> = capture_indices.iter().copied().collect();
 
         // Walk capture branches for reference tracking only (save/restore stack)
@@ -537,7 +567,10 @@ impl<'a> Traverser<'a> {
         // Walk non-alternative branches first (body branches)
         // Skip: alternatives (handled separately), bindings (metadata only), captures (already walked above)
         for (idx, branch) in branches.iter().enumerate() {
-            if !alternative_set.contains(&idx) && !binding_set.contains(&idx) && !capture_set.contains(&idx) {
+            if !alternative_set.contains(&idx)
+                && !binding_set.contains(&idx)
+                && !capture_set.contains(&idx)
+            {
                 walk_nodes(self, branch);
             }
         }
@@ -578,17 +611,15 @@ impl<'a> Traverser<'a> {
     }
 
     /// Apply a stack effect, collecting constraints from consumed values.
-    fn apply_command_effect(
-        &mut self,
-        lib: LibId,
-        cmd: u16,
-        effect: &StackEffect,
-        span: Span,
-    ) {
+    fn apply_command_effect(&mut self, lib: LibId, cmd: u16, effect: &StackEffect, span: Span) {
         let cmd_name = self.registry.get_command_name(lib, cmd);
 
         // Get input constraints and collect them
-        let input_constraints = self.registry.get(lib).map(|i| i.input_constraints(cmd)).unwrap_or_default();
+        let input_constraints = self
+            .registry
+            .get(lib)
+            .map(|i| i.input_constraints(cmd))
+            .unwrap_or_default();
         let consumes = effect.consumes().unwrap_or(0) as usize;
 
         for (i, constraint) in input_constraints.iter().enumerate().take(consumes) {
@@ -628,16 +659,23 @@ impl Visitor for Traverser<'_> {
                 // Discard item stack effects - list captures them
                 self.stack = saved;
             }
-            self.stack.push(Type::Known(TypeId::LIST), Origin::Literal(node.span));
+            self.stack
+                .push(Type::Known(TypeId::LIST), Origin::Literal(node.span));
             return false;
         }
 
         // Handle Extended nodes specially to avoid walking binding branches
         // (binding branches contain [Integer, String] metadata that would pollute the stack)
-        if let NodeKind::Composite(CompositeKind::Extended(lib, construct_id), branches) = &node.kind {
+        if let NodeKind::Composite(CompositeKind::Extended(lib, construct_id), branches) =
+            &node.kind
+        {
             let iface = self.registry.get(*lib);
-            let alternatives = iface.map(|i| i.alternative_branches(*construct_id, branches.len())).unwrap_or_default();
-            let bindings = iface.map(|i| i.binding_branches(*construct_id, branches.len())).unwrap_or_default();
+            let alternatives = iface
+                .map(|i| i.alternative_branches(*construct_id, branches.len()))
+                .unwrap_or_default();
+            let bindings = iface
+                .map(|i| i.binding_branches(*construct_id, branches.len()))
+                .unwrap_or_default();
 
             if !alternatives.is_empty() {
                 // Handle constructs with alternatives (IF/THEN/ELSE) with stack save/restore
@@ -649,7 +687,9 @@ impl Visitor for Traverser<'_> {
                 return false;
             } else {
                 // Simple Extended (no bindings, no alternatives) - just apply effect and walk
-                let effect = iface.map(|i| i.construct_effect(*construct_id)).unwrap_or(StackEffect::Dynamic);
+                let effect = iface
+                    .map(|i| i.construct_effect(*construct_id))
+                    .unwrap_or(StackEffect::Dynamic);
                 if !matches!(effect, StackEffect::Dynamic) {
                     self.stack.apply_effect(&effect, node.span);
                 }
@@ -664,11 +704,13 @@ impl Visitor for Traverser<'_> {
     }
 
     fn visit_integer(&mut self, _value: i64, node: &Node) {
-        self.stack.push(Type::Known(TypeId::BINT), Origin::Literal(node.span));
+        self.stack
+            .push(Type::Known(TypeId::BINT), Origin::Literal(node.span));
     }
 
     fn visit_real(&mut self, _value: f64, node: &Node) {
-        self.stack.push(Type::Known(TypeId::REAL), Origin::Literal(node.span));
+        self.stack
+            .push(Type::Known(TypeId::REAL), Origin::Literal(node.span));
     }
 
     fn visit_string(&mut self, value: &str, node: &Node) {
@@ -680,7 +722,8 @@ impl Visitor for Traverser<'_> {
         }
 
         self.pending_name = Some((value.to_string(), node.span));
-        self.stack.push(Type::Known(TypeId::STRING), Origin::Literal(node.span));
+        self.stack
+            .push(Type::Known(TypeId::STRING), Origin::Literal(node.span));
     }
 
     fn visit_symbol(&mut self, sym: Symbol, node: &Node) {
@@ -701,7 +744,8 @@ impl Visitor for Traverser<'_> {
 
         // Check if it's a known definition
         if let Some(def_id) = self.lookup_definition(&name) {
-            let ty = self.symbols
+            let ty = self
+                .symbols
                 .get_definition(def_id)
                 .and_then(|d| d.value_type.clone())
                 .unwrap_or(Type::Unknown);
@@ -722,7 +766,8 @@ impl Visitor for Traverser<'_> {
                 // Known non-program value (Bytes, List, Integer, etc.)
                 // Push the appropriate type based on entry info
                 // For binary files (Bytes), use BLOB type
-                self.stack.push(Type::Known(TypeId::BLOB), Origin::Result(node.span));
+                self.stack
+                    .push(Type::Known(TypeId::BLOB), Origin::Result(node.span));
             }
             return;
         }
@@ -735,7 +780,8 @@ impl Visitor for Traverser<'_> {
     fn visit_local_ref(&mut self, index: usize, node: &Node) {
         if let Some(def_id) = self.lookup_local(index) {
             // Create a reference
-            let name = self.symbols
+            let name = self
+                .symbols
                 .get_definition(def_id)
                 .map(|d| d.name.clone())
                 .unwrap_or_default();
@@ -748,7 +794,8 @@ impl Visitor for Traverser<'_> {
                 def.referenced = true;
             }
 
-            let ty = self.symbols
+            let ty = self
+                .symbols
                 .get_definition(def_id)
                 .and_then(|d| d.value_type.clone())
                 .unwrap_or(Type::Unknown);
@@ -768,12 +815,15 @@ impl Visitor for Traverser<'_> {
         }
 
         // Store stack snapshot BEFORE applying any effects (for lowering)
-        self.node_stacks.insert(node.span, StackSnapshot {
-            tos: self.stack.type_at(0),
-            nos: self.stack.type_at(1),
-            depth: self.stack.depth(),
-            depth_known: self.stack.depth_known,
-        });
+        self.node_stacks.insert(
+            node.span,
+            StackSnapshot {
+                tos: self.stack.type_at(0),
+                nos: self.stack.type_at(1),
+                depth: self.stack.depth(),
+                depth_known: self.stack.depth_known,
+            },
+        );
 
         // Handle binding effects (STO, RCL, etc.)
         if let Some(binding_kind) = self.registry.get(lib).and_then(|i| i.binding_effect(cmd)) {
@@ -800,7 +850,11 @@ impl Visitor for Traverser<'_> {
                             }
                             // Link value origin to definition for type propagation
                             if let Some(origin_def_id) = value_origin.def_id() {
-                                self.constraints.push(Constraint::equal(def_id, origin_def_id, name_span));
+                                self.constraints.push(Constraint::equal(
+                                    def_id,
+                                    origin_def_id,
+                                    name_span,
+                                ));
                             }
                             self.add_reference(name, name_span, ReferenceKind::Write);
                         } else {
@@ -824,7 +878,8 @@ impl Visitor for Traverser<'_> {
                         self.add_reference(name.clone(), name_span, ReferenceKind::Read);
 
                         if let Some(def_id) = self.lookup_definition(&name) {
-                            let ty = self.symbols
+                            let ty = self
+                                .symbols
                                 .get_definition(def_id)
                                 .and_then(|d| d.value_type.clone())
                                 .unwrap_or(Type::Unknown);
@@ -847,7 +902,11 @@ impl Visitor for Traverser<'_> {
         // Get stack effect and apply
         let tos = self.stack.type_at(0).as_known();
         let nos = self.stack.type_at(1).as_known();
-        let effect = self.registry.get(lib).map(|i| i.command_effect(cmd, tos, nos)).unwrap_or(StackEffect::Dynamic);
+        let effect = self
+            .registry
+            .get(lib)
+            .map(|i| i.command_effect(cmd, tos, nos))
+            .unwrap_or(StackEffect::Dynamic);
         self.apply_command_effect(lib, cmd, &effect, node.span);
     }
 
@@ -856,17 +915,19 @@ impl Visitor for Traverser<'_> {
         if let SymExpr::Var(name) = expr {
             self.pending_name = Some((name.to_string(), node.span));
         }
-        self.stack.push(Type::Known(TypeId::SYMBOLIC), Origin::Literal(node.span));
+        self.stack
+            .push(Type::Known(TypeId::SYMBOLIC), Origin::Literal(node.span));
     }
 
     fn visit_program(&mut self, _body: &Branch, node: &Node) {
         // Check if this is a function definition
-        let func_name = if let Some(Pattern::FunctionDef { name, .. }) = self.patterns.get(&node.span) {
-            self.current_function = Some(name.clone());
-            Some(name.clone())
-        } else {
-            None
-        };
+        let func_name =
+            if let Some(Pattern::FunctionDef { name, .. }) = self.patterns.get(&node.span) {
+                self.current_function = Some(name.clone());
+                Some(name.clone())
+            } else {
+                None
+            };
 
         // Enter program scope
         self.enter_scope(ScopeKind::Program, node.span);
@@ -885,7 +946,9 @@ impl Visitor for Traverser<'_> {
                     if let Some(scope_map) = self.scope_definitions.last_mut() {
                         scope_map.insert(param_name, param_def_id);
                     }
-                    if let (Some(idx), Some(local_map)) = (local_index, self.local_index_to_def.last_mut()) {
+                    if let (Some(idx), Some(local_map)) =
+                        (local_index, self.local_index_to_def.last_mut())
+                    {
                         local_map.insert(idx, param_def_id);
                     }
                 }
@@ -908,11 +971,12 @@ impl Visitor for Traverser<'_> {
 
         // If this is a function, unify return type with TypeVar and store origin
         if let Some(ref func_name) = self.current_function
-            && let Some(info) = self.globals.get(func_name) {
-                self.substitution.unify(info.return_type_var, return_ty);
-                // Store the return origin for later resolution in finalize_signatures
-                self.return_origins.insert(func_name.clone(), return_origin);
-            }
+            && let Some(info) = self.globals.get(func_name)
+        {
+            self.substitution.unify(info.return_type_var, return_ty);
+            // Store the return origin for later resolution in finalize_signatures
+            self.return_origins.insert(func_name.clone(), return_origin);
+        }
 
         self.current_function = None;
 
@@ -925,9 +989,9 @@ impl Visitor for Traverser<'_> {
         }
 
         // Push program type
-        self.stack.push(Type::Known(TypeId::PROGRAM), Origin::Literal(node.span));
+        self.stack
+            .push(Type::Known(TypeId::PROGRAM), Origin::Literal(node.span));
     }
-
 }
 
 #[cfg(test)]

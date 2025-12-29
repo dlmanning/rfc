@@ -71,17 +71,16 @@ pub use source::{DiagnosticRenderer, LineCol, SourceCache, SourceFile, SourceId}
 
 // Re-export commonly used types at crate root
 pub use lower::CompiledProgram;
-pub use session::{AnalysisSession, Runtime, Session, SessionConfig, EvalError};
-pub use session::lsp;
 pub use session::debug as debug_helpers;
-pub use vm::{DebugState, DebugMode, DebugEvent, ExecuteOutcome, ReturnEntry};
-pub use vm::disasm::{disassemble, disassemble_one, DisassembledInstr, DisassembledProgram};
+pub use session::lsp;
+pub use session::{AnalysisSession, EvalError, Runtime, Session, SessionConfig};
+pub use vm::disasm::{DisassembledInstr, DisassembledProgram, disassemble, disassemble_one};
+pub use vm::{DebugEvent, DebugMode, DebugState, ExecuteOutcome, ReturnEntry};
 
 // Re-export VM types from rpl-vm for convenience
 // These are the authoritative definitions; our local modules will transition to use these
 pub use rpl_vm::{
-    Opcode, BlockType, CatchKind,
-    read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
+    BlockType, CatchKind, Opcode, read_f64, read_leb128_i64, read_leb128_u32, read_u16, read_u32,
     write_f64, write_leb128_i64, write_leb128_u32, write_u16, write_u32,
 };
 
@@ -141,29 +140,25 @@ mod tests {
     #[test]
     fn eval_integers() {
         let result = eval("1 2 3").unwrap();
-        assert_eq!(result, vec![
-            Value::integer(1),
-            Value::integer(2),
-            Value::integer(3),
-        ]);
+        assert_eq!(
+            result,
+            vec![Value::integer(1), Value::integer(2), Value::integer(3),]
+        );
     }
 
     #[test]
     fn eval_reals() {
         let result = eval("1.5 2.5").unwrap();
-        assert_eq!(result, vec![
-            Value::real(1.5),
-            Value::real(2.5),
-        ]);
+        assert_eq!(result, vec![Value::real(1.5), Value::real(2.5),]);
     }
 
     #[test]
     fn eval_strings() {
         let result = eval(r#""hello" "world""#).unwrap();
-        assert_eq!(result, vec![
-            Value::string("hello"),
-            Value::string("world"),
-        ]);
+        assert_eq!(
+            result,
+            vec![Value::string("hello"), Value::string("world"),]
+        );
     }
 
     #[test]

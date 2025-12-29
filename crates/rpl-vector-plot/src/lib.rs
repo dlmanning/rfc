@@ -22,24 +22,24 @@
 //! On the RPL stack, plots are stored as `Blob`. Internally, commands
 //! decode the blob to a typed `Plot`, mutate it, and encode back.
 
-mod types;
-mod path;
-mod paint;
-mod element;
-mod plot;
 mod builder;
-mod encode;
 mod decode;
-mod render;
+mod element;
+mod encode;
 mod library;
+mod paint;
+mod path;
+mod plot;
+mod render;
+mod types;
 
-pub use types::{Point, Rect, Color, Transform};
-pub use path::{Path, PathCmd};
-pub use paint::{Paint, Stroke, GradientStop};
-pub use element::{Element, ElementKind, ElementId};
-pub use plot::Plot;
 pub use builder::PlotBuilder;
+pub use decode::{DecodeError, decode};
+pub use element::{Element, ElementId, ElementKind};
 pub use encode::encode;
-pub use decode::{decode, DecodeError};
+pub use library::{VECTOR_PLOT_LIB_ID, VectorPlotLib, register_vector_plot_lib};
+pub use paint::{GradientStop, Paint, Stroke};
+pub use path::{Path, PathCmd};
+pub use plot::Plot;
 pub use render::{Renderer, render};
-pub use library::{VectorPlotLib, VECTOR_PLOT_LIB_ID, register_vector_plot_lib};
+pub use types::{Color, Point, Rect, Transform};

@@ -43,32 +43,64 @@ use rpl::Session;
 #[cfg(feature = "runtime")]
 pub fn register_sr5_libs(session: &mut Session, hardware: Arc<Mutex<Sr5Hardware>>) {
     // Register graphics library
-    session.interfaces_mut().add(Sr5GraphicsLib::new(hardware.clone()));
-    session.lowerers_mut().add(Sr5GraphicsLib::new(hardware.clone()));
-    session.executors_mut().add(Sr5GraphicsLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5GraphicsLib::new(hardware.clone()));
+    session
+        .lowerers_mut()
+        .add(Sr5GraphicsLib::new(hardware.clone()));
+    session
+        .executors_mut()
+        .add(Sr5GraphicsLib::new(hardware.clone()));
 
     // Register input library
-    session.interfaces_mut().add(Sr5InputLib::new(hardware.clone()));
-    session.lowerers_mut().add(Sr5InputLib::new(hardware.clone()));
-    session.executors_mut().add(Sr5InputLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5InputLib::new(hardware.clone()));
+    session
+        .lowerers_mut()
+        .add(Sr5InputLib::new(hardware.clone()));
+    session
+        .executors_mut()
+        .add(Sr5InputLib::new(hardware.clone()));
 
     // Register sprites library
-    session.interfaces_mut().add(Sr5SpritesLib::new(hardware.clone()));
-    session.lowerers_mut().add(Sr5SpritesLib::new(hardware.clone()));
-    session.executors_mut().add(Sr5SpritesLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5SpritesLib::new(hardware.clone()));
+    session
+        .lowerers_mut()
+        .add(Sr5SpritesLib::new(hardware.clone()));
+    session
+        .executors_mut()
+        .add(Sr5SpritesLib::new(hardware.clone()));
 
     // Register tiles library
-    session.interfaces_mut().add(Sr5TilesLib::new(hardware.clone()));
-    session.lowerers_mut().add(Sr5TilesLib::new(hardware.clone()));
-    session.executors_mut().add(Sr5TilesLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5TilesLib::new(hardware.clone()));
+    session
+        .lowerers_mut()
+        .add(Sr5TilesLib::new(hardware.clone()));
+    session
+        .executors_mut()
+        .add(Sr5TilesLib::new(hardware.clone()));
 
     // Register system library
-    session.interfaces_mut().add(Sr5SystemLib::new(hardware.clone()));
-    session.lowerers_mut().add(Sr5SystemLib::new(hardware.clone()));
-    session.executors_mut().add(Sr5SystemLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5SystemLib::new(hardware.clone()));
+    session
+        .lowerers_mut()
+        .add(Sr5SystemLib::new(hardware.clone()));
+    session
+        .executors_mut()
+        .add(Sr5SystemLib::new(hardware.clone()));
 
     // Register UI library (overrides stdlib UI with hardware-backed implementation)
-    session.interfaces_mut().add(Sr5UiLib::new(hardware.clone()));
+    session
+        .interfaces_mut()
+        .add(Sr5UiLib::new(hardware.clone()));
     session.lowerers_mut().add(Sr5UiLib::new(hardware.clone()));
     session.executors_mut().add(Sr5UiLib::new(hardware));
 

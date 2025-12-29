@@ -150,7 +150,10 @@ impl LibraryExecutor for DirectoryLib {
 
                 // Must be symbolic (like 'x' or 'dir.subdir.var')
                 let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("STO: expected symbolic name 'x' or list path, got {}", name_val.type_name())
+                    format!(
+                        "STO: expected symbolic name 'x' or list path, got {}",
+                        name_val.type_name()
+                    )
                 })?;
 
                 // Check for path-based access (e.g., 'entities.0.x')
@@ -204,7 +207,8 @@ impl LibraryExecutor for DirectoryLib {
                     }
 
                     // Look up the value
-                    let value = ctx.lookup(&var_name)
+                    let value = ctx
+                        .lookup(&var_name)
                         .ok_or_else(|| format!("Undefined: {}", var_name))?
                         .clone();
 
@@ -220,7 +224,10 @@ impl LibraryExecutor for DirectoryLib {
 
                 // Must be symbolic (like 'x' or 'dir.subdir.var')
                 let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("RCL: expected symbolic name 'x' or list path, got {}", name_val.type_name())
+                    format!(
+                        "RCL: expected symbolic name 'x' or list path, got {}",
+                        name_val.type_name()
+                    )
                 })?;
 
                 // Check for path-based access (e.g., 'entities.0.x')
@@ -294,7 +301,10 @@ impl LibraryExecutor for DirectoryLib {
 
                 // Must be symbolic (like 'x' or 'dir.subdir.var')
                 let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("PURGE: expected symbolic name 'x' or list path, got {}", name_val.type_name())
+                    format!(
+                        "PURGE: expected symbolic name 'x' or list path, got {}",
+                        name_val.type_name()
+                    )
                 })?;
 
                 // Check for path-based access (e.g., 'entities.0.x')
@@ -342,7 +352,7 @@ impl LibraryExecutor for DirectoryLib {
                         return Err(format!(
                             "INCR: expected numeric value, got {}",
                             current.type_name()
-                        ))
+                        ));
                     }
                 };
 
@@ -370,7 +380,7 @@ impl LibraryExecutor for DirectoryLib {
                         return Err(format!(
                             "DECR: expected numeric value, got {}",
                             current.type_name()
-                        ))
+                        ));
                     }
                 };
 
@@ -384,11 +394,17 @@ impl LibraryExecutor for DirectoryLib {
                 // (old_name new_name --)
                 let new_name_val = ctx.pop()?;
                 let new_name = extract_name(&new_name_val).ok_or_else(|| {
-                    format!("RENAME: expected string name, got {}", new_name_val.type_name())
+                    format!(
+                        "RENAME: expected string name, got {}",
+                        new_name_val.type_name()
+                    )
                 })?;
                 let old_name_val = ctx.pop()?;
                 let old_name = extract_name(&old_name_val).ok_or_else(|| {
-                    format!("RENAME: expected string name, got {}", old_name_val.type_name())
+                    format!(
+                        "RENAME: expected string name, got {}",
+                        old_name_val.type_name()
+                    )
                 })?;
                 if !ctx.rename_var(&old_name, &new_name) {
                     return Err(format!("Undefined: {}", old_name));
@@ -397,7 +413,6 @@ impl LibraryExecutor for DirectoryLib {
             }
 
             // === Directory navigation ===
-
             cmd::CRDIR => {
                 // (name --)
                 let name_val = ctx.pop()?;
@@ -448,7 +463,6 @@ impl LibraryExecutor for DirectoryLib {
             }
 
             // === Directory packing ===
-
             cmd::PACKDIR => {
                 // PACKDIR: (-- packed) or (name -- packed)
                 // Check if there's a string argument on the stack
@@ -470,7 +484,9 @@ impl LibraryExecutor for DirectoryLib {
 
                 let packed = if let Some(name) = pack_subdir {
                     // Pack named subdirectory
-                    let subdir = ctx.directory.get_subdir(&name)
+                    let subdir = ctx
+                        .directory
+                        .get_subdir(&name)
                         .ok_or_else(|| format!("PACKDIR: directory '{}' not found", name))?;
                     pack_directory(subdir)
                 } else {
@@ -491,29 +507,47 @@ impl LibraryExecutor for DirectoryLib {
                             // Unpack into named subdirectory
                             ctx.pop()?;
                             let packed_val = ctx.pop()?;
-                            let bytes = packed_val.as_bytes()
-                                .ok_or_else(|| format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name()))?
+                            let bytes = packed_val
+                                .as_bytes()
+                                .ok_or_else(|| {
+                                    format!(
+                                        "UNPACKDIR: expected bytes, got {}",
+                                        packed_val.type_name()
+                                    )
+                                })?
                                 .clone();
                             (bytes, Some(name))
                         } else {
                             // Top is not a name, treat as packed bytes only
                             let packed_val = ctx.pop()?;
-                            let bytes = packed_val.as_bytes()
-                                .ok_or_else(|| format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name()))?
+                            let bytes = packed_val
+                                .as_bytes()
+                                .ok_or_else(|| {
+                                    format!(
+                                        "UNPACKDIR: expected bytes, got {}",
+                                        packed_val.type_name()
+                                    )
+                                })?
                                 .clone();
                             (bytes, None)
                         }
                     } else {
                         let packed_val = ctx.pop()?;
-                        let bytes = packed_val.as_bytes()
-                            .ok_or_else(|| format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name()))?
+                        let bytes = packed_val
+                            .as_bytes()
+                            .ok_or_else(|| {
+                                format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name())
+                            })?
                             .clone();
                         (bytes, None)
                     }
                 } else {
                     let packed_val = ctx.pop()?;
-                    let bytes = packed_val.as_bytes()
-                        .ok_or_else(|| format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name()))?
+                    let bytes = packed_val
+                        .as_bytes()
+                        .ok_or_else(|| {
+                            format!("UNPACKDIR: expected bytes, got {}", packed_val.type_name())
+                        })?
                         .clone();
                     (bytes, None)
                 };
@@ -522,19 +556,17 @@ impl LibraryExecutor for DirectoryLib {
                     // Create subdirectory if needed and unpack into it
                     ctx.create_subdir(name.clone());
                     let node = ctx.directory.current_node_mut().ensure_subdir(&name);
-                    unpack_directory_checked(&packed_bytes, node)
-                        .map_err(|e| match e {
-                            Ok(se) => format!("UNPACKDIR: {}", se),
-                            Err(conflict) => conflict.to_string(),
-                        })?;
+                    unpack_directory_checked(&packed_bytes, node).map_err(|e| match e {
+                        Ok(se) => format!("UNPACKDIR: {}", se),
+                        Err(conflict) => conflict.to_string(),
+                    })?;
                 } else {
                     // Unpack into current directory
                     let node = ctx.directory.current_node_mut();
-                    unpack_directory_checked(&packed_bytes, node)
-                        .map_err(|e| match e {
-                            Ok(se) => format!("UNPACKDIR: {}", se),
-                            Err(conflict) => conflict.to_string(),
-                        })?;
+                    unpack_directory_checked(&packed_bytes, node).map_err(|e| match e {
+                        Ok(se) => format!("UNPACKDIR: {}", se),
+                        Err(conflict) => conflict.to_string(),
+                    })?;
                 }
 
                 Ok(ExecuteAction::ok())
@@ -543,13 +575,14 @@ impl LibraryExecutor for DirectoryLib {
             cmd::PACKINFO => {
                 // PACKINFO: (packed -- {names})
                 let packed_val = ctx.pop()?;
-                let bytes = packed_val.as_bytes()
-                    .ok_or_else(|| format!("PACKINFO: expected bytes, got {}", packed_val.type_name()))?;
+                let bytes = packed_val.as_bytes().ok_or_else(|| {
+                    format!("PACKINFO: expected bytes, got {}", packed_val.type_name())
+                })?;
 
-                let names = packinfo(bytes)
-                    .map_err(|e| format!("PACKINFO: {}", e))?;
+                let names = packinfo(bytes).map_err(|e| format!("PACKINFO: {}", e))?;
 
-                let names_list: Vec<Value> = names.into_iter()
+                let names_list: Vec<Value> = names
+                    .into_iter()
                     .map(|s| Value::string(s.as_str()))
                     .collect();
                 ctx.push(Value::list(names_list))?;
@@ -578,7 +611,6 @@ fn extract_name(value: &Value) -> Option<String> {
         _ => None,
     }
 }
-
 
 /// Path element from a list-based path.
 #[derive(Debug, Clone, PartialEq)]
@@ -668,12 +700,15 @@ mod tests {
     #[test]
     fn path_based_sto_rcl() {
         // Store and recall using symbolic path syntax
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             100 'entities.0.x' STO
             200 'entities.0.y' STO
             'entities.0.x' RCL
             'entities.0.y' RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Value::integer(100));
@@ -682,11 +717,14 @@ mod tests {
 
     #[test]
     fn path_based_purge() {
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             42 'a.b.c' STO
             'a.b.c' RCL
             'a.b.c' PURGE
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], Value::integer(42));
@@ -695,14 +733,17 @@ mod tests {
     #[test]
     fn path_based_nested() {
         // Store at different depths
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             1 'a.x' STO
             2 'a.b.x' STO
             3 'a.b.c.x' STO
             'a.x' RCL
             'a.b.x' RCL
             'a.b.c.x' RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], Value::integer(1));
@@ -713,12 +754,15 @@ mod tests {
     #[test]
     fn list_path_sto_rcl() {
         // Store and recall using list-based paths (newRPL style)
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             100 { "entities" "0" "x" } STO
             200 { "entities" "0" "y" } STO
             { "entities" "0" "x" } RCL
             { "entities" "0" "y" } RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Value::integer(100));
@@ -727,11 +771,14 @@ mod tests {
 
     #[test]
     fn list_path_purge() {
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             42 { "a" "b" "c" } STO
             { "a" "b" "c" } RCL
             { "a" "b" "c" } PURGE
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], Value::integer(42));
@@ -741,11 +788,14 @@ mod tests {
     fn list_path_with_home() {
         // HOME in path should navigate to root first
         // Store at nested path, then use HOME to access root from anywhere
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             100 'root_var' STO
             200 { "subdir" "nested_var" } STO
             { "HOME" "root_var" } RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], Value::integer(100));
@@ -755,10 +805,13 @@ mod tests {
     fn list_path_with_updir() {
         // UPDIR in path should navigate up one level
         // Store in parent, then access via UPDIR from child context
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             100 { "parent" "x" } STO
             { "parent" "UPDIR" "parent" "x" } RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         // Note: The path is: parent -> UPDIR (back to root) -> parent -> x
         assert_eq!(result.len(), 1);
@@ -768,10 +821,13 @@ mod tests {
     #[test]
     fn symbolic_and_list_path_interop() {
         // Both styles should access the same data
-        let result = crate::eval(r#"
+        let result = crate::eval(
+            r#"
             42 'a.b.c' STO
             { "a" "b" "c" } RCL
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], Value::integer(42));

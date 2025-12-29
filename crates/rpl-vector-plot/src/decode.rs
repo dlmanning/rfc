@@ -325,7 +325,11 @@ fn decode_paint(decoder: &mut Decoder) -> Result<Option<Paint>, DecodeError> {
                 let color = decoder.read_color()?;
                 stops.push(GradientStop::new(offset, color));
             }
-            Ok(Some(Paint::RadialGradient { center, radius, stops }))
+            Ok(Some(Paint::RadialGradient {
+                center,
+                radius,
+                stops,
+            }))
         }
         _ => Err(DecodeError::InvalidCommand(cmd)),
     }

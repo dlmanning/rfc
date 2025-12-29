@@ -3,8 +3,8 @@
 //! These tests verify the complete source → compile → execute path.
 //! Tests are organized into modules by functionality.
 
-use rpl::value::Value;
 use rpl::Session;
+use rpl::value::Value;
 
 /// Create a session with the standard library registered.
 pub fn session_with_stdlib() -> Session {

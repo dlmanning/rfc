@@ -59,20 +59,18 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Ok(Action::Eval(source)) => {
-            match rpl_stdlib::eval(&source) {
-                Ok(stack) => {
-                    for value in &stack {
-                        println!("{value}");
-                    }
-                    ExitCode::SUCCESS
+        Ok(Action::Eval(source)) => match rpl_stdlib::eval(&source) {
+            Ok(stack) => {
+                for value in &stack {
+                    println!("{value}");
                 }
-                Err(e) => {
-                    eprintln!("{e}");
-                    ExitCode::FAILURE
-                }
+                ExitCode::SUCCESS
             }
-        }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
         Err(e) => {
             eprintln!("{e}");
             ExitCode::FAILURE

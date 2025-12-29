@@ -70,9 +70,8 @@ pub fn try_execute_command(app: &mut App, input: &str) -> CommandResult {
 }
 
 fn show_help(app: &mut App) {
-    app.last_error = Some(
-        "Commands: :help :quit :clear :clearall :vars :stack :home :cd <dir>".to_string(),
-    );
+    app.last_error =
+        Some("Commands: :help :quit :clear :clearall :vars :stack :home :cd <dir>".to_string());
 }
 
 fn clear_stack(app: &mut App) {

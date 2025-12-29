@@ -121,29 +121,20 @@ fn local_binding_with_while() {
 #[test]
 fn local_binding_basic() {
     // Just push local n
-    assert_stack_eq(
-        "<< -> n << n >> >> 42 SWAP EVAL",
-        &[42.0],
-    );
+    assert_stack_eq("<< -> n << n >> >> 42 SWAP EVAL", &[42.0]);
 }
 
 // Local binding with arithmetic
 #[test]
 fn local_binding_arithmetic() {
-    assert_stack_eq(
-        "<< -> n << n n + >> >> 10 SWAP EVAL",
-        &[20.0],
-    );
+    assert_stack_eq("<< -> n << n n + >> >> 10 SWAP EVAL", &[20.0]);
 }
 
 // Local in simple WHILE
 #[test]
 fn local_in_simple_while() {
     // Just reference n in WHILE condition
-    assert_stack_eq(
-        "<< -> n << WHILE n REPEAT END >> >> 0 SWAP EVAL",
-        &[],
-    );
+    assert_stack_eq("<< -> n << WHILE n REPEAT END >> >> 0 SWAP EVAL", &[]);
 }
 
 // Local after WHILE
@@ -170,40 +161,28 @@ fn local_in_while_check() {
 #[test]
 fn local_binding_direct() {
     // Direct: 5 -> n << n >> should give 5
-    assert_stack_eq(
-        "5 -> n << n >>",
-        &[5.0],
-    );
+    assert_stack_eq("5 -> n << n >>", &[5.0]);
 }
 
 // Local in WHILE directly (no outer program)
 #[test]
 fn local_in_while_direct() {
     // 5 -> n << WHILE n REPEAT ... END >>
-    assert_stack_eq(
-        "5 -> n << 0 WHILE DUP n < REPEAT 1 + END >>",
-        &[5.0],
-    );
+    assert_stack_eq("5 -> n << 0 WHILE DUP n < REPEAT 1 + END >>", &[5.0]);
 }
 
 // Even simpler: just WHILE with local in condition
 #[test]
 fn local_in_while_simplest() {
     // 0 -> n << WHILE n REPEAT END >> - should just exit immediately
-    assert_stack_eq(
-        "0 -> n << WHILE n REPEAT END >>",
-        &[],
-    );
+    assert_stack_eq("0 -> n << WHILE n REPEAT END >>", &[]);
 }
 
 // Local used BEFORE WHILE in same body - does it work?
 #[test]
 fn local_before_while() {
     // 5 -> n << n WHILE 0 REPEAT END >> - push n then skip WHILE
-    assert_stack_eq(
-        "5 -> n << n WHILE 0 REPEAT END >>",
-        &[5.0],
-    );
+    assert_stack_eq("5 -> n << n WHILE 0 REPEAT END >>", &[5.0]);
 }
 
 // Multi-token condition with local - test that locals work in WHILE condition
@@ -211,89 +190,62 @@ fn local_before_while() {
 fn local_in_multi_token_condition() {
     // Use local n in a condition that evaluates to false immediately
     // 5 0 == is 0 (false), so the loop body never executes
-    assert_stack_eq(
-        "5 -> n << 0 WHILE n 0 == REPEAT DROP 1 END >>",
-        &[0.0],
-    );
+    assert_stack_eq("5 -> n << 0 WHILE n 0 == REPEAT DROP 1 END >>", &[0.0]);
 }
 
 // Just test DUP n
 #[test]
 fn local_after_dup() {
     // 0 DUP n -> should give 0, 5
-    assert_stack_eq(
-        "5 -> n << 0 DUP n >>",
-        &[0.0, 0.0, 5.0],
-    );
+    assert_stack_eq("5 -> n << 0 DUP n >>", &[0.0, 0.0, 5.0]);
 }
 
 // Test n at different positions
 #[test]
 fn local_after_literal() {
     // Just 1 n -> should give 1, 5
-    assert_stack_eq(
-        "5 -> n << 1 n >>",
-        &[1.0, 5.0],
-    );
+    assert_stack_eq("5 -> n << 1 n >>", &[1.0, 5.0]);
 }
 
 // n twice
 #[test]
 fn local_twice() {
-    assert_stack_eq(
-        "5 -> n << n n >>",
-        &[5.0, 5.0],
-    );
+    assert_stack_eq("5 -> n << n n >>", &[5.0, 5.0]);
 }
 
 // Local after a command
 #[test]
 fn local_after_command() {
     // 1 DROP n -> should give 5
-    assert_stack_eq(
-        "5 -> n << 1 DROP n >>",
-        &[5.0],
-    );
+    assert_stack_eq("5 -> n << 1 DROP n >>", &[5.0]);
 }
 
 // Local after DUP command
 #[test]
 fn local_after_dup_only() {
     // n DUP n -> n n n
-    assert_stack_eq(
-        "5 -> n << n DUP n >>",
-        &[5.0, 5.0, 5.0],
-    );
+    assert_stack_eq("5 -> n << n DUP n >>", &[5.0, 5.0, 5.0]);
 }
 
 // Literal then DUP then n
 #[test]
 fn local_after_literal_dup() {
     // 0 DUP -> 0 0, then n should be 5
-    assert_stack_eq(
-        "5 -> n << 7 DUP n >>",
-        &[7.0, 7.0, 5.0],
-    );
+    assert_stack_eq("5 -> n << 7 DUP n >>", &[7.0, 7.0, 5.0]);
 }
 
 // Two locals with different names
 #[test]
 fn two_locals_test() {
     // a=5, b=10, push a then b
-    assert_stack_eq(
-        "5 10 -> a b << a b >>",
-        &[5.0, 10.0],
-    );
+    assert_stack_eq("5 10 -> a b << a b >>", &[5.0, 10.0]);
 }
 
 // Test stored program with local binding
 #[test]
 fn stored_program_with_local() {
     // Simple: store a program that uses a local, call it
-    assert_stack_eq(
-        "<< -> n << n >> >> 'test' STO 5 test",
-        &[5.0],
-    );
+    assert_stack_eq("<< -> n << n >> >> 'test' STO 5 test", &[5.0]);
 }
 
 // Test simple local access inside WHILE
@@ -632,46 +584,31 @@ fn fordn_equal_bounds() {
 #[test]
 fn case_first_match() {
     // First test is true, execute its action, skip rest
-    assert_stack_eq(
-        "CASE 1 THEN 42 END 0 THEN 99 END 0 END",
-        &[42.0],
-    );
+    assert_stack_eq("CASE 1 THEN 42 END 0 THEN 99 END 0 END", &[42.0]);
 }
 
 #[test]
 fn case_second_match() {
     // First test is false, second is true
-    assert_stack_eq(
-        "CASE 0 THEN 42 END 1 THEN 99 END 0 END",
-        &[99.0],
-    );
+    assert_stack_eq("CASE 0 THEN 42 END 1 THEN 99 END 0 END", &[99.0]);
 }
 
 #[test]
 fn case_default() {
     // All tests false, execute default
-    assert_stack_eq(
-        "CASE 0 THEN 42 END 0 THEN 99 END 77 END",
-        &[77.0],
-    );
+    assert_stack_eq("CASE 0 THEN 42 END 0 THEN 99 END 77 END", &[77.0]);
 }
 
 #[test]
 fn case_no_default() {
     // All tests false, no default action (nothing pushed)
-    assert_stack_eq(
-        "CASE 0 THEN 42 END 0 THEN 99 END END",
-        &[],
-    );
+    assert_stack_eq("CASE 0 THEN 42 END 0 THEN 99 END END", &[]);
 }
 
 #[test]
 fn case_with_expressions() {
     // Tests can be expressions
-    assert_stack_eq(
-        "CASE 3 4 > THEN 1 END 3 4 < THEN 2 END 0 END",
-        &[2.0],
-    );
+    assert_stack_eq("CASE 3 4 > THEN 1 END 3 4 < THEN 2 END 0 END", &[2.0]);
 }
 
 #[test]
@@ -686,10 +623,7 @@ fn case_nested() {
     // Nested CASE inside action
     // Inner CASE: CASE 1 THEN 42 END END (branch END + CASE END)
     // Outer CASE: CASE 1 THEN <inner> END END (branch END + CASE END)
-    assert_stack_eq(
-        "CASE 1 THEN CASE 1 THEN 42 END END END END",
-        &[42.0],
-    );
+    assert_stack_eq("CASE 1 THEN CASE 1 THEN 42 END END END END", &[42.0]);
 }
 
 // ============================================================================

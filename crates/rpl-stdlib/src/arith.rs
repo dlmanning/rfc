@@ -153,9 +153,7 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
             Value::string(format!("{}{}", a.as_ref(), b.as_ref()))
         }
         // Matrix element-wise addition
-        (Value::Matrix(a), Value::Matrix(b)) => {
-            matrix_elementwise(&a, &b, "+", |x, y| add_values(x, y))?
-        }
+        (Value::Matrix(a), Value::Matrix(b)) => matrix_elementwise(&a, &b, "+", add_values)?,
         // List concatenation
         (Value::List(a), Value::List(b)) => {
             let mut result: Vec<Value> = a.iter().cloned().collect();
@@ -191,9 +189,7 @@ fn sub_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         (Value::Integer(a), Value::Real(b)) => Value::Real(a as f64 - b),
         (Value::Real(a), Value::Integer(b)) => Value::Real(a - b as f64),
         // Matrix element-wise subtraction
-        (Value::Matrix(a), Value::Matrix(b)) => {
-            matrix_elementwise(&a, &b, "-", |x, y| sub_values(x, y))?
-        }
+        (Value::Matrix(a), Value::Matrix(b)) => matrix_elementwise(&a, &b, "-", sub_values)?,
         _ => return Err("Type error: expected numbers or matrices".into()),
     };
     ctx.push(result)?;
@@ -211,17 +207,11 @@ fn mul_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         (Value::Integer(a), Value::Real(b)) => Value::Real(*a as f64 * b),
         (Value::Real(a), Value::Integer(b)) => Value::Real(a * *b as f64),
         // Matrix * Matrix = matrix multiplication
-        (Value::Matrix(a), Value::Matrix(b)) => {
-            matrix_multiply(a, b)?
-        }
+        (Value::Matrix(a), Value::Matrix(b)) => matrix_multiply(a, b)?,
         // Matrix * scalar
-        (Value::Matrix(m), scalar) if scalar.is_numeric() => {
-            matrix_scale(m, scalar)?
-        }
+        (Value::Matrix(m), scalar) if scalar.is_numeric() => matrix_scale(m, scalar)?,
         // scalar * Matrix
-        (scalar, Value::Matrix(m)) if scalar.is_numeric() => {
-            matrix_scale(m, scalar)?
-        }
+        (scalar, Value::Matrix(m)) if scalar.is_numeric() => matrix_scale(m, scalar)?,
         _ => return Err("Type error: expected numbers or matrices".into()),
     };
     ctx.push(result)?;
@@ -389,8 +379,8 @@ fn sign_op(ctx: &mut ExecuteContext) -> ExecuteResult {
 
 // Matrix helper functions
 
-use std::sync::Arc;
 use rpl::value::MatrixData;
+use std::sync::Arc;
 
 /// Add two values (for matrix element-wise operations).
 fn add_values(a: &Value, b: &Value) -> Result<Value, String> {
@@ -399,7 +389,11 @@ fn add_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a + b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 + b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a + *b as f64)),
-        _ => Err(format!("cannot add {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot add {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
@@ -410,7 +404,11 @@ fn sub_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a - b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 - b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a - *b as f64)),
-        _ => Err(format!("cannot subtract {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot subtract {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
@@ -421,7 +419,11 @@ fn mul_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a * b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 * b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a * *b as f64)),
-        _ => Err(format!("cannot multiply {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot multiply {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 

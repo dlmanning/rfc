@@ -4,8 +4,8 @@
 //! to bytecode. It captures the essential structure while abstracting away
 //! syntactic details.
 
-use crate::symbolic::SymExpr;
 use crate::core::{Span, Symbol};
+use crate::symbolic::SymExpr;
 use std::sync::Arc;
 
 /// Library identifier (matches LibId in the plan).

@@ -25,7 +25,10 @@ mod file_interface {
         let mut state = IdeState::new();
         let code = "1 2 +";
         let diagnostics = core::check_file(&mut state, code, None);
-        assert!(diagnostics.is_empty(), "Valid code should have no diagnostics");
+        assert!(
+            diagnostics.is_empty(),
+            "Valid code should have no diagnostics"
+        );
     }
 
     #[test]
@@ -102,7 +105,11 @@ mod file_interface {
         let result = core::run_file(&mut state, &content, Some(file_path.to_str().unwrap()));
 
         // Project entry point runs lib.square on 5, should get 25
-        assert!(result.error.is_none(), "Project should run without error: {:?}", result.error);
+        assert!(
+            result.error.is_none(),
+            "Project should run without error: {:?}",
+            result.error
+        );
         assert_eq!(result.stack.len(), 1);
         assert_eq!(result.stack[0].display, "25");
     }
@@ -123,7 +130,10 @@ mod file_interface {
             .iter()
             .filter(|t| t.token_type == TokenType::Number)
             .collect();
-        assert!(number_tokens.len() >= 2, "Should have at least 2 number tokens");
+        assert!(
+            number_tokens.len() >= 2,
+            "Should have at least 2 number tokens"
+        );
 
         // Check for string token
         let string_token = tokens
@@ -145,10 +155,13 @@ mod file_interface {
         assert!(has_variable, "Should have variable token for n");
 
         // -> may be classified as operator or keyword depending on implementation
-        let has_arrow_token = tokens.iter().any(|t| {
-            t.token_type == TokenType::Keyword || t.token_type == TokenType::Operator
-        });
-        assert!(has_arrow_token, "Should have token for -> (keyword or operator)");
+        let has_arrow_token = tokens
+            .iter()
+            .any(|t| t.token_type == TokenType::Keyword || t.token_type == TokenType::Operator);
+        assert!(
+            has_arrow_token,
+            "Should have token for -> (keyword or operator)"
+        );
     }
 
     #[test]
@@ -203,7 +216,10 @@ mod file_interface {
         // Hover on builtins may not be implemented - just verify it doesn't panic
         // and if hover is returned, it has content
         if let Some(hover) = hover {
-            assert!(!hover.contents.is_empty(), "Hover content should not be empty");
+            assert!(
+                !hover.contents.is_empty(),
+                "Hover content should not be empty"
+            );
         }
         // Test passes whether hover is Some or None
     }
@@ -317,7 +333,10 @@ mod file_interface {
     #[test]
     fn project_path_for_non_project_file() {
         let detected = core::find_project_root("/tmp/not_a_project/file.rpl");
-        assert!(detected.is_none(), "Should not find project for non-project file");
+        assert!(
+            detected.is_none(),
+            "Should not find project for non-project file"
+        );
     }
 }
 
@@ -353,7 +372,10 @@ mod project_interface {
     #[test]
     fn list_open_projects() {
         let mut state = IdeState::new();
-        assert!(state.list_projects().is_empty(), "Should start with no projects");
+        assert!(
+            state.list_projects().is_empty(),
+            "Should start with no projects"
+        );
 
         let project_path = test_project_path();
         state.open_project(project_path.to_str().unwrap()).unwrap();
@@ -371,7 +393,10 @@ mod project_interface {
         assert_eq!(state.list_projects().len(), 1);
 
         state.close_project(project_path.to_str().unwrap());
-        assert!(state.list_projects().is_empty(), "Should have no projects after close");
+        assert!(
+            state.list_projects().is_empty(),
+            "Should have no projects after close"
+        );
     }
 
     #[test]
@@ -385,8 +410,14 @@ mod project_interface {
 
         let keys: Vec<_> = tree.iter().map(|n| n.key.as_str()).collect();
         assert!(keys.contains(&"main"), "Should contain main entry");
-        assert!(keys.contains(&"lib.square"), "Should contain lib.square entry");
-        assert!(keys.contains(&"constants"), "Should contain constants entry");
+        assert!(
+            keys.contains(&"lib.square"),
+            "Should contain lib.square entry"
+        );
+        assert!(
+            keys.contains(&"constants"),
+            "Should contain constants entry"
+        );
     }
 
     #[test]
@@ -400,7 +431,8 @@ mod project_interface {
         let lib_square = tree.iter().find(|n| n.key == "lib.square");
         assert!(lib_square.is_some());
         assert_eq!(
-            lib_square.unwrap().name, "square",
+            lib_square.unwrap().name,
+            "square",
             "Name should be just the final component"
         );
     }
@@ -425,7 +457,11 @@ mod project_interface {
         state.open_project(project_path.to_str().unwrap()).unwrap();
 
         let result = core::run_project(&mut state, project_path.to_str().unwrap());
-        assert!(result.error.is_none(), "Project should run without error: {:?}", result.error);
+        assert!(
+            result.error.is_none(),
+            "Project should run without error: {:?}",
+            result.error
+        );
         assert_eq!(result.stack.len(), 1);
         assert_eq!(result.stack[0].display, "25", "5 squared is 25");
     }
@@ -434,7 +470,10 @@ mod project_interface {
     fn run_unloaded_project() {
         let mut state = IdeState::new();
         let result = core::run_project(&mut state, "/nonexistent/project");
-        assert!(result.error.is_some(), "Should report error for unloaded project");
+        assert!(
+            result.error.is_some(),
+            "Should report error for unloaded project"
+        );
     }
 
     #[test]
@@ -556,7 +595,10 @@ mod repl_interface {
         assert_eq!(core::repl_stack(&state).len(), 3);
 
         core::repl_reset(&mut state);
-        assert!(core::repl_stack(&state).is_empty(), "Stack should be empty after reset");
+        assert!(
+            core::repl_stack(&state).is_empty(),
+            "Stack should be empty after reset"
+        );
     }
 
     #[test]
@@ -567,7 +609,10 @@ mod repl_interface {
 
         // Verify x is set
         let before_reset = core::repl_evaluate(&mut state, "'x' RCL");
-        assert!(before_reset.error.is_none(), "x should be accessible before reset");
+        assert!(
+            before_reset.error.is_none(),
+            "x should be accessible before reset"
+        );
 
         core::repl_reset(&mut state);
 
@@ -585,11 +630,11 @@ mod repl_interface {
         let mut state = IdeState::new();
 
         // Push different types
-        core::repl_evaluate(&mut state, "42");          // Integer
-        core::repl_evaluate(&mut state, "3.14");        // Real
-        core::repl_evaluate(&mut state, "\"hello\"");   // String
-        core::repl_evaluate(&mut state, "{ 1 2 3 }");   // List
-        core::repl_evaluate(&mut state, "<< 1 >>");     // Program
+        core::repl_evaluate(&mut state, "42"); // Integer
+        core::repl_evaluate(&mut state, "3.14"); // Real
+        core::repl_evaluate(&mut state, "\"hello\""); // String
+        core::repl_evaluate(&mut state, "{ 1 2 3 }"); // List
+        core::repl_evaluate(&mut state, "<< 1 >>"); // Program
 
         let stack = core::repl_stack(&state);
         assert_eq!(stack.len(), 5);
@@ -619,7 +664,10 @@ mod disassembly {
         // Should produce non-empty output
         assert!(!output.is_empty(), "Should produce disassembly output");
         // Should contain I64Const for the literals
-        assert!(output.contains("I64Const"), "Should have I64Const instructions");
+        assert!(
+            output.contains("I64Const"),
+            "Should have I64Const instructions"
+        );
     }
 
     #[test]
@@ -628,7 +676,10 @@ mod disassembly {
         let code = "42";
         let output = core::disassemble(&mut state, code, None);
 
-        assert!(output.contains("I64Const 42"), "Should have I64Const 42 instruction");
+        assert!(
+            output.contains("I64Const 42"),
+            "Should have I64Const 42 instruction"
+        );
     }
 
     #[test]
@@ -649,7 +700,10 @@ mod disassembly {
         let code = "{ 1 2 3 }";
         let output = core::disassemble(&mut state, code, None);
 
-        assert!(output.contains("MakeList"), "Should have MakeList instruction");
+        assert!(
+            output.contains("MakeList"),
+            "Should have MakeList instruction"
+        );
     }
 
     #[test]
@@ -670,14 +724,19 @@ mod disassembly {
         let file_path = project_path.join("main.rpl");
 
         // Load project
-        state.open_project(project_path.to_str().unwrap()).expect("Failed to open project");
+        state
+            .open_project(project_path.to_str().unwrap())
+            .expect("Failed to open project");
 
         let content = std::fs::read_to_string(&file_path).unwrap();
         let output = core::disassemble(&mut state, &content, Some(file_path.to_str().unwrap()));
 
         // Project output should contain entry headers
         assert!(output.contains("main:"), "Should contain main entry");
-        assert!(output.contains("lib.square:"), "Should contain lib.square entry");
+        assert!(
+            output.contains("lib.square:"),
+            "Should contain lib.square entry"
+        );
     }
 
     #[test]
@@ -686,7 +745,9 @@ mod disassembly {
         let project_path = test_project_path();
         let file_path = project_path.join("main.rpl");
 
-        state.open_project(project_path.to_str().unwrap()).expect("Failed to open project");
+        state
+            .open_project(project_path.to_str().unwrap())
+            .expect("Failed to open project");
 
         let content = std::fs::read_to_string(&file_path).unwrap();
         let output = core::disassemble(&mut state, &content, Some(file_path.to_str().unwrap()));
@@ -697,7 +758,10 @@ mod disassembly {
         // constants entry should show value type (format is "(TYPE: VALUE)")
         assert!(output.contains("constants:"), "Should have constants entry");
         // Constants value is 42, should appear somewhere in the output
-        assert!(output.contains("42"), "constants value 42 should appear in output");
+        assert!(
+            output.contains("42"),
+            "constants value 42 should appear in output"
+        );
     }
 
     #[test]

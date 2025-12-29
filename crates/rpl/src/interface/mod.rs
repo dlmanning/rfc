@@ -86,5 +86,5 @@ mod parse;
 mod spec;
 
 pub use ast::*;
-pub use parse::{parse, ParseError};
+pub use parse::{ParseError, parse};
 pub use spec::{CommandSpec, EffectKind, InterfaceSpec, Parser, SyntaxDecl};

@@ -271,9 +271,7 @@ impl LibraryExecutor for FlowLib {
                 ctx.push(Value::string(error_msg))?;
                 Ok(ExecuteAction::ok())
             }
-            cmd::DOERR => {
-                Err("DOERR should be handled by bytecode".into())
-            }
+            cmd::DOERR => Err("DOERR should be handled by bytecode".into()),
             _ => Err(format!("unknown flow command: {}", ctx.cmd)),
         }
     }

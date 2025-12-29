@@ -139,7 +139,12 @@ impl LibraryExecutor for MatrixLib {
                 let result = match &val {
                     Value::Matrix(m) => matrix_to_list(m),
                     Value::List(_) => list_to_matrix(&val)?,
-                    _ => return Err(format!("AXL: expected matrix or list, got {}", val.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "AXL: expected matrix or list, got {}",
+                            val.type_name()
+                        ));
+                    }
                 };
                 ctx.push(result)?;
                 Ok(ExecuteAction::ok())
@@ -167,7 +172,8 @@ impl LibraryExecutor for MatrixLib {
                 // HADAMARD: element-wise multiplication
                 let b = ctx.pop()?;
                 let a = ctx.pop()?;
-                let result = matrix_elementwise_binop(&a, &b, "HADAMARD", &|x, y| mul_values(x, y))?;
+                let result =
+                    matrix_elementwise_binop(&a, &b, "HADAMARD", &|x, y| mul_values(x, y))?;
                 ctx.push(result)?;
                 Ok(ExecuteAction::ok())
             }
@@ -175,7 +181,7 @@ impl LibraryExecutor for MatrixLib {
             cmd::MNEG => {
                 // MNEG: element-wise negation
                 let a = ctx.pop()?;
-                let result = matrix_elementwise_unop(&a, "MNEG", &neg_value)?;
+                let result = matrix_elementwise_unop(&a, &neg_value)?;
                 ctx.push(result)?;
                 Ok(ExecuteAction::ok())
             }
@@ -184,7 +190,7 @@ impl LibraryExecutor for MatrixLib {
                 // MSCALE: scalar multiplication (matrix/list scalar -- matrix/list)
                 let scalar = ctx.pop()?;
                 let vec = ctx.pop()?;
-                let result = matrix_elementwise_unop(&vec, "MSCALE", &|x| mul_values(x, &scalar))?;
+                let result = matrix_elementwise_unop(&vec, &|x| mul_values(x, &scalar))?;
                 ctx.push(result)?;
                 Ok(ExecuteAction::ok())
             }
@@ -198,10 +204,20 @@ impl LibraryExecutor for MatrixLib {
                     (Value::List(la), Value::List(lb)) => (la.as_ref(), lb.as_ref()),
                     (Value::Matrix(m), Value::List(l)) => (&m.data, l.as_ref()),
                     (Value::List(l), Value::Matrix(m)) => (l.as_ref(), &m.data),
-                    _ => return Err(format!("DOT: expected matrix/list, got {} and {}", a.type_name(), b.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "DOT: expected matrix/list, got {} and {}",
+                            a.type_name(),
+                            b.type_name()
+                        ));
+                    }
                 };
                 if a_slice.len() != b_slice.len() {
-                    return Err(format!("DOT: dimension mismatch ({} vs {})", a_slice.len(), b_slice.len()));
+                    return Err(format!(
+                        "DOT: dimension mismatch ({} vs {})",
+                        a_slice.len(),
+                        b_slice.len()
+                    ));
                 }
                 let mut sum = 0.0;
                 for (x, y) in a_slice.iter().zip(b_slice.iter()) {
@@ -221,7 +237,13 @@ impl LibraryExecutor for MatrixLib {
                     (Value::List(la), Value::List(lb)) => (la.as_ref(), lb.as_ref()),
                     (Value::Matrix(m), Value::List(l)) => (&m.data, l.as_ref()),
                     (Value::List(l), Value::Matrix(m)) => (l.as_ref(), &m.data),
-                    _ => return Err(format!("CROSS: expected matrix/list, got {} and {}", a.type_name(), b.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "CROSS: expected matrix/list, got {} and {}",
+                            a.type_name(),
+                            b.type_name()
+                        ));
+                    }
                 };
                 if a_slice.len() != 3 || b_slice.len() != 3 {
                     return Err("CROSS: requires 3D vectors".into());
@@ -247,7 +269,12 @@ impl LibraryExecutor for MatrixLib {
                         let dims = get_list_dimensions(items)?;
                         dims.into_iter().map(|d| d as i64).collect()
                     }
-                    _ => return Err(format!("MDIM: expected matrix/list, got {}", val.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "MDIM: expected matrix/list, got {}",
+                            val.type_name()
+                        ));
+                    }
                 };
                 let dims_values: Vec<Value> = dims.into_iter().map(Value::Integer).collect();
                 ctx.push(Value::list(dims_values))?;
@@ -280,7 +307,12 @@ impl LibraryExecutor for MatrixLib {
                         }
                         ctx.push(Value::Real(sum_sq.sqrt()))?;
                     }
-                    _ => return Err(format!("ABS: expected number/matrix/list, got {}", val.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "ABS: expected number/matrix/list, got {}",
+                            val.type_name()
+                        ));
+                    }
                 }
                 Ok(ExecuteAction::ok())
             }
@@ -291,7 +323,12 @@ impl LibraryExecutor for MatrixLib {
                 let dims = ctx.pop()?;
                 let dims_list = match &dims {
                     Value::List(d) => d,
-                    _ => return Err(format!("CON: expected dimension list, got {}", dims.type_name())),
+                    _ => {
+                        return Err(format!(
+                            "CON: expected dimension list, got {}",
+                            dims.type_name()
+                        ));
+                    }
                 };
                 let result = make_constant_matrix(dims_list, &value)?;
                 ctx.push(result)?;
@@ -327,7 +364,11 @@ fn add_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a + b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 + b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a + *b as f64)),
-        _ => Err(format!("cannot add {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot add {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
@@ -337,7 +378,11 @@ fn sub_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a - b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 - b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a - *b as f64)),
-        _ => Err(format!("cannot subtract {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot subtract {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
@@ -347,7 +392,11 @@ fn mul_values(a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a * b)),
         (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 * b)),
         (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a * *b as f64)),
-        _ => Err(format!("cannot multiply {} and {}", a.type_name(), b.type_name())),
+        _ => Err(format!(
+            "cannot multiply {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
@@ -404,7 +453,6 @@ fn matrix_elementwise_binop(
 /// Element-wise unary operation on matrices or lists.
 fn matrix_elementwise_unop(
     a: &Value,
-    cmd: &str,
     op: &dyn Fn(&Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     match a {
@@ -418,7 +466,7 @@ fn matrix_elementwise_unop(
         Value::List(items) => {
             let mut result = Vec::with_capacity(items.len());
             for x in items.iter() {
-                result.push(matrix_elementwise_unop(x, cmd, op)?);
+                result.push(matrix_elementwise_unop(x, op)?);
             }
             Ok(Value::list(result))
         }
@@ -584,7 +632,10 @@ fn transpose(arr: &Value) -> Result<Value, String> {
             }
             Ok(Value::matrix(n_cols, n_rows, result))
         }
-        _ => Err(format!("TRAN: expected matrix/list, got {}", arr.type_name())),
+        _ => Err(format!(
+            "TRAN: expected matrix/list, got {}",
+            arr.type_name()
+        )),
     }
 }
 
@@ -606,14 +657,24 @@ mod tests {
     fn to_v2() {
         let result = crate::eval("1 2 →V2").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(1), Value::Integer(2)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![Value::Integer(1), Value::Integer(2)])
+        );
     }
 
     #[test]
     fn to_v3() {
         let result = crate::eval("1 2 3 →V3").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3)
+            ])
+        );
     }
 
     #[test]
@@ -643,7 +704,14 @@ mod tests {
         // MADD works on lists for backwards compatibility
         let result = crate::eval("{ 1 2 3 } { 4 5 6 } MADD").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::list(vec![Value::Integer(5), Value::Integer(7), Value::Integer(9)]));
+        assert_eq!(
+            result[0],
+            Value::list(vec![
+                Value::Integer(5),
+                Value::Integer(7),
+                Value::Integer(9)
+            ])
+        );
     }
 
     #[test]
@@ -651,21 +719,42 @@ mod tests {
         // MADD works on matrices
         let result = crate::eval("1 2 3 →V3 4 5 6 →V3 MADD").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(5), Value::Integer(7), Value::Integer(9)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(5),
+                Value::Integer(7),
+                Value::Integer(9)
+            ])
+        );
     }
 
     #[test]
     fn msub() {
         let result = crate::eval("5 7 9 →V3 1 2 3 →V3 MSUB").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(4), Value::Integer(5), Value::Integer(6)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(4),
+                Value::Integer(5),
+                Value::Integer(6)
+            ])
+        );
     }
 
     #[test]
     fn hadamard() {
         let result = crate::eval("2 3 4 →V3 5 6 7 →V3 HADAMARD").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(10), Value::Integer(18), Value::Integer(28)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(10),
+                Value::Integer(18),
+                Value::Integer(28)
+            ])
+        );
     }
 
     #[test]
@@ -681,7 +770,10 @@ mod tests {
         // i x j = k
         let result = crate::eval("1 0 0 →V3 0 1 0 →V3 CROSS").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Real(0.0), Value::Real(0.0), Value::Real(1.0)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![Value::Real(0.0), Value::Real(0.0), Value::Real(1.0)])
+        );
     }
 
     #[test]
@@ -696,7 +788,14 @@ mod tests {
     fn constant_vector() {
         let result = crate::eval("{ 3 } 0 CON").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(0), Value::Integer(0), Value::Integer(0)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(0),
+                Value::Integer(0),
+                Value::Integer(0)
+            ])
+        );
     }
 
     #[test]
@@ -704,17 +803,35 @@ mod tests {
         let result = crate::eval("{ 2 3 } 1 CON").unwrap();
         assert_eq!(result.len(), 1);
         // 2x3 matrix filled with 1s
-        assert_eq!(result[0], Value::matrix(2, 3, vec![
-            Value::Integer(1), Value::Integer(1), Value::Integer(1),
-            Value::Integer(1), Value::Integer(1), Value::Integer(1),
-        ]));
+        assert_eq!(
+            result[0],
+            Value::matrix(
+                2,
+                3,
+                vec![
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                ]
+            )
+        );
     }
 
     #[test]
     fn mscale() {
         let result = crate::eval("1 2 3 →V3 2 MSCALE").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(2),
+                Value::Integer(4),
+                Value::Integer(6)
+            ])
+        );
     }
 
     #[test]
@@ -722,7 +839,14 @@ mod tests {
         // Convert list to matrix
         let result = crate::eval("{ 1 2 3 } AXL").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3)
+            ])
+        );
     }
 
     #[test]
@@ -730,7 +854,14 @@ mod tests {
         // Convert matrix to list
         let result = crate::eval("1 2 3 →V3 AXL").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::list(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert_eq!(
+            result[0],
+            Value::list(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3)
+            ])
+        );
     }
 
     #[test]
@@ -739,18 +870,31 @@ mod tests {
         let result = crate::eval("{ 2 3 } 0 CON TRAN").unwrap();
         assert_eq!(result.len(), 1);
         // 3x2 matrix
-        assert_eq!(result[0], Value::matrix(3, 2, vec![
-            Value::Integer(0), Value::Integer(0),
-            Value::Integer(0), Value::Integer(0),
-            Value::Integer(0), Value::Integer(0),
-        ]));
+        assert_eq!(
+            result[0],
+            Value::matrix(
+                3,
+                2,
+                vec![
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                ]
+            )
+        );
     }
 
     #[test]
     fn mdim_matrix() {
         let result = crate::eval("{ 2 3 } 0 CON MDIM").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::list(vec![Value::Integer(2), Value::Integer(3)]));
+        assert_eq!(
+            result[0],
+            Value::list(vec![Value::Integer(2), Value::Integer(3)])
+        );
     }
 
     #[test]
@@ -758,7 +902,10 @@ mod tests {
         // Test that + does element-wise addition on matrices
         let result = crate::eval("1 2 →V2 3 4 →V2 +").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(4), Value::Integer(6)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![Value::Integer(4), Value::Integer(6)])
+        );
     }
 
     #[test]
@@ -766,7 +913,10 @@ mod tests {
         // Test that - does element-wise subtraction on matrices
         let result = crate::eval("5 6 →V2 3 4 →V2 -").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(2), Value::Integer(2)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![Value::Integer(2), Value::Integer(2)])
+        );
     }
 
     #[test]
@@ -774,6 +924,13 @@ mod tests {
         // Test that * with scalar scales the matrix
         let result = crate::eval("1 2 3 →V3 2 *").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Value::vector(vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)]));
+        assert_eq!(
+            result[0],
+            Value::vector(vec![
+                Value::Integer(2),
+                Value::Integer(4),
+                Value::Integer(6)
+            ])
+        );
     }
 }

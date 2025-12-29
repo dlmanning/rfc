@@ -147,7 +147,11 @@ fn format_bytes(bytes: &[u8]) -> String {
 
 /// Disassemble a known opcode with its operands.
 /// Returns (text, next_offset, nested_instructions).
-fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, usize, Option<Vec<DisassembledInstr>>) {
+fn disassemble_opcode(
+    op: Opcode,
+    code: &[u8],
+    mut offset: usize,
+) -> (String, usize, Option<Vec<DisassembledInstr>>) {
     match op {
         // No operands
         Opcode::Unreachable => ("Unreachable".into(), offset, None),
@@ -217,7 +221,11 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             let (block_type, new_offset) = read_block_type(code, offset);
             offset = new_offset;
             if let Some(end_offset) = read_u32(code, &mut offset) {
-                (format!("Block {} end=@{}", block_type, end_offset), offset, None)
+                (
+                    format!("Block {} end=@{}", block_type, end_offset),
+                    offset,
+                    None,
+                )
             } else {
                 ("Block ???".into(), code.len(), None)
             }
@@ -226,7 +234,11 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
             let (block_type, new_offset) = read_block_type(code, offset);
             offset = new_offset;
             if let Some(end_offset) = read_u32(code, &mut offset) {
-                (format!("Loop {} end=@{}", block_type, end_offset), offset, None)
+                (
+                    format!("Loop {} end=@{}", block_type, end_offset),
+                    offset,
+                    None,
+                )
             } else {
                 ("Loop ???".into(), code.len(), None)
             }
@@ -238,9 +250,20 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 (read_u32(code, &mut offset), read_u32(code, &mut offset))
             {
                 if else_offset == end_offset {
-                    (format!("If {} end=@{}", block_type, end_offset), offset, None)
+                    (
+                        format!("If {} end=@{}", block_type, end_offset),
+                        offset,
+                        None,
+                    )
                 } else {
-                    (format!("If {} else=@{} end=@{}", block_type, else_offset, end_offset), offset, None)
+                    (
+                        format!(
+                            "If {} else=@{} end=@{}",
+                            block_type, else_offset, end_offset
+                        ),
+                        offset,
+                        None,
+                    )
                 }
             } else {
                 ("If ???".into(), code.len(), None)
@@ -345,7 +368,11 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                 read_leb128_u32(code, &mut offset),
                 read_leb128_u32(code, &mut offset),
             ) {
-                (format!("SymbolicConst @{}:{}", sym_offset, len), offset, None)
+                (
+                    format!("SymbolicConst @{}:{}", sym_offset, len),
+                    offset,
+                    None,
+                )
             } else {
                 ("SymbolicConst ???".into(), code.len(), None)
             }
@@ -406,10 +433,25 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                                     // source end (LEB128)
                                     let _ = read_leb128_u32(code, &mut offset);
                                 }
-                                let kind = if param_count > 0 { "Function" } else { "Program" };
-                                (format!("Make{} <{} bytes, {} rodata, {} params>", kind, code_len, rodata_len, param_count), offset.min(code.len()), Some(nested))
+                                let kind = if param_count > 0 {
+                                    "Function"
+                                } else {
+                                    "Program"
+                                };
+                                (
+                                    format!(
+                                        "Make{} <{} bytes, {} rodata, {} params>",
+                                        kind, code_len, rodata_len, param_count
+                                    ),
+                                    offset.min(code.len()),
+                                    Some(nested),
+                                )
                             } else {
-                                (format!("MakeProgram <{} bytes>", code_len), offset.min(code.len()), Some(nested))
+                                (
+                                    format!("MakeProgram <{} bytes>", code_len),
+                                    offset.min(code.len()),
+                                    Some(nested),
+                                )
                             }
                         } else {
                             ("MakeProgram ???".into(), code.len(), None)
@@ -442,7 +484,9 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                         }
                         let kind = CatchKind::from_byte(code[offset]);
                         offset += 1;
-                        if let Some(k) = kind && k.has_tag() {
+                        if let Some(k) = kind
+                            && k.has_tag()
+                        {
                             // Skip tag index
                             let _ = read_leb128_u32(code, &mut offset);
                         }
@@ -450,7 +494,10 @@ fn disassemble_opcode(op: Opcode, code: &[u8], mut offset: usize) -> (String, us
                         let _ = read_leb128_u32(code, &mut offset);
                     }
                     (
-                        format!("TryTable {} end=@{} catches={}", block_type, end_offset, catch_count),
+                        format!(
+                            "TryTable {} end=@{} catches={}",
+                            block_type, end_offset, catch_count
+                        ),
                         offset,
                         None,
                     )
@@ -560,7 +607,11 @@ fn format_rodata_section(f: &mut Formatter<'_>, rodata: &[u8]) -> fmt::Result {
     writeln!(f)
 }
 
-fn format_instrs(f: &mut Formatter<'_>, instrs: &[DisassembledInstr], base_depth: usize) -> fmt::Result {
+fn format_instrs(
+    f: &mut Formatter<'_>,
+    instrs: &[DisassembledInstr],
+    base_depth: usize,
+) -> fmt::Result {
     let mut block_stack: Vec<usize> = Vec::new(); // Stack of end PCs
 
     for instr in instrs {
@@ -768,9 +819,13 @@ mod tests {
 
     // === Integration tests with compiled programs ===
 
-    use crate::{parse::parse, lower::lower, registry::{InterfaceRegistry, LowererRegistry}};
-    use crate::core::Interner;
     use crate::analysis;
+    use crate::core::Interner;
+    use crate::{
+        lower::lower,
+        parse::parse,
+        registry::{InterfaceRegistry, LowererRegistry},
+    };
 
     /// Compile source code and return the bytecode.
     fn compile(source: &str) -> Vec<u8> {
@@ -778,8 +833,10 @@ mod tests {
         let lowerers = LowererRegistry::new();
         let mut interner = Interner::new();
         let nodes = parse(source, &interfaces, &mut interner).expect("parse failed");
-        let analysis = analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
-        let program = lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lower failed");
+        let analysis =
+            analysis::analyze(&nodes, &interfaces, &interner, &analysis::Context::empty());
+        let program =
+            lower(&nodes, &interfaces, &lowerers, &interner, &analysis).expect("lower failed");
         program.code
     }
 
@@ -804,10 +861,7 @@ mod tests {
 
             // Check for unknown opcodes (but allow unknown library IDs)
             if instr.text.starts_with("???") {
-                return Err(format!(
-                    "Unknown opcode at PC {}: {}",
-                    instr.pc, instr.text
-                ));
+                return Err(format!("Unknown opcode at PC {}: {}", instr.pc, instr.text));
             }
         }
 
@@ -815,7 +869,8 @@ mod tests {
         if expected_pc != code.len() {
             return Err(format!(
                 "Disassembly ended at PC {} but code is {} bytes",
-                expected_pc, code.len()
+                expected_pc,
+                code.len()
             ));
         }
 
@@ -829,7 +884,12 @@ mod tests {
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have: I64Const 1, I64Const 2, I64Const 3
-        assert_eq!(instructions.len(), 3, "Expected 3 instructions, got {}", instructions.len());
+        assert_eq!(
+            instructions.len(),
+            3,
+            "Expected 3 instructions, got {}",
+            instructions.len()
+        );
         assert!(instructions[0].text.contains("I64Const"));
         assert!(instructions[1].text.contains("I64Const"));
         assert!(instructions[2].text.contains("I64Const"));
@@ -853,14 +913,14 @@ mod tests {
         // Layout: I64Const 1 at 0-1, If at 2-11, I64Const 2 at 12-13, Else at 14, I64Const 3 at 15-16, End at 17
         // else_offset points AFTER Else (15), end_offset points AFTER End (18)
         let code = vec![
-            0x42, 0x01,                         // I64Const 1 (PC 0-1)
-            0x04, 0x40,                         // If [] (PC 2-3)
-            0x0F, 0x00, 0x00, 0x00,             // else_offset = 15 (PC 4-7)
-            0x12, 0x00, 0x00, 0x00,             // end_offset = 18 (PC 8-11)
-            0x42, 0x02,                         // I64Const 2 (PC 12-13)
-            0x05,                               // Else (PC 14)
-            0x42, 0x03,                         // I64Const 3 (PC 15-16)
-            0x0B,                               // End (PC 17)
+            0x42, 0x01, // I64Const 1 (PC 0-1)
+            0x04, 0x40, // If [] (PC 2-3)
+            0x0F, 0x00, 0x00, 0x00, // else_offset = 15 (PC 4-7)
+            0x12, 0x00, 0x00, 0x00, // end_offset = 18 (PC 8-11)
+            0x42, 0x02, // I64Const 2 (PC 12-13)
+            0x05, // Else (PC 14)
+            0x42, 0x03, // I64Const 3 (PC 15-16)
+            0x0B, // End (PC 17)
         ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
@@ -880,10 +940,10 @@ mod tests {
         // Layout: Loop at 0-5, I64Const at 6-7, End at 8
         // end_offset points AFTER End (9)
         let code = vec![
-            0x03, 0x40,                 // Loop [] (PC 0-1)
-            0x09, 0x00, 0x00, 0x00,     // end_offset = 9 (PC 2-5)
-            0x42, 0x01,                 // I64Const 1 (PC 6-7)
-            0x0B,                       // End (PC 8)
+            0x03, 0x40, // Loop [] (PC 0-1)
+            0x09, 0x00, 0x00, 0x00, // end_offset = 9 (PC 2-5)
+            0x42, 0x01, // I64Const 1 (PC 6-7)
+            0x0B, // End (PC 8)
         ];
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
@@ -911,10 +971,14 @@ mod tests {
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have MakeProgram for both programs
-        let make_program_count = instructions.iter()
+        let make_program_count = instructions
+            .iter()
             .filter(|i| i.text.contains("MakeProgram"))
             .count();
-        assert!(make_program_count >= 1, "Expected at least 1 MakeProgram instruction");
+        assert!(
+            make_program_count >= 1,
+            "Expected at least 1 MakeProgram instruction"
+        );
     }
 
     #[test]
@@ -935,7 +999,9 @@ mod tests {
         let instructions = verify_disassembly(&code).expect("disassembly failed");
 
         // Should have SymbolicConst
-        let has_symbolic = instructions.iter().any(|i| i.text.contains("SymbolicConst"));
+        let has_symbolic = instructions
+            .iter()
+            .any(|i| i.text.contains("SymbolicConst"));
         assert!(has_symbolic, "Expected SymbolicConst instruction");
     }
 

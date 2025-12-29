@@ -7,8 +7,8 @@
 //! - Clean separation of data and behavior
 
 use super::{
-    parse, BindingKind, ConcreteType, Declaration, Library, ParseError as InterfaceParseError,
-    PatternElement, Type,
+    BindingKind, ConcreteType, Declaration, Library, ParseError as InterfaceParseError,
+    PatternElement, Type, parse,
 };
 use crate::{
     core::{Pos, Span, TypeId},
@@ -156,13 +156,17 @@ impl Parser {
     fn execute(&self, state: &mut ParseState) -> Result<(), ParseError> {
         match self {
             Parser::Keyword(kw) => {
-                let token = state.ctx.peek().ok_or_else(|| {
-                    state.error_expected(kw, "end of input")
-                })?;
+                let token = state
+                    .ctx
+                    .peek()
+                    .ok_or_else(|| state.error_expected(kw, "end of input"))?;
 
                 if !token.text.eq_ignore_ascii_case(kw) {
                     return Err(ParseError {
-                        message: format!("{}: expected {}, found '{}'", state.construct, kw, token.text),
+                        message: format!(
+                            "{}: expected {}, found '{}'",
+                            state.construct, kw, token.text
+                        ),
                         span: token.span,
                         expected: Some(kw.clone()),
                         found: Some(token.text.clone()),
@@ -196,7 +200,10 @@ impl Parser {
                     })?;
 
                     // Check if we hit any terminator
-                    if terminators.iter().any(|t| token.text.eq_ignore_ascii_case(t)) {
+                    if terminators
+                        .iter()
+                        .any(|t| token.text.eq_ignore_ascii_case(t))
+                    {
                         break;
                     }
 
@@ -305,13 +312,17 @@ impl Parser {
 
             Parser::KeywordWithCapture(kw) => {
                 // Required keyword that captures from previous branch
-                let token = state.ctx.peek().ok_or_else(|| {
-                    state.error_expected(kw, "end of input")
-                })?;
+                let token = state
+                    .ctx
+                    .peek()
+                    .ok_or_else(|| state.error_expected(kw, "end of input"))?;
 
                 if !token.text.eq_ignore_ascii_case(kw) {
                     return Err(ParseError {
-                        message: format!("{}: expected {}, found '{}'", state.construct, kw, token.text),
+                        message: format!(
+                            "{}: expected {}, found '{}'",
+                            state.construct, kw, token.text
+                        ),
                         span: token.span,
                         expected: Some(kw.clone()),
                         found: Some(token.text.clone()),
@@ -509,10 +520,8 @@ fn compile_pattern_with_context(slots: &[PatternElement], outer_terminators: &[S
                     .next()
                     .unwrap_or_else(|| "END".to_string());
 
-                let inner_parser = compile_pattern_with_context(
-                    inner_elements,
-                    std::slice::from_ref(&terminator),
-                );
+                let inner_parser =
+                    compile_pattern_with_context(inner_elements, std::slice::from_ref(&terminator));
 
                 parsers.push(Parser::Repeat {
                     body: Box::new(inner_parser),
@@ -689,10 +698,12 @@ fn collect_slots(parser: &Parser, pattern: &mut Vec<SlotPattern>) {
             collect_slots(body, &mut inner);
 
             // If the repeat body has bindings, it's a binding repeat
-            let has_binding = inner.iter().any(|s| matches!(s,
-                SlotPattern::Single(SlotKind::Binding) |
-                SlotPattern::Repeat(SlotKind::Binding)
-            ));
+            let has_binding = inner.iter().any(|s| {
+                matches!(
+                    s,
+                    SlotPattern::Single(SlotKind::Binding) | SlotPattern::Repeat(SlotKind::Binding)
+                )
+            });
 
             if has_binding {
                 pattern.push(SlotPattern::Repeat(SlotKind::Binding));
@@ -895,7 +906,10 @@ fn collect_slot_info(parser: &Parser, slots: &mut Vec<SlotInfo>, after_optional:
                     _ => {
                         collect_slot_info(p, slots, optional);
                         // Reset after consuming
-                        if matches!(p, Parser::ParseUntil(_) | Parser::ParseToEnd | Parser::Binding { .. }) {
+                        if matches!(
+                            p,
+                            Parser::ParseUntil(_) | Parser::ParseToEnd | Parser::Binding { .. }
+                        ) {
                             optional = false;
                         }
                     }
@@ -964,9 +978,10 @@ fn infer_effect_kind(decl: &Declaration) -> EffectKind {
             _ => None,
         };
         if let (Some(a), Some(b)) = (input_var, output_var)
-            && a == b {
-                return EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)]));
-            }
+            && a == b
+        {
+            return EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)]));
+        }
     }
 
     // Permutation: all outputs are input vars
@@ -1338,12 +1353,7 @@ impl LibraryInterface for InterfaceSpec {
         let end_span = state.ctx.current_span();
         let full_span = Span::new(state.start_span.start(), end_span.end());
 
-        Ok(Node::extended(
-            self.id,
-            decl.id,
-            state.branches,
-            full_span,
-        ))
+        Ok(Node::extended(self.id, decl.id, state.branches, full_span))
     }
 
     fn binding_branches(&self, construct_id: u16, num_branches: usize) -> Vec<usize> {
@@ -1435,7 +1445,10 @@ impl LibraryInterface for InterfaceSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::Interner, interface::parse, ir::NodeKind, parse::ParseContext, registry::InterfaceRegistry};
+    use crate::{
+        core::Interner, interface::parse, ir::NodeKind, parse::ParseContext,
+        registry::InterfaceRegistry,
+    };
 
     #[test]
     fn test_from_ast_simple() {
@@ -1472,22 +1485,13 @@ library Stack 1
         let rt = InterfaceSpec::from_ast(&ast);
 
         let dup = rt.find_command("DUP").unwrap();
-        assert_eq!(
-            dup.effect_kind,
-            EffectKind::Static(StackEffect::dup())
-        );
+        assert_eq!(dup.effect_kind, EffectKind::Static(StackEffect::dup()));
 
         let swap = rt.find_command("SWAP").unwrap();
-        assert_eq!(
-            swap.effect_kind,
-            EffectKind::Static(StackEffect::swap())
-        );
+        assert_eq!(swap.effect_kind, EffectKind::Static(StackEffect::swap()));
 
         let rot = rt.find_command("ROT").unwrap();
-        assert_eq!(
-            rot.effect_kind,
-            EffectKind::Static(StackEffect::rot())
-        );
+        assert_eq!(rot.effect_kind, EffectKind::Static(StackEffect::rot()));
     }
 
     #[test]
@@ -1551,10 +1555,16 @@ library Arith 4
 
         let neg = rt.find_command("NEG").unwrap();
         // UnaryPreserving is now represented as Static with FromInput(0)
-        assert_eq!(neg.effect_kind, EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)])));
+        assert_eq!(
+            neg.effect_kind,
+            EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)]))
+        );
 
         let abs = rt.find_command("ABS").unwrap();
-        assert_eq!(abs.effect_kind, EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)])));
+        assert_eq!(
+            abs.effect_kind,
+            EffectKind::Static(StackEffect::fixed_result(1, &[ResultType::from_input(0)]))
+        );
     }
 
     #[test]
@@ -1841,9 +1851,9 @@ library Test 1
         let loop_syntax = &rt.syntax[0];
         if let Parser::Sequence(parsers) = &loop_syntax.parser {
             // Should have: ParseUntil, OptionalKeywordWithCapture(STEP), Keyword(END)
-            let has_capture = parsers.iter().any(|p| {
-                matches!(p, Parser::OptionalKeywordWithCapture(kw) if kw == "STEP")
-            });
+            let has_capture = parsers
+                .iter()
+                .any(|p| matches!(p, Parser::OptionalKeywordWithCapture(kw) if kw == "STEP"));
             assert!(has_capture, "Expected OptionalKeywordWithCapture for STEP");
         }
     }
@@ -1931,13 +1941,19 @@ library Test 1
         // With 3 branches: [cond, then_body, else_body]
         let alts = rt.alternative_branches(10, 3);
         assert_eq!(alts.len(), 1, "Should have 1 alternative group");
-        assert_eq!(alts[0], vec![1, 2], "Branches 1 and 2 should be alternatives");
+        assert_eq!(
+            alts[0],
+            vec![1, 2],
+            "Branches 1 and 2 should be alternatives"
+        );
 
         // With 2 branches (no ELSE): [cond, then_body]
         let alts = rt.alternative_branches(10, 2);
         // Should still detect the pattern but with only existing branches
-        assert!(alts.is_empty() || alts[0].iter().all(|&i| i < 2),
-            "Should handle missing ELSE branch");
+        assert!(
+            alts.is_empty() || alts[0].iter().all(|&i| i < 2),
+            "Should handle missing ELSE branch"
+        );
     }
 
     #[test]
@@ -1952,6 +1968,9 @@ library Test 1
         let rt = InterfaceSpec::from_ast(&ast);
 
         let alts = rt.alternative_branches(20, 2);
-        assert!(alts.is_empty(), "IF without ELSE should have no alternatives");
+        assert!(
+            alts.is_empty(),
+            "IF without ELSE should have no alternatives"
+        );
     }
 }

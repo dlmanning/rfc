@@ -171,9 +171,10 @@ impl Plot {
 
     /// Recalculate bounds from all elements.
     pub fn recalculate_bounds(&mut self) {
-        self.bounds = self.elements.iter().fold(Rect::EMPTY, |acc, elem| {
-            acc.union(elem.bounds())
-        });
+        self.bounds = self
+            .elements
+            .iter()
+            .fold(Rect::EMPTY, |acc, elem| acc.union(elem.bounds()));
     }
 
     // ========================================================================
@@ -184,14 +185,20 @@ impl Plot {
     pub fn add_circle(&mut self, cx: f32, cy: f32, r: f32) -> ElementId {
         let mut path = Path::new();
         path.circle(Point::new(cx, cy), r);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(self.fill_color))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(self.fill_color),
+        )))
     }
 
     /// Add a filled circle with a specific color.
     pub fn add_circle_colored(&mut self, cx: f32, cy: f32, r: f32, fill: Color) -> ElementId {
         let mut path = Path::new();
         path.circle(Point::new(cx, cy), r);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(fill))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(fill),
+        )))
     }
 
     /// Add a stroked circle.
@@ -205,18 +212,31 @@ impl Plot {
     pub fn add_rect(&mut self, x: f32, y: f32, w: f32, h: f32) -> ElementId {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(self.fill_color))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(self.fill_color),
+        )))
     }
 
     /// Add a filled rectangle with a specific color.
     pub fn add_rect_colored(&mut self, x: f32, y: f32, w: f32, h: f32, fill: Color) -> ElementId {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(fill))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(fill),
+        )))
     }
 
     /// Add a stroked rectangle.
-    pub fn add_rect_stroked(&mut self, x: f32, y: f32, w: f32, h: f32, stroke: Stroke) -> ElementId {
+    pub fn add_rect_stroked(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        stroke: Stroke,
+    ) -> ElementId {
         let mut path = Path::new();
         path.rect(x, y, w, h);
         self.add(Element::new(ElementKind::stroked_path(path, stroke)))
@@ -226,14 +246,27 @@ impl Plot {
     pub fn add_ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32) -> ElementId {
         let mut path = Path::new();
         path.ellipse(Point::new(cx, cy), rx, ry);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(self.fill_color))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(self.fill_color),
+        )))
     }
 
     /// Add a filled ellipse with a specific color.
-    pub fn add_ellipse_colored(&mut self, cx: f32, cy: f32, rx: f32, ry: f32, fill: Color) -> ElementId {
+    pub fn add_ellipse_colored(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        rx: f32,
+        ry: f32,
+        fill: Color,
+    ) -> ElementId {
         let mut path = Path::new();
         path.ellipse(Point::new(cx, cy), rx, ry);
-        self.add(Element::new(ElementKind::filled_path(path, Paint::Solid(fill))))
+        self.add(Element::new(ElementKind::filled_path(
+            path,
+            Paint::Solid(fill),
+        )))
     }
 
     /// Add a line.
@@ -246,7 +279,11 @@ impl Plot {
 
     /// Add text.
     pub fn add_text(&mut self, x: f32, y: f32, text: String, size: f32) -> ElementId {
-        self.add(Element::new(ElementKind::text(Point::new(x, y), text, size)))
+        self.add(Element::new(ElementKind::text(
+            Point::new(x, y),
+            text,
+            size,
+        )))
     }
 }
 

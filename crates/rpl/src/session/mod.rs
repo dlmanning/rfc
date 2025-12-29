@@ -51,11 +51,11 @@ use crate::source::{SourceCache, SourceFile, SourceId};
 use crate::analysis::{
     AnalysisResult, Context, Diagnostic, IncrementalAnalysis, Severity, SpanEdit,
 };
-use crate::lower::{lower, CompiledProgram};
+use crate::lower::{CompiledProgram, lower};
 use crate::parse::parse;
-use crate::registry::{InterfaceRegistry, LowererRegistry, ExecutorRegistry};
+use crate::registry::{ExecutorRegistry, InterfaceRegistry, LowererRegistry};
 use crate::value::Value;
-use crate::vm::{Vm, DebugState, ExecuteOutcome, VmError};
+use crate::vm::{DebugState, ExecuteOutcome, Vm, VmError};
 
 /// Session configuration options.
 #[derive(Clone, Debug)]
@@ -177,14 +177,16 @@ impl Runtime {
     /// preserves stack state, use `execute_continue()`.
     pub fn execute(&mut self, program: &CompiledProgram) -> Result<(), VmError> {
         self.vm.reset();
-        self.vm.execute(&program.code, &self.executors, &program.rodata)
+        self.vm
+            .execute(&program.code, &self.executors, &program.rodata)
     }
 
     /// Execute a compiled program without resetting the VM.
     ///
     /// Preserves existing stack contents across executions.
     pub fn execute_continue(&mut self, program: &CompiledProgram) -> Result<(), VmError> {
-        self.vm.execute(&program.code, &self.executors, &program.rodata)
+        self.vm
+            .execute(&program.code, &self.executors, &program.rodata)
     }
 
     /// Execute a compiled program with debugging support.
@@ -432,11 +434,7 @@ impl AnalysisSession {
     // === LSP Methods ===
 
     /// Get completions at a position in a source file.
-    pub fn completions(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Vec<lsp::CompletionItem> {
+    pub fn completions(&mut self, id: SourceId, pos: crate::core::Pos) -> Vec<lsp::CompletionItem> {
         let _ = self.analyze(id);
 
         let source = match self.sources.get(id) {
@@ -453,22 +451,14 @@ impl AnalysisSession {
     }
 
     /// Get hover information at a position.
-    pub fn hover(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Option<lsp::HoverResult> {
+    pub fn hover(&mut self, id: SourceId, pos: crate::core::Pos) -> Option<lsp::HoverResult> {
         let _ = self.analyze(id);
         let analysis = self.analysis_cache.get(&id)?.result();
         lsp::hover(analysis, &self.interfaces, &self.interner, pos)
     }
 
     /// Go to definition at a position.
-    pub fn definition(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Option<lsp::GotoResult> {
+    pub fn definition(&mut self, id: SourceId, pos: crate::core::Pos) -> Option<lsp::GotoResult> {
         let _ = self.analyze(id);
         let analysis = self.analysis_cache.get(&id)?.result();
         lsp::goto_definition(analysis, &self.interner, pos)
@@ -612,12 +602,21 @@ impl Session {
         let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result for type-informed lowering
-        let analysis = self.analysis.analysis_cache.get(&id)
+        let analysis = self
+            .analysis
+            .analysis_cache
+            .get(&id)
             .expect("analysis should be cached after analyze()")
             .result();
 
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?;
+        let program = lower(
+            &nodes,
+            self.analysis.interfaces(),
+            &self.lowerers,
+            self.analysis.interner(),
+            analysis,
+        )?;
 
         // Execute
         self.runtime.execute(&program)?;
@@ -639,12 +638,21 @@ impl Session {
         let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result for type-informed lowering
-        let analysis = self.analysis.analysis_cache.get(&id)
+        let analysis = self
+            .analysis
+            .analysis_cache
+            .get(&id)
             .expect("analysis should be cached after analyze()")
             .result();
 
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?;
+        let program = lower(
+            &nodes,
+            self.analysis.interfaces(),
+            &self.lowerers,
+            self.analysis.interner(),
+            analysis,
+        )?;
 
         // Execute without reset
         self.runtime.execute_continue(&program)?;
@@ -669,12 +677,21 @@ impl Session {
         let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result (now as immutable borrow alongside other immutable borrows)
-        let analysis = self.analysis.analysis_cache.get(&id)
+        let analysis = self
+            .analysis
+            .analysis_cache
+            .get(&id)
             .expect("analysis should be cached after analyze()")
             .result();
 
         // Lower with analysis results for type-informed code generation
-        Ok(lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?)
+        Ok(lower(
+            &nodes,
+            self.analysis.interfaces(),
+            &self.lowerers,
+            self.analysis.interner(),
+            analysis,
+        )?)
     }
 
     // === Registry Access ===
@@ -760,29 +777,17 @@ impl Session {
     // === LSP Methods (delegates to AnalysisSession) ===
 
     /// Get completions at a position in a source file.
-    pub fn completions(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Vec<lsp::CompletionItem> {
+    pub fn completions(&mut self, id: SourceId, pos: crate::core::Pos) -> Vec<lsp::CompletionItem> {
         self.analysis.completions(id, pos)
     }
 
     /// Get hover information at a position.
-    pub fn hover(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Option<lsp::HoverResult> {
+    pub fn hover(&mut self, id: SourceId, pos: crate::core::Pos) -> Option<lsp::HoverResult> {
         self.analysis.hover(id, pos)
     }
 
     /// Go to definition at a position.
-    pub fn definition(
-        &mut self,
-        id: SourceId,
-        pos: crate::core::Pos,
-    ) -> Option<lsp::GotoResult> {
+    pub fn definition(&mut self, id: SourceId, pos: crate::core::Pos) -> Option<lsp::GotoResult> {
         self.analysis.definition(id, pos)
     }
 
@@ -822,7 +827,8 @@ impl Session {
         program: &CompiledProgram,
         debug: &mut DebugState,
     ) -> Result<ExecuteOutcome, EvalError> {
-        self.runtime.execute_debug(program, debug)
+        self.runtime
+            .execute_debug(program, debug)
             .map_err(EvalError::from)
     }
 
@@ -923,7 +929,8 @@ mod tests {
         let id = session.set_source("test.rpl", "1 2 3");
 
         let diags = session.diagnostics(id);
-        let errors: Vec<_> = diags.iter()
+        let errors: Vec<_> = diags
+            .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
         assert!(errors.is_empty());
