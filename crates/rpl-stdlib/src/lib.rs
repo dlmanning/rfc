@@ -19,12 +19,14 @@ pub mod directory;
 pub mod flow;
 pub mod list;
 pub mod locals;
+pub mod matrix;
 pub mod prog;
 pub mod stack;
 pub mod statistics;
 pub mod strings;
 pub mod symbolic;
 pub mod transcendentals;
+pub mod ui;
 pub mod userlib;
 
 // Re-export library structs
@@ -36,6 +38,7 @@ pub use directory::{DIRECTORY_LIB, DirectoryLib};
 pub use flow::{FLOW_LIB, FlowLib};
 pub use list::{LIST_LIB, ListLib};
 pub use locals::{LOCALS_LIB, LocalsLib};
+pub use matrix::{MATRIX_LIB, MatrixLib};
 pub use prog::{PROG_LIB, ProgLib};
 use rpl::{
     registry::{ExecutorRegistry, InterfaceRegistry, LowererRegistry},
@@ -46,6 +49,7 @@ pub use statistics::{STATISTICS_LIB, StatisticsLib};
 pub use strings::{STRINGS_LIB, StringsLib};
 pub use symbolic::{SYMBOLIC_LIB, SymbolicLib};
 pub use transcendentals::{TRANSCENDENTALS_LIB, TranscendentalsLib};
+pub use ui::{UI_LIB, UiLib};
 pub use userlib::{USERLIB_LIB, UserLibLib};
 
 /// Create registries with standard libraries.
@@ -85,6 +89,7 @@ pub fn register_interfaces(registry: &mut InterfaceRegistry) {
     registry.add(arith::interface().clone());
     registry.add(symbolic::interface().clone());
     registry.add(list::interface().clone());
+    registry.add(matrix::interface().clone());
     registry.add(transcendentals::interface().clone());
     registry.add(strings::interface().clone());
     registry.add(comments::interface().clone());
@@ -95,6 +100,7 @@ pub fn register_interfaces(registry: &mut InterfaceRegistry) {
     registry.add(prog::interface().clone());
     registry.add(locals::interface().clone());
     registry.add(statistics::interface().clone());
+    registry.add(ui::interface().clone());
 }
 
 /// Register all standard library lowerers (for compilation).
@@ -105,6 +111,7 @@ pub fn register_lowerers(registry: &mut LowererRegistry) {
     registry.add(ArithLib);
     registry.add(SymbolicLib);
     registry.add(ListLib);
+    registry.add(MatrixLib);
     registry.add(TranscendentalsLib);
     registry.add(StringsLib);
     registry.add(CommentsLib);
@@ -115,6 +122,7 @@ pub fn register_lowerers(registry: &mut LowererRegistry) {
     registry.add(ProgLib);
     registry.add(LocalsLib);
     registry.add(StatisticsLib);
+    registry.add(UiLib);
 }
 
 /// Register all standard library executors (for runtime).
@@ -125,6 +133,7 @@ pub fn register_executors(registry: &mut ExecutorRegistry) {
     registry.add(ArithLib);
     registry.add(SymbolicLib);
     registry.add(ListLib);
+    registry.add(MatrixLib);
     registry.add(TranscendentalsLib);
     registry.add(StringsLib);
     registry.add(CommentsLib);
@@ -135,6 +144,7 @@ pub fn register_executors(registry: &mut ExecutorRegistry) {
     registry.add(ProgLib);
     registry.add(LocalsLib);
     registry.add(StatisticsLib);
+    registry.add(UiLib);
 }
 
 #[cfg(test)]
@@ -251,7 +261,7 @@ mod tests {
     #[test]
     fn if_then_else_merges_branches() {
         // IF with both branches pushing values - should merge types
-        let result = analyze_source(r#"<< -> x << IF x THEN 3.14 ELSE 42 END >> >> "test" STO"#);
+        let result = analyze_source(r#"<< -> x << IF x THEN 3.14 ELSE 42 END >> >> 'test' STO"#);
 
         // Find the function definition
         let test_def = result
@@ -289,7 +299,7 @@ mod tests {
 
         // Test with just one level of local binding (body directly contains IF)
         let result_direct =
-            analyze_source(r#"<< -> n << IF n 0 < THEN n NEG ELSE n END >> >> "myabs_direct" STO"#);
+            analyze_source(r#"<< -> n << IF n 0 < THEN n NEG ELSE n END >> >> 'myabs_direct' STO"#);
 
         if let Some(def) = result_direct
             .symbols
@@ -352,7 +362,7 @@ mod tests {
                         >>
                     END
                 >>
-            >> >> "quadratic_solver" STO"#,
+            >> >> 'quadratic_solver' STO"#,
         );
 
         // Find the function definition

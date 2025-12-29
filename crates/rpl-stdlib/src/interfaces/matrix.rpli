@@ -1,0 +1,32 @@
+library Matrix 52
+
+-- Vector construction
+0: a b -> (→V2), (->V2) -> List
+1: a b c -> (→V3), (->V3) -> List
+2: List -> (V→), (V->) -> ...
+
+-- Array/List conversion
+3: List -> AXL -> List
+
+-- Element-wise operations
+4: List List -> MADD -> List
+5: List List -> MSUB -> List
+6: List List -> HADAMARD -> List
+7: List -> MNEG -> List
+
+-- Scalar operations
+8: List a:(Int | Real) -> MSCALE -> List
+
+-- Vector products
+9: List List -> DOT -> Real
+10: List List -> CROSS -> List
+
+-- Properties
+11: List -> MDIM -> List
+12: (Int | Real | List) -> ABS -> (Int | Real)
+
+-- Constant array
+13: List a -> CON -> List
+
+-- Transpose
+14: List -> TRAN -> List
