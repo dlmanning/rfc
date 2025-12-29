@@ -1,4 +1,4 @@
 @ Test project entry point
-@ Calls lib/square when executed
+@ Calls lib.square when executed
 
-<< 5 lib/square >>
+<< 5 lib.square >>

@@ -52,7 +52,7 @@ fn list_sum_function() {
                 +
             NEXT
         >> >>
-        \"sum\" STO
+        'sum' STO
         { 1 2 3 4 5 } sum
     ";
     assert_stack_eq(code, &[15.0]);

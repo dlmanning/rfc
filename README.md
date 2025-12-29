@@ -70,7 +70,7 @@ Features:
     ELSE n 1 - fact n *
     END
 >> >>
-"fact" STO
+'fact' STO
 
 5 fact  @ Result: 120
 ```
@@ -87,7 +87,7 @@ Features:
         n 2 - fib +
     END
 >> >>
-"fib" STO
+'fib' STO
 
 10 fib  @ Result: 55
 ```

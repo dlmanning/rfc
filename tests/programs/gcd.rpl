@@ -11,7 +11,7 @@
         gcd
     END
 >> >>
-"gcd" STO
+'gcd' STO
 
 @ Test: gcd(48, 18) = 6
 48 18 gcd

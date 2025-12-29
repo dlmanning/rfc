@@ -347,7 +347,7 @@ fn library_command_precedence() {
     session.eval(r#"{ { "DOUBLE" << 2 * >> } } "MATH" CRLIB ATTACH"#).unwrap();
 
     // Store a variable named DOUBLE in the directory
-    session.eval(r#"<< 3 * >> "DOUBLE" STO"#).unwrap();
+    session.eval(r#"<< 3 * >> 'DOUBLE' STO"#).unwrap();
 
     // Now DOUBLE should refer to the directory variable (3 *), not the library command (2 *)
     let result = session.eval("5 DOUBLE").unwrap();
@@ -358,7 +358,7 @@ fn library_command_precedence() {
     }
 
     // Remove the directory variable
-    session.eval(r#""DOUBLE" PURGE"#).unwrap();
+    session.eval(r#"'DOUBLE' PURGE"#).unwrap();
 
     // Now DOUBLE should refer to the library command again
     let result = session.eval("5 DOUBLE").unwrap();

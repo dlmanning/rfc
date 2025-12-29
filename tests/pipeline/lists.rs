@@ -246,7 +246,7 @@ fn list_append_with_rot_and_rolld() {
     let values = eval_to_values(code);
     // After this, {a} should have elem appended and be back at bottom
     assert_eq!(values.len(), 3);
-    assert_eq!(list_to_reals(&values[0]), vec![3.0]);  // first list now has elem
+    assert_eq!(list_to_reals(&values[0]), vec![3.0]); // first list now has elem
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn list_partition_function() {
                 >>
             NEXT
         >> >>
-        "partition3" STO
+        'partition3' STO
 
         { 3 1 4 1 5 } 2 partition3
     "#;
@@ -365,7 +365,7 @@ fn quicksort_full() {
                 >>
             NEXT
         >> >>
-        "partition3" STO
+        'partition3' STO
 
         @ Quicksort
         << -> lst <<
@@ -383,7 +383,7 @@ fn quicksort_full() {
                 >>
             END
         >> >>
-        "quicksort" STO
+        'quicksort' STO
 
         { 3 1 4 1 5 } quicksort
     "#;
@@ -401,7 +401,7 @@ fn list_concat_with_locals_from_partition() {
         << -> lst <<
             { } lst { }
         >> >>
-        "partition" STO
+        'partition' STO
 
         @ Recursive function with locals bound from partition result
         << -> lst <<
@@ -417,7 +417,7 @@ fn list_concat_with_locals_from_partition() {
                 >>
             END
         >> >>
-        "process" STO
+        'process' STO
 
         { 1 2 } process
     "#;
@@ -444,7 +444,7 @@ fn list_concat_locals_with_call() {
     // Bind lists to locals, call a function, then concatenate
     let code = r#"
         << -> x << x >> >>
-        "id" STO
+        'id' STO
 
         { 1 } { 2 }
         -> a b <<
@@ -461,7 +461,7 @@ fn list_concat_locals_with_if_else() {
     // Add IF/THEN/ELSE to see if that affects type inference
     let code = r#"
         << -> x << x >> >>
-        "id" STO
+        'id' STO
 
         { 1 } { 2 }
         -> a b <<
@@ -493,7 +493,7 @@ fn list_concat_recursive_with_if() {
                 >>
             END
         >> >>
-        "test" STO
+        'test' STO
 
         { 1 2 3 } test
     "#;
@@ -507,7 +507,7 @@ fn list_concat_from_function_returning_3_lists() {
     // Local bindings consume all bound values - c is used in body, not left on stack
     let code = r#"
         << { 1 } { 2 } { 3 } >>
-        "three_lists" STO
+        'three_lists' STO
 
         three_lists
         -> a b c <<
@@ -524,7 +524,7 @@ fn list_concat_from_function_returning_3_lists_recursive() {
     // Same but with recursion
     let code = r#"
         << { 1 } { 2 } { 3 } >>
-        "three_lists" STO
+        'three_lists' STO
 
         << -> lst <<
             lst SIZE 1 <=
@@ -537,7 +537,7 @@ fn list_concat_from_function_returning_3_lists_recursive() {
                 >>
             END
         >> >>
-        "rec" STO
+        'rec' STO
 
         { 1 2 } rec
     "#;
@@ -562,7 +562,7 @@ fn list_concat_after_recursive_call_minimal() {
                 >>
             END
         >> >>
-        "rec" STO
+        'rec' STO
 
         { 1 2 } rec
     "#;
@@ -586,7 +586,7 @@ fn list_concat_two_plus_operations() {
                 >>
             END
         >> >>
-        "rec" STO
+        'rec' STO
 
         { 1 2 } rec
     "#;
@@ -600,7 +600,7 @@ fn list_concat_two_plus_from_function() {
     // THIS IS THE FAILING PATTERN
     let code = r#"
         << { 1 } { 2 } { 3 } >>
-        "make_lists" STO
+        'make_lists' STO
 
         << -> lst <<
             lst SIZE 1 <=
@@ -613,7 +613,7 @@ fn list_concat_two_plus_from_function() {
                 >>
             END
         >> >>
-        "rec" STO
+        'rec' STO
 
         { 1 2 } rec
     "#;
@@ -624,14 +624,11 @@ fn list_concat_two_plus_from_function() {
 /// Debug test to examine node_stacks for the failing case.
 #[test]
 fn debug_list_concat_types() {
-    use rpl::analysis::analyze;
-    use rpl::core::Interner;
-    use rpl::parse::parse;
-    use rpl::registry::InterfaceRegistry;
+    use rpl::{analysis::analyze, core::Interner, parse::parse, registry::InterfaceRegistry};
 
     let code = r#"
         << { 1 } { 2 } { 3 } >>
-        "make_lists" STO
+        'make_lists' STO
 
         << -> lst <<
             lst SIZE 1 <=
@@ -644,7 +641,7 @@ fn debug_list_concat_types() {
                 >>
             END
         >> >>
-        "rec" STO
+        'rec' STO
 
         { 1 2 } rec
     "#;
@@ -658,7 +655,12 @@ fn debug_list_concat_types() {
     let nodes = parse(code, &interfaces, &mut interner).expect("parse failed");
 
     // Run analysis directly to see what happens
-    let result = analyze(&nodes, &interfaces, &interner, &rpl::analysis::Context::empty());
+    let result = analyze(
+        &nodes,
+        &interfaces,
+        &interner,
+        &rpl::analysis::Context::empty(),
+    );
 
     // Print all node_stacks with their types and what's at those positions
     println!("=== Node Stacks ({} entries) ===", result.node_stacks.len());
@@ -672,16 +674,19 @@ fn debug_list_concat_types() {
         } else {
             "???"
         };
-        println!("Span {}..{}: tos={:?}, nos={:?}, src='{}'",
-                 start, end,
-                 snapshot.tos, snapshot.nos, snippet);
+        println!(
+            "Span {}..{}: tos={:?}, nos={:?}, src='{}'",
+            start, end, snapshot.tos, snapshot.nos, snippet
+        );
     }
 
     // Print definitions with their types
     println!("\n=== Definitions ===");
     for def in result.symbols.definitions() {
-        println!("  {} (local={:?}): {:?}",
-                 def.name, def.local_index, def.value_type);
+        println!(
+            "  {} (local={:?}): {:?}",
+            def.name, def.local_index, def.value_type
+        );
     }
 
     // Find the + operator positions
@@ -704,11 +709,15 @@ fn debug_list_concat_types() {
     for (span, snapshot) in &result.node_stacks {
         let start = span.start().offset() as usize;
         let end = span.end().offset() as usize;
-        if end <= code.len() && &code[start..end] == "+" {
-            if snapshot.tos.is_integer() || snapshot.nos.is_integer() {
-                println!("\n*** BUG FOUND: + at {}..{} has integer type! ***", start, end);
-                println!("    tos={:?}, nos={:?}", snapshot.tos, snapshot.nos);
-            }
+        if end <= code.len()
+            && &code[start..end] == "+"
+            && (snapshot.tos.is_integer() || snapshot.nos.is_integer())
+        {
+            println!(
+                "\n*** BUG FOUND: + at {}..{} has integer type! ***",
+                start, end
+            );
+            println!("    tos={:?}, nos={:?}", snapshot.tos, snapshot.nos);
         }
     }
 }

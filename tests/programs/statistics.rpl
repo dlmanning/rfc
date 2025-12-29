@@ -11,14 +11,14 @@
         lst i GET +
     NEXT
 >> >>
-"sum" STO
+'sum' STO
 
 @ Mean (average) of a list
 @ { list } mean -> average
 << -> lst <<
     lst sum lst SIZE /
 >> >>
-"mean" STO
+'mean' STO
 
 @ Variance of a list
 @ { list } variance -> var
@@ -31,12 +31,12 @@
         lst SIZE /
     >>
 >> >>
-"variance" STO
+'variance' STO
 
 @ Standard deviation
 @ { list } stdev -> sd
 << variance SQRT >>
-"stdev" STO
+'stdev' STO
 
 @ Minimum of a list
 @ { list } minimum -> min
@@ -47,7 +47,7 @@
         DUP2 > IF THEN SWAP END DROP
     NEXT
 >> >>
-"minimum" STO
+'minimum' STO
 
 @ Maximum of a list
 @ { list } maximum -> max
@@ -58,7 +58,7 @@
         DUP2 < IF THEN SWAP END DROP
     NEXT
 >> >>
-"maximum" STO
+'maximum' STO
 
 @ Complete statistics summary
 @ { list } stats -> { count sum mean variance stdev min max }
@@ -72,7 +72,7 @@
     lst maximum
     7 →LIST
 >> >>
-"stats" STO
+'stats' STO
 
 @ Test with sample data
 { 2 4 4 4 5 5 7 9 } stats

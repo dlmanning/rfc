@@ -393,10 +393,10 @@ fn factorial_fixture_bytecode() {
         texts
     );
 
-    // Should have StringConst for "fact" (the function name for STO)
+    // Should have SymbolicConst for 'fact' (the function name for STO)
     assert!(
-        has_instr(&instrs, "StringConst"),
-        "Expected StringConst for 'fact', got: {:?}",
+        has_instr(&instrs, "SymbolicConst"),
+        "Expected SymbolicConst for 'fact', got: {:?}",
         texts
     );
 
@@ -423,20 +423,20 @@ fn factorial_fixture_bytecode() {
 
     // Verify the instruction sequence order:
     // 1. MakeProgram (defines the factorial function)
-    // 2. StringConst (pushes "fact")
+    // 2. SymbolicConst (pushes 'fact')
     // 3. CallLib DIRECTORY (STO to store function)
     // 4. I64Const 5 (argument)
     // 5. EvalName (call fact)
     let make_prog_idx = instrs.iter().position(|i| i.text.contains("MakeProgram"));
-    let string_idx = instrs.iter().position(|i| i.text.contains("StringConst"));
+    let symbolic_idx = instrs.iter().position(|i| i.text.contains("SymbolicConst"));
     let sto_idx = instrs.iter().position(|i| i.text.contains("CallLib DIRECTORY"));
     let const5_idx = instrs.iter().position(|i| i.text == "I64Const 5");
     let eval_idx = instrs.iter().position(|i| i.text.contains("EvalName"));
 
     assert!(
-        make_prog_idx < string_idx && string_idx < sto_idx && sto_idx < const5_idx && const5_idx < eval_idx,
-        "Instructions not in expected order: MakeProgram@{:?}, StringConst@{:?}, STO@{:?}, I64Const5@{:?}, EvalName@{:?}",
-        make_prog_idx, string_idx, sto_idx, const5_idx, eval_idx
+        make_prog_idx < symbolic_idx && symbolic_idx < sto_idx && sto_idx < const5_idx && const5_idx < eval_idx,
+        "Instructions not in expected order: MakeProgram@{:?}, SymbolicConst@{:?}, STO@{:?}, I64Const5@{:?}, EvalName@{:?}",
+        make_prog_idx, symbolic_idx, sto_idx, const5_idx, eval_idx
     );
 }
 

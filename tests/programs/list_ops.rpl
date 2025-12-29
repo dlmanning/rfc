@@ -9,7 +9,7 @@
         +
     NEXT
 >> >>
-"sum" STO
+'sum' STO
 
 @ Test sum: 1+2+3+4+5 = 15
 { 1 2 3 4 5 } sum

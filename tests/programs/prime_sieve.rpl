@@ -28,7 +28,7 @@
         END
     END
 >> >>
-"is_prime" STO
+'is_prime' STO
 
 @ Test: 17 is prime
 17 is_prime

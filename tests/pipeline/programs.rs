@@ -69,7 +69,7 @@ fn program_multiple_with_add() {
 #[test]
 fn program_stored() {
     // Store a program and execute it
-    assert_stack_eq("<< DUP * >> \"sq\" STO 5 sq", &[25.0]);
+    assert_stack_eq("<< DUP * >> 'sq' STO 5 sq", &[25.0]);
 }
 
 // ============================================================================
@@ -116,7 +116,7 @@ fn local_binding_with_computation() {
 #[test]
 fn local_binding_in_stored_program() {
     assert_stack_eq(
-        r#"<< -> n << n 1 + >> >> "add1" STO 5 add1"#,
+        r#"<< -> n << n 1 + >> >> 'add1' STO 5 add1"#,
         &[6.0],
     );
 }

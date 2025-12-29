@@ -4,7 +4,6 @@
 //! symbol tracking, hover, and semantic tokens.
 
 use rpl::analysis::DiagnosticKind;
-use rpl::Session;
 
 /// Helper to get analysis results for code
 fn analyze(code: &str) -> rpl::analysis::AnalysisResult {
@@ -14,7 +13,7 @@ fn analyze(code: &str) -> rpl::analysis::AnalysisResult {
 }
 
 /// Helper to get the substring from source at a span
-fn span_text<'a>(source: &'a str, span: rpl::core::Span) -> &'a str {
+fn span_text(source: &str, span: rpl::core::Span) -> &str {
     let start = span.start().offset() as usize;
     let end = span.end().offset() as usize;
     &source[start..end]
@@ -30,14 +29,28 @@ fn local_binding_definitions_have_correct_spans() {
     assert_eq!(defs.len(), 2, "Expected 2 definitions, got {}", defs.len());
 
     // Check that spans point to the actual variable names
-    let a_def = defs.iter().find(|d| d.name == "a").expect("Definition 'a' not found");
-    let b_def = defs.iter().find(|d| d.name == "b").expect("Definition 'b' not found");
+    let a_def = defs
+        .iter()
+        .find(|d| d.name == "a")
+        .expect("Definition 'a' not found");
+    let b_def = defs
+        .iter()
+        .find(|d| d.name == "b")
+        .expect("Definition 'b' not found");
 
     let a_text = span_text(code, a_def.span);
     let b_text = span_text(code, b_def.span);
 
-    assert_eq!(a_text, "a", "Expected span for 'a' to contain 'a', got '{}'", a_text);
-    assert_eq!(b_text, "b", "Expected span for 'b' to contain 'b', got '{}'", b_text);
+    assert_eq!(
+        a_text, "a",
+        "Expected span for 'a' to contain 'a', got '{}'",
+        a_text
+    );
+    assert_eq!(
+        b_text, "b",
+        "Expected span for 'b' to contain 'b', got '{}'",
+        b_text
+    );
 }
 
 #[test]
@@ -58,11 +71,19 @@ fn local_binding_references_have_correct_spans() {
     // Check spans point to actual variable uses
     for r in &a_refs {
         let text = span_text(code, r.span);
-        assert_eq!(text, "a", "Reference span should contain 'a', got '{}'", text);
+        assert_eq!(
+            text, "a",
+            "Reference span should contain 'a', got '{}'",
+            text
+        );
     }
     for r in &b_refs {
         let text = span_text(code, r.span);
-        assert_eq!(text, "b", "Reference span should contain 'b', got '{}'", text);
+        assert_eq!(
+            text, "b",
+            "Reference span should contain 'b', got '{}'",
+            text
+        );
     }
 }
 
@@ -136,7 +157,11 @@ fn multiple_locals_in_same_binding() {
 
     // All should be referenced
     for def in &defs {
-        assert!(def.referenced, "'{}' should be marked as referenced", def.name);
+        assert!(
+            def.referenced,
+            "'{}' should be marked as referenced",
+            def.name
+        );
     }
 }
 
@@ -152,8 +177,8 @@ fn semantic_tokens_for_locals() {
     let defs: Vec<_> = result.symbols.definitions().collect();
     for (i, def1) in defs.iter().enumerate() {
         for def2 in defs.iter().skip(i + 1) {
-            let overlaps = def1.span.start() < def2.span.end()
-                && def2.span.start() < def1.span.end();
+            let overlaps =
+                def1.span.start() < def2.span.end() && def2.span.start() < def1.span.end();
             assert!(
                 !overlaps,
                 "Definitions '{}' and '{}' have overlapping spans: {:?} vs {:?}",
@@ -166,9 +191,12 @@ fn semantic_tokens_for_locals() {
     for def in &defs {
         let len = def.span.len() as usize;
         assert_eq!(
-            len, def.name.len(),
+            len,
+            def.name.len(),
             "Span length {} doesn't match name length {} for '{}'",
-            len, def.name.len(), def.name
+            len,
+            def.name.len(),
+            def.name
         );
     }
 }
@@ -229,16 +257,19 @@ fn semantic_tokens_quicksort_fixture() {
     // (Globals from STO have spans that include quotes, which is expected)
     for def in result.symbols.definitions() {
         let text = span_text(&code, def.span);
-        if matches!(def.kind, rpl::analysis::DefinitionKind::Local | rpl::analysis::DefinitionKind::LoopVar) {
+        if matches!(
+            def.kind,
+            rpl::analysis::DefinitionKind::Local | rpl::analysis::DefinitionKind::LoopVar
+        ) {
             assert_eq!(
                 text, def.name,
                 "Local definition '{}' has wrong span text '{}'",
                 def.name, text
             );
         } else {
-            // For globals, the span includes quotes (e.g., "partition3" STO)
+            // For globals, the span includes quotes (e.g., 'partition3' STO)
             // The name should be the content without quotes
-            let expected = format!("\"{}\"", def.name);
+            let expected = format!("'{}'", def.name);
             assert_eq!(
                 text, expected,
                 "Global definition '{}' has wrong span text '{}', expected '{}'",
@@ -249,19 +280,22 @@ fn semantic_tokens_quicksort_fixture() {
 
     // Verify references have correct spans
     // For local refs, the span should match the name exactly
-    // For global refs (from strings), the span includes quotes
+    // For global refs (from symbolic), the span includes quotes
     for r in result.symbols.references() {
         let text = span_text(&code, r.span);
         if text == r.name {
             // Exact match - good (locals, identifier-based refs)
             continue;
         }
-        // Check if it's a quoted string
-        let expected_quoted = format!("\"{}\"", r.name);
+        // Check if it's a quoted symbolic
+        let expected_quoted = format!("'{}'", r.name);
         assert!(
             text == expected_quoted || text == r.name,
             "Reference '{}' has wrong span text '{}', expected '{}' or '{}'",
-            r.name, text, r.name, expected_quoted
+            r.name,
+            text,
+            r.name,
+            expected_quoted
         );
     }
 
@@ -280,7 +314,10 @@ fn semantic_tokens_quicksort_fixture() {
     assert!(local_names.contains(&"elem"), "Should find local 'elem'");
     assert!(local_names.contains(&"less"), "Should find local 'less'");
     assert!(local_names.contains(&"equal"), "Should find local 'equal'");
-    assert!(local_names.contains(&"greater"), "Should find local 'greater'");
+    assert!(
+        local_names.contains(&"greater"),
+        "Should find local 'greater'"
+    );
 
     // Check loop variable 'i' from FOR loop (distinct LoopVar kind for reassignment warnings)
     let loop_var_names: Vec<_> = result
@@ -289,7 +326,10 @@ fn semantic_tokens_quicksort_fixture() {
         .filter(|d| matches!(d.kind, rpl::analysis::DefinitionKind::LoopVar))
         .map(|d| d.name.as_str())
         .collect();
-    assert!(loop_var_names.contains(&"i"), "Should find loop variable 'i'");
+    assert!(
+        loop_var_names.contains(&"i"),
+        "Should find loop variable 'i'"
+    );
 
     // All locals and loop vars should be marked as referenced (they're all used)
     let unreferenced: Vec<_> = result
@@ -338,7 +378,10 @@ fn semantic_tokens_quicksort_fixture() {
     );
 
     // Verify quicksort signature: list -> list
-    let qs_sig = quicksort.signature.as_ref().expect("quicksort should have signature");
+    let qs_sig = quicksort
+        .signature
+        .as_ref()
+        .expect("quicksort should have signature");
     assert_eq!(
         qs_sig.inputs.len(),
         1,
@@ -357,7 +400,10 @@ fn semantic_tokens_quicksort_fixture() {
     // Note: partition3 uses ROLLD which has dynamic stack effects, so the analyzer
     // may not be able to statically determine the exact output count. We accept either
     // 3 known outputs or 1 Unknown output.
-    let p3_sig = partition3.signature.as_ref().expect("partition3 should have signature");
+    let p3_sig = partition3
+        .signature
+        .as_ref()
+        .expect("partition3 should have signature");
     let is_dynamic_signature = p3_sig.outputs.len() == 1
         && matches!(p3_sig.outputs.first(), Some(ctype) if ctype.is_unknown());
     assert!(
@@ -596,7 +642,7 @@ fn local_parameters_after_user_word_are_unknown() {
 
     // Define a word then call it and bind its results
     let code = r#"
-<< 1 2 3 >> "myword" STO
+<< 1 2 3 >> 'myword' STO
 << myword -> x y z << x y z >> >>
 "#;
 
@@ -624,9 +670,11 @@ fn local_parameters_after_user_word_are_unknown() {
 
 #[test]
 fn semantic_tokens_multiline() {
-    use rpl::session::lsp::{encode_semantic_tokens, SemanticToken};
-    use rpl::source::{SourceFile, SourceId};
-    use rpl::core::Pos;
+    use rpl::{
+        core::Pos,
+        session::lsp::{SemanticToken, encode_semantic_tokens},
+        source::{SourceFile, SourceId},
+    };
 
     // Multi-line code to test delta encoding
     let code = "-> a <<\n  a\n>>";
@@ -695,11 +743,7 @@ fn lsp_showcase_function_signatures() {
     println!("\nFunction signatures in lsp_showcase.rpl:");
     for def in result.symbols.definitions() {
         if def.signature.is_some() {
-            println!(
-                "  '{}': {:?}",
-                def.name,
-                def.signature.as_ref().unwrap()
-            );
+            println!("  '{}': {:?}", def.name, def.signature.as_ref().unwrap());
         }
     }
 
@@ -712,15 +756,28 @@ fn lsp_showcase_function_signatures() {
             .find_definitions_by_name("square")
             .next()
             .expect("square should be defined");
-        let sig = def.signature.as_ref().expect("square should have signature");
+        let sig = def
+            .signature
+            .as_ref()
+            .expect("square should have signature");
 
-        assert_eq!(sig.inputs.len(), 1, "square: expected 1 input, got {}", sig.inputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            1,
+            "square: expected 1 input, got {}",
+            sig.inputs.len()
+        );
         assert!(
             sig.inputs[0].is_numeric(),
             "square: input should be numeric, got {:?}",
             sig.inputs[0]
         );
-        assert_eq!(sig.outputs.len(), 1, "square: expected 1 output, got {}", sig.outputs.len());
+        assert_eq!(
+            sig.outputs.len(),
+            1,
+            "square: expected 1 output, got {}",
+            sig.outputs.len()
+        );
         assert!(
             sig.outputs[0].is_numeric(),
             "square: output should be numeric, got {:?}",
@@ -739,13 +796,23 @@ fn lsp_showcase_function_signatures() {
             .expect("myabs should be defined");
         let sig = def.signature.as_ref().expect("myabs should have signature");
 
-        assert_eq!(sig.inputs.len(), 1, "myabs: expected 1 input, got {}", sig.inputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            1,
+            "myabs: expected 1 input, got {}",
+            sig.inputs.len()
+        );
         assert!(
             sig.inputs[0].is_numeric(),
             "myabs: input should be numeric (from < comparison), got {:?}",
             sig.inputs[0]
         );
-        assert_eq!(sig.outputs.len(), 1, "myabs: expected 1 output (merged branches), got {}", sig.outputs.len());
+        assert_eq!(
+            sig.outputs.len(),
+            1,
+            "myabs: expected 1 output (merged branches), got {}",
+            sig.outputs.len()
+        );
         // Both branches return the parameter n (numeric), so merged is numeric
         assert!(
             sig.outputs[0].is_numeric(),
@@ -765,8 +832,18 @@ fn lsp_showcase_function_signatures() {
             .expect("sqrt should be defined");
         let sig = def.signature.as_ref().expect("sqrt should have signature");
 
-        assert_eq!(sig.inputs.len(), 1, "sqrt: expected 1 input, got {}", sig.inputs.len());
-        assert_eq!(sig.outputs.len(), 1, "sqrt: expected 1 output, got {}", sig.outputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            1,
+            "sqrt: expected 1 input, got {}",
+            sig.inputs.len()
+        );
+        assert_eq!(
+            sig.outputs.len(),
+            1,
+            "sqrt: expected 1 output, got {}",
+            sig.outputs.len()
+        );
     }
 
     // === distance ===
@@ -778,10 +855,23 @@ fn lsp_showcase_function_signatures() {
             .find_definitions_by_name("distance")
             .next()
             .expect("distance should be defined");
-        let sig = def.signature.as_ref().expect("distance should have signature");
+        let sig = def
+            .signature
+            .as_ref()
+            .expect("distance should have signature");
 
-        assert_eq!(sig.inputs.len(), 4, "distance: expected 4 inputs, got {}", sig.inputs.len());
-        assert_eq!(sig.outputs.len(), 1, "distance: expected 1 output, got {}", sig.outputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            4,
+            "distance: expected 4 inputs, got {}",
+            sig.inputs.len()
+        );
+        assert_eq!(
+            sig.outputs.len(),
+            1,
+            "distance: expected 1 output, got {}",
+            sig.outputs.len()
+        );
     }
 
     // === triangle_perimeter ===
@@ -793,10 +883,23 @@ fn lsp_showcase_function_signatures() {
             .find_definitions_by_name("triangle_perimeter")
             .next()
             .expect("triangle_perimeter should be defined");
-        let sig = def.signature.as_ref().expect("triangle_perimeter should have signature");
+        let sig = def
+            .signature
+            .as_ref()
+            .expect("triangle_perimeter should have signature");
 
-        assert_eq!(sig.inputs.len(), 6, "triangle_perimeter: expected 6 inputs, got {}", sig.inputs.len());
-        assert_eq!(sig.outputs.len(), 1, "triangle_perimeter: expected 1 output, got {}", sig.outputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            6,
+            "triangle_perimeter: expected 6 inputs, got {}",
+            sig.inputs.len()
+        );
+        assert_eq!(
+            sig.outputs.len(),
+            1,
+            "triangle_perimeter: expected 1 output, got {}",
+            sig.outputs.len()
+        );
     }
 
     // === quadratic_solver ===
@@ -808,9 +911,17 @@ fn lsp_showcase_function_signatures() {
             .find_definitions_by_name("quadratic_solver")
             .next()
             .expect("quadratic_solver should be defined");
-        let sig = def.signature.as_ref().expect("quadratic_solver should have signature");
+        let sig = def
+            .signature
+            .as_ref()
+            .expect("quadratic_solver should have signature");
 
-        assert_eq!(sig.inputs.len(), 3, "quadratic_solver: expected 3 inputs, got {}", sig.inputs.len());
+        assert_eq!(
+            sig.inputs.len(),
+            3,
+            "quadratic_solver: expected 3 inputs, got {}",
+            sig.inputs.len()
+        );
         // All inputs should be numeric (used in arithmetic operations)
         assert!(
             sig.inputs.iter().all(|t| t.is_numeric()),
@@ -840,17 +951,14 @@ fn lsp_showcase_function_signatures() {
 fn global_variable_reassignment_single_definition() {
     // When a global variable is reassigned, there should still be only one definition
     let code = r#"
-0 "count" STO
-count 1 + "count" STO
-count 1 + "count" STO
+0 'count' STO
+count 1 + 'count' STO
+count 1 + 'count' STO
 "#;
     let result = analyze(code);
 
     // Find definitions named "count"
-    let count_defs: Vec<_> = result
-        .symbols
-        .find_definitions_by_name("count")
-        .collect();
+    let count_defs: Vec<_> = result.symbols.find_definitions_by_name("count").collect();
 
     assert_eq!(
         count_defs.len(),
@@ -863,7 +971,10 @@ count 1 + "count" STO
     // because `count 1 +` produces Numeric when count's type is Unknown at use site)
     let def = count_defs[0];
     assert!(
-        def.value_type.as_ref().map(|t| t.is_numeric()).unwrap_or(false),
+        def.value_type
+            .as_ref()
+            .map(|t| t.is_numeric())
+            .unwrap_or(false),
         "count should be numeric type, got {:?}",
         def.value_type
     );
@@ -873,20 +984,14 @@ count 1 + "count" STO
 fn odds_evens_has_unique_definitions() {
     use std::fs;
 
-    let code = fs::read_to_string("tests/programs/odds_evens.rpl")
-        .expect("Failed to read odds_evens.rpl");
+    let code =
+        fs::read_to_string("tests/programs/odds_evens.rpl").expect("Failed to read odds_evens.rpl");
 
     let result = analyze(&code);
 
     // Check that 'odds' and 'evens' each have exactly one definition
-    let odds_defs: Vec<_> = result
-        .symbols
-        .find_definitions_by_name("odds")
-        .collect();
-    let evens_defs: Vec<_> = result
-        .symbols
-        .find_definitions_by_name("evens")
-        .collect();
+    let odds_defs: Vec<_> = result.symbols.find_definitions_by_name("odds").collect();
+    let evens_defs: Vec<_> = result.symbols.find_definitions_by_name("evens").collect();
 
     assert_eq!(
         odds_defs.len(),
@@ -912,8 +1017,7 @@ fn odds_evens_has_unique_definitions() {
 /// positives (errors reported for valid code) in our fixture programs.
 #[test]
 fn all_fixtures_analyze_without_errors() {
-    use std::fs;
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     let fixtures_dir = Path::new("tests/programs");
     let mut failures = Vec::new();
@@ -947,7 +1051,10 @@ fn all_fixtures_analyze_without_errors() {
                 .collect();
 
             if !errors.is_empty() {
-                failures.push((filename, errors.iter().map(|d| d.message.clone()).collect::<Vec<_>>()));
+                failures.push((
+                    filename,
+                    errors.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+                ));
             }
         }
     }
@@ -970,7 +1077,7 @@ fn all_fixtures_analyze_without_errors() {
 
 #[test]
 fn function_definition_creates_global() {
-    let result = analyze(r#"<< 1 >> "foo" STO"#);
+    let result = analyze(r#"<< 1 >> 'foo' STO"#);
 
     let defs: Vec<_> = result.symbols.definitions().collect();
     assert_eq!(defs.len(), 1, "Expected 1 definition, got {:?}", defs);
@@ -980,13 +1087,19 @@ fn function_definition_creates_global() {
 #[test]
 fn forward_reference_resolves() {
     // Define foo, then call it
-    let result = analyze(r#"<< 1 >> "foo" STO foo"#);
+    let result = analyze(r#"<< 1 >> 'foo' STO foo"#);
 
     // Should have no undefined variable errors
-    let undefined: Vec<_> = result.diagnostics.iter()
+    let undefined: Vec<_> = result
+        .diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, DiagnosticKind::UndefinedVariable))
         .collect();
-    assert!(undefined.is_empty(), "Unexpected undefined variables: {:?}", undefined);
+    assert!(
+        undefined.is_empty(),
+        "Unexpected undefined variables: {:?}",
+        undefined
+    );
 }
 
 #[test]
@@ -994,48 +1107,63 @@ fn recursive_function_resolves() {
     // A function that calls itself
     let result = analyze(r#"<< fact >> "fact" STO"#);
 
-    let undefined: Vec<_> = result.diagnostics.iter()
+    let undefined: Vec<_> = result
+        .diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, DiagnosticKind::UndefinedVariable))
         .collect();
-    assert!(undefined.is_empty(), "Recursive call should resolve: {:?}", undefined);
+    assert!(
+        undefined.is_empty(),
+        "Recursive call should resolve: {:?}",
+        undefined
+    );
 }
 
 #[test]
 fn function_called_with_list_no_type_conflict() {
     // Function that takes a param, then call it with a list literal
     // The list should pass LIST type to the function
-    let result = analyze(r#"
+    let result = analyze(
+        r#"
 << -> lst <<
     lst
 >> >>
-"foo" STO
+'foo' STO
 { 1 2 3 } foo
-"#);
+"#,
+    );
 
-    let type_errors: Vec<_> = result.diagnostics.iter()
+    let type_errors: Vec<_> = result
+        .diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, DiagnosticKind::TypeMismatch))
         .collect();
-    assert!(type_errors.is_empty(), "Unexpected type errors: {:?}", type_errors);
+    assert!(
+        type_errors.is_empty(),
+        "Unexpected type errors: {:?}",
+        type_errors
+    );
 }
 
 #[test]
 fn local_bound_to_function_result_gets_type_from_usage() {
     // Test: function returns unknown, local m binds result,
     // then m is used with - which constrains it to numeric
-    let result = analyze(r#"
-<< 1 >> "getval" STO
+    let result = analyze(
+        r#"
+<< 1 >> 'getval' STO
 <<
     -> x <<
         x getval -> m <<
             m 1 -
         >>
     >>
->> "test" STO
-"#);
+>> 'test' STO
+"#,
+    );
 
     // Find the definition of 'm'
-    let m_def = result.symbols.definitions()
-        .find(|d| d.name == "m");
+    let m_def = result.symbols.definitions().find(|d| d.name == "m");
 
     assert!(m_def.is_some(), "Should find definition for 'm'");
     let m_type = m_def.unwrap().value_type.clone();
@@ -1043,9 +1171,152 @@ fn local_bound_to_function_result_gets_type_from_usage() {
     // m should have a numeric type from usage constraints
     // (either Known(Int/Real), OneOf([Int, Real]), or Unknown is acceptable
     // since the getval function's return type may not be known)
+    assert!(m_type.is_some(), "m should have a type, got None");
+}
+
+#[test]
+fn local_in_nested_program_is_referenced() {
+    // Test case from space-shooter player.rpl:
+    // << << BTNS -> btns << btns 1 BAND >> >> >>
+    // The inner program should still mark btns as referenced
+    let code = r#"<< << 5 -> x << x 2 + >> >> >>"#;
+    let result = analyze(code);
+
+    // Find the local 'x'
+    let x_def = result
+        .symbols
+        .definitions()
+        .find(|d| d.name == "x")
+        .expect("Should find definition for 'x'");
+
     assert!(
-        m_type.is_some(),
-        "m should have a type, got None"
+        x_def.referenced,
+        "Local 'x' in nested program should be marked as referenced"
+    );
+
+    // Should have no unused variable warnings for 'x'
+    let unused_x: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("'x'")
+        })
+        .collect();
+
+    assert!(
+        unused_x.is_empty(),
+        "Should have no unused warnings for 'x', got: {:?}",
+        unused_x
+    );
+}
+
+#[test]
+fn local_in_stored_function_is_referenced() {
+    // Exact pattern from player.rpl:
+    // <<
+    //   <<
+    //     BTNS -> btns <<
+    //       IF btns 1 BAND 0 > THEN ... END
+    //     >>
+    //   >> 'update_player' STO
+    // >>
+
+    // First test: without IF, just with STO
+    let code_simple = r#"<< << 5 -> btns << btns 2 + >> >> 'f' STO >>"#;
+    let result_simple = analyze(code_simple);
+
+    let btns_def_simple = result_simple
+        .symbols
+        .definitions()
+        .find(|d| d.name == "btns");
+
+    assert!(
+        btns_def_simple.is_some(),
+        "Should find 'btns' definition in simple case"
+    );
+    assert!(
+        btns_def_simple.unwrap().referenced,
+        "btns should be referenced in simple case (without IF)"
+    );
+
+    // Second test: with IF
+    let code = r#"
+<<
+  <<
+    5 -> btns <<
+      IF btns 1 BAND 0 > THEN 1 END
+    >>
+  >> 'update_player' STO
+>>
+"#;
+    let result = analyze(code);
+
+    // Find the local 'btns'
+    let btns_defs: Vec<_> = result
+        .symbols
+        .definitions()
+        .filter(|d| d.name == "btns")
+        .collect();
+
+    assert!(
+        !btns_defs.is_empty(),
+        "Should find definition for 'btns'"
+    );
+
+    let btns_def = btns_defs[0];
+    assert!(
+        btns_def.referenced,
+        "Local 'btns' should be marked as referenced"
+    );
+
+    // Should have no unused variable warnings for 'btns'
+    let unused_btns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns")
+        })
+        .collect();
+
+    assert!(
+        unused_btns.is_empty(),
+        "Should have no unused warnings for 'btns', got: {:?}",
+        unused_btns
+    );
+}
+
+#[test]
+fn local_in_nested_if_is_referenced() {
+    // Test the exact pattern from player.rpl:
+    // Local binding 'btns' used inside multiple IF conditions
+    let code = r#"
+<<
+  <<
+    5 -> btns <<
+      IF btns 1024 BAND 0 > THEN 1 END
+      IF btns 2048 BAND 0 > THEN 2 END
+      IF btns 1 BAND 0 > THEN
+        IF 1 THEN 3 END
+      END
+    >>
+  >> 'update_player' STO
+>>
+"#;
+    let result = analyze(code);
+
+    // Should have no unused variable warnings for 'btns'
+    let unused_btns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(d.kind, DiagnosticKind::UnusedVariable) && d.message.contains("btns")
+        })
+        .collect();
+
+    assert!(
+        unused_btns.is_empty(),
+        "Should have no unused warnings for 'btns' in nested IF pattern, got: {:?}",
+        unused_btns
     );
 }
 
@@ -1053,20 +1324,21 @@ fn local_bound_to_function_result_gets_type_from_usage() {
 fn local_bound_to_function_result_gets_return_type() {
     // Test: function explicitly returns Real, local m binds result,
     // m should have type Real from function return
-    let result = analyze(r#"
-<< 3.14 >> "mean" STO
+    let result = analyze(
+        r#"
+<< 3.14 >> 'mean' STO
 <<
     -> x <<
         x mean -> m <<
             m 1.0 -
         >>
     >>
->> "variance" STO
-"#);
+>> 'variance' STO
+"#,
+    );
 
     // Find the definition of 'm'
-    let m_def = result.symbols.definitions()
-        .find(|d| d.name == "m");
+    let m_def = result.symbols.definitions().find(|d| d.name == "m");
 
     assert!(m_def.is_some(), "Should find definition for 'm'");
     let m_type = m_def.unwrap().value_type.clone();
@@ -1080,3 +1352,77 @@ fn local_bound_to_function_result_gets_return_type() {
     );
 }
 
+#[test]
+fn local_from_tostr_has_string_type() {
+    // Test the entity.rpl pattern: next_entity_id ->STR -> id_str
+    let result = analyze(
+        r#"
+<<
+  <<
+    next_entity_id ->STR -> id_str
+    <<
+      "path/" id_str + STO
+    >>
+  >> 'spawn_entity' STO
+>>
+"#,
+    );
+
+    // Find the definition of 'id_str'
+    let id_str_def = result.symbols.definitions().find(|d| d.name == "id_str");
+
+    assert!(id_str_def.is_some(), "Should find definition for 'id_str'");
+    let id_str_type = id_str_def.unwrap().value_type.clone();
+
+    // id_str should have String type from ->STR's output
+    match id_str_type {
+        Some(rpl::analysis::Type::Known(type_id)) => {
+            assert_eq!(
+                type_id,
+                rpl::core::TypeId::STRING,
+                "id_str should have String type, got {:?}",
+                type_id
+            );
+        }
+        other => panic!("id_str should have Known(STRING) type, got {:?}", other),
+    }
+}
+
+#[test]
+fn entity_rpl_type_inference() {
+    // Full entity.rpl content
+    let result = analyze(
+        r#"
+<<
+  <<
+    -> pos vel sprite type
+    <<
+      next_entity_id ->STR -> id_str
+      <<
+        pos "entities/" id_str + "/pos" + STO
+        vel "entities/" id_str + "/vel" + STO
+        sprite "entities/" id_str + "/sprite" + STO
+        type "entities/" id_str + "/type" + STO
+        0 "entities/" id_str + "/dead" + STO
+        entity_ids next_entity_id + 'entity_ids' STO
+        next_entity_id DUP 1 + 'next_entity_id' STO
+      >>
+    >>
+  >> 'spawn_entity' STO
+
+  << "entities/" SWAP ->STR + "/dead" + 1 SWAP STO >> 'mark_dead' STO
+  << "entities/" SWAP ->STR + "/dead" + RCL >> 'is_dead' STO
+>>
+"#,
+    );
+
+    // Check specific locals
+    let id_str_def = result.symbols.definitions().find(|d| d.name == "id_str");
+    assert!(id_str_def.is_some(), "Should find id_str");
+    let id_str_type = id_str_def.unwrap().value_type.clone();
+    assert!(
+        matches!(id_str_type, Some(rpl::analysis::Type::Known(t)) if t == rpl::core::TypeId::STRING),
+        "id_str should be String, got {:?}",
+        id_str_type
+    );
+}

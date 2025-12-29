@@ -58,17 +58,17 @@ mod file_interface {
             .expect("Failed to open project");
 
         // Check a file that references project entries
-        let code = "lib/square";
+        let code = "lib.square";
         let diagnostics = core::check_file(&mut state, code, Some(file_path.to_str().unwrap()));
 
-        // Should not report lib/square as undefined since it's in the project
+        // Should not report lib.square as undefined since it's in the project
         let undefined_errors: Vec<_> = diagnostics
             .iter()
             .filter(|d| d.message.contains("undefined") || d.message.contains("unknown"))
             .collect();
         assert!(
             undefined_errors.is_empty(),
-            "lib/square should be resolved from project context"
+            "lib.square should be resolved from project context"
         );
     }
 
@@ -101,8 +101,8 @@ mod file_interface {
         let content = std::fs::read_to_string(&file_path).unwrap();
         let result = core::run_file(&mut state, &content, Some(file_path.to_str().unwrap()));
 
-        // Project entry point runs lib/square on 5, should get 25
-        assert!(result.error.is_none(), "Project should run without error");
+        // Project entry point runs lib.square on 5, should get 25
+        assert!(result.error.is_none(), "Project should run without error: {:?}", result.error);
         assert_eq!(result.stack.len(), 1);
         assert_eq!(result.stack[0].display, "25");
     }
@@ -155,15 +155,16 @@ mod file_interface {
     fn symbols_returns_document_symbols() {
         let code = r#"
 << 1 2 + >>
-"add" STO
+'add' STO
 
 << -> x << x x * >> >>
-"square" STO
+'square' STO
 
 42
-"answer" STO
+'answer' STO
 "#;
-        let symbols = core::get_symbols(code);
+        let mut state = IdeState::new();
+        let symbols = core::get_symbols(&mut state, code, None);
 
         let names: Vec<_> = symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"add"), "Should contain 'add' symbol");
@@ -175,12 +176,13 @@ mod file_interface {
     fn symbols_have_correct_kinds() {
         let code = r#"
 << 1 >>
-"prog" STO
+'prog' STO
 
 42
-"num" STO
+'num' STO
 "#;
-        let symbols = core::get_symbols(code);
+        let mut state = IdeState::new();
+        let symbols = core::get_symbols(&mut state, code, None);
 
         let prog_sym = symbols.iter().find(|s| s.name == "prog");
         let num_sym = symbols.iter().find(|s| s.name == "num");
@@ -217,19 +219,85 @@ mod file_interface {
             .open_project(project_path.to_str().unwrap())
             .expect("Failed to open project");
 
-        let code = "lib/square";
-        // Position on 'lib/square' (line 1, col 1)
+        let code = "lib.square";
+        // Position on 'lib.square' (line 1, col 1)
         let hover = core::get_hover(&mut state, code, 1, 1, Some(file_path.to_str().unwrap()));
 
         assert!(
             hover.is_some(),
-            "Should have hover info for project entry lib/square"
+            "Should have hover info for project entry lib.square"
         );
         let hover = hover.unwrap();
         assert!(
-            hover.contents.contains("lib/square") || hover.contents.contains("Project"),
+            hover.contents.contains("lib.square") || hover.contents.contains("Project"),
             "Hover should reference the project entry"
         );
+    }
+
+    #[test]
+    fn hover_shows_resolved_types_for_locals() {
+        // Test that hover on local variables in a project shows resolved types, not TypeVars
+        let examples_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("examples");
+        let project_dir = examples_dir.join("space-shooter");
+
+        if !project_dir.exists() {
+            // Skip if space-shooter doesn't exist
+            return;
+        }
+
+        let mut state = IdeState::new();
+        let file_path = project_dir.join("lib/entity.rpl");
+
+        // Load project first
+        state
+            .open_project(project_dir.to_str().unwrap())
+            .expect("Failed to open project");
+
+        // Content of lib/entity.rpl contains: -> pos vel sprite type <<
+        // The 'sprite' variable should have resolved type Int (TypeId(12))
+        let content = std::fs::read_to_string(&file_path).expect("Failed to read file");
+
+        // Find the position of 'sprite' in the arrow binding: -> pos vel sprite type
+        // Line 5 (1-indexed): "    -> pos vel sprite type <<"
+        // 'sprite' starts around column 16
+        let hover = core::get_hover(
+            &mut state,
+            &content,
+            5,
+            16,
+            Some(file_path.to_str().unwrap()),
+        );
+
+        assert!(hover.is_some(), "Should have hover info for 'sprite'");
+        let hover = hover.unwrap();
+
+        // The hover should NOT contain "TypeVar" or "T" followed by a number
+        assert!(
+            !hover.contents.contains("TypeVar"),
+            "Hover should not show TypeVar, got: {}",
+            hover.contents
+        );
+        // Check it doesn't show patterns like T1, T2, etc.
+        assert!(
+            !hover.contents.chars().any(|c| c == 'T')
+                || !hover
+                    .contents
+                    .chars()
+                    .skip_while(|c| *c != 'T')
+                    .skip(1)
+                    .next()
+                    .map_or(false, |c| c.is_ascii_digit()),
+            "Hover should not show TypeVars like T1, T2, got: {}",
+            hover.contents
+        );
+
+        // Debug output
+        eprintln!("Hover contents for 'sprite': {}", hover.contents);
     }
 
     #[test]
@@ -317,7 +385,7 @@ mod project_interface {
 
         let keys: Vec<_> = tree.iter().map(|n| n.key.as_str()).collect();
         assert!(keys.contains(&"main"), "Should contain main entry");
-        assert!(keys.contains(&"lib/square"), "Should contain lib/square entry");
+        assert!(keys.contains(&"lib.square"), "Should contain lib.square entry");
         assert!(keys.contains(&"constants"), "Should contain constants entry");
     }
 
@@ -329,7 +397,7 @@ mod project_interface {
 
         let tree = core::get_project_tree(&state, project_path.to_str().unwrap());
 
-        let lib_square = tree.iter().find(|n| n.key == "lib/square");
+        let lib_square = tree.iter().find(|n| n.key == "lib.square");
         assert!(lib_square.is_some());
         assert_eq!(
             lib_square.unwrap().name, "square",
@@ -344,7 +412,7 @@ mod project_interface {
         state.open_project(project_path.to_str().unwrap()).unwrap();
 
         // Programs should have signatures
-        let sig = core::get_signature(&state, project_path.to_str().unwrap(), "lib/square");
+        let sig = core::get_signature(&state, project_path.to_str().unwrap(), "lib.square");
         // Signature might be None if no parameter inference happened, that's ok
         // Just verify it doesn't panic
         let _ = sig;
@@ -357,7 +425,7 @@ mod project_interface {
         state.open_project(project_path.to_str().unwrap()).unwrap();
 
         let result = core::run_project(&mut state, project_path.to_str().unwrap());
-        assert!(result.error.is_none(), "Project should run without error");
+        assert!(result.error.is_none(), "Project should run without error: {:?}", result.error);
         assert_eq!(result.stack.len(), 1);
         assert_eq!(result.stack[0].display, "25", "5 squared is 25");
     }
@@ -451,10 +519,10 @@ mod repl_interface {
     fn evaluate_stores_variable() {
         let mut state = IdeState::new();
 
-        core::repl_evaluate(&mut state, "42 \"answer\" STO");
-        let result = core::repl_evaluate(&mut state, "answer");
+        core::repl_evaluate(&mut state, "42 'answer' STO");
+        let result = core::repl_evaluate(&mut state, "'answer' RCL");
 
-        assert!(result.error.is_none());
+        assert!(result.error.is_none(), "Error: {:?}", result.error);
         assert_eq!(result.stack.len(), 1);
         assert_eq!(result.stack[0].display, "42");
     }
@@ -495,10 +563,10 @@ mod repl_interface {
     fn reset_clears_variables() {
         let mut state = IdeState::new();
 
-        core::repl_evaluate(&mut state, "42 \"x\" STO");
+        core::repl_evaluate(&mut state, "42 'x' STO");
 
         // Verify x is set
-        let before_reset = core::repl_evaluate(&mut state, "x");
+        let before_reset = core::repl_evaluate(&mut state, "'x' RCL");
         assert!(before_reset.error.is_none(), "x should be accessible before reset");
 
         core::repl_reset(&mut state);
@@ -609,7 +677,7 @@ mod disassembly {
 
         // Project output should contain entry headers
         assert!(output.contains("main:"), "Should contain main entry");
-        assert!(output.contains("lib/square:"), "Should contain lib/square entry");
+        assert!(output.contains("lib.square:"), "Should contain lib.square entry");
     }
 
     #[test]
@@ -623,8 +691,8 @@ mod disassembly {
         let content = std::fs::read_to_string(&file_path).unwrap();
         let output = core::disassemble(&mut state, &content, Some(file_path.to_str().unwrap()));
 
-        // lib/square should have bytecode instructions
-        assert!(output.contains("lib/square:"), "Should have lib/square");
+        // lib.square should have bytecode instructions
+        assert!(output.contains("lib.square:"), "Should have lib.square");
 
         // constants entry should show value type (format is "(TYPE: VALUE)")
         assert!(output.contains("constants:"), "Should have constants entry");
@@ -671,11 +739,11 @@ mod helpers {
 
     #[test]
     fn word_at_handles_slashes() {
-        let source = "lib/square foo";
-        let result = core::word_at(source, 0); // 'l' in lib/square
+        let source = "lib.square foo";
+        let result = core::word_at(source, 0); // 'l' in lib.square
         assert!(result.is_some());
         let (word, _span) = result.unwrap();
-        assert_eq!(word, "lib/square");
+        assert_eq!(word, "lib.square");
     }
 
     #[test]
@@ -690,5 +758,65 @@ mod helpers {
         let source = "hello";
         let result = core::word_at(source, 100);
         assert!(result.is_none());
+    }
+}
+
+// ============================================================================
+// SR5 Commands Tests
+// ============================================================================
+
+mod sr5_commands {
+    use super::*;
+
+    #[test]
+    fn sr5_sprite_commands_recognized() {
+        let mut state = IdeState::new();
+        // SPR should be recognized without parse errors
+        let code = "1 100 50 SPR";
+        let diagnostics = core::check_file(&mut state, code, None);
+        let parse_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.message.contains("undefined") || d.message.contains("unknown"))
+            .collect();
+        assert!(
+            parse_errors.is_empty(),
+            "SPR should be recognized, got: {:?}",
+            parse_errors
+        );
+    }
+
+    #[test]
+    fn sr5_graphics_commands_recognized() {
+        let mut state = IdeState::new();
+        // CLS, RGB, BGLOAD, BGCLR should be recognized
+        let code = "<< 255 0 0 RGB CLS data BGLOAD BGCLR >>";
+        let diagnostics = core::check_file(&mut state, code, None);
+        let undefined_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.message.contains("Undefined"))
+            .filter(|d| !d.message.contains("data")) // 'data' is expected to be undefined
+            .collect();
+        assert!(
+            undefined_errors.is_empty(),
+            "CLS, RGB, BGLOAD, BGCLR should be recognized, got: {:?}",
+            undefined_errors
+        );
+    }
+
+    #[test]
+    fn sr5_input_commands_recognized() {
+        let mut state = IdeState::new();
+        // BTNS should be recognized
+        let code = "BTNS";
+        let diagnostics = core::check_file(&mut state, code, None);
+        let parse_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.message.contains("undefined") || d.message.contains("unknown"))
+            .collect();
+        assert!(
+            parse_errors.is_empty(),
+            "BTNS should be recognized, got: {:?}",
+            parse_errors
+        );
     }
 }

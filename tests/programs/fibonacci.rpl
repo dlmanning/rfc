@@ -11,6 +11,6 @@
         +
     END
 >> >>
-"fib" STO
+'fib' STO
 
 10 fib

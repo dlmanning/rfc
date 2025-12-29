@@ -16,12 +16,12 @@
 << -> a b <<
     << a b * >> EVAL
 >> >>
-"dynamic_mul" STO
+'dynamic_mul' STO
 7 6 dynamic_mul
 
 @ Store a program and EVAL it later
 << DUP * >>
-"square" STO
+'square' STO
 
 @ Recall and evaluate the stored program
 @ Result: 16
@@ -40,7 +40,7 @@
     END
     EVAL
 >> >>
-"choose" STO
+'choose' STO
 
 @ 1 chooses 100, 0 chooses 200, sum is 300
 1 choose

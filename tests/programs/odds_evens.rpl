@@ -15,8 +15,8 @@
 
 @ Initialize
 42 RDZ
-0 "odds" STO
-0 "evens" STO
+0 'odds' STO
+0 'evens' STO
 
 @ Run 1000 trials
 1 1000 START
@@ -29,15 +29,15 @@
     @ Check if odd (remainder 1) or even (remainder 0)
     2 MOD 1 ==
     IF THEN
-        odds 1 + "odds" STO
+        odds 1 + 'odds' STO
     ELSE
-        evens 1 + "evens" STO
+        evens 1 + 'evens' STO
     END
 NEXT
 
 @ Calculate and display proportions
-odds 1000. / "odds_prop" STO
-evens 1000. / "evens_prop" STO
+odds 1000. / 'odds_prop' STO
+evens 1000. / 'evens_prop' STO
 
 @ Result: { odds evens odds_proportion evens_proportion }
 { odds evens odds_prop evens_prop }

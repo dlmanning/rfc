@@ -11,7 +11,7 @@
 
 @ Square a number
 << -> x << x x * >> >>
-"square" STO
+'square' STO
 
 @ Absolute value (manual implementation)
 << -> n <<
@@ -22,7 +22,7 @@
         n
     END
 >> >>
-"myabs" STO
+'myabs' STO
 
 @ === Newton's method for sqrt ===
 @ Like newton_sqrt.rpl but with more nesting for LSP testing
@@ -38,7 +38,7 @@
         NEXT
     >>
 >> >>
-"sqrt" STO
+'sqrt' STO
 
 @ === Main algorithm: compute distance between two points ===
 @ Usage: x1 y1 x2 y2 distance -> sqrt((x2-x1)^2 + (y2-y1)^2)
@@ -52,7 +52,7 @@
         >>
     >>
 >> >>
-"distance" STO
+'distance' STO
 
 @ === Test: distance from (0,0) to (3,4) should be 5 ===
 0 0 3 4 distance
@@ -63,7 +63,7 @@
     bx by cx cy distance +
     cx cy ax ay distance +
 >> >>
-"triangle_perimeter" STO
+'triangle_perimeter' STO
 
 @ Test: right triangle (0,0), (3,0), (0,4)
 @ Perimeter = 3 + 4 + 5 = 12
@@ -89,7 +89,7 @@
         END
     >>
 >> >>
-"quadratic_solver" STO
+'quadratic_solver' STO
 
 @ Test: Solve x^2 - 5x + 6 = 0 (roots should be 2 and 3)
 1 -5 6 quadratic_solver

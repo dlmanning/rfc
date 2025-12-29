@@ -32,8 +32,8 @@ fn eval_symbolic_power() {
 
 #[test]
 fn eval_symbolic_with_global() {
-    // 10 "x" STO 'x + 5' EVAL → 15
-    assert_stack_eq("10 \"x\" STO 'x + 5' EVAL", &[15.0]);
+    // 10 'x' STO 'x + 5' EVAL → 15
+    assert_stack_eq("10 'x' STO 'x + 5' EVAL", &[15.0]);
 }
 
 #[test]

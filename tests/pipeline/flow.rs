@@ -291,7 +291,7 @@ fn two_locals_test() {
 fn stored_program_with_local() {
     // Simple: store a program that uses a local, call it
     assert_stack_eq(
-        "<< -> n << n >> >> \"test\" STO 5 test",
+        "<< -> n << n >> >> 'test' STO 5 test",
         &[5.0],
     );
 }
