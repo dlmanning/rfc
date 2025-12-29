@@ -12,4 +12,4 @@ mod render;
 
 pub use cache::SourceCache;
 pub use file::{LineCol, SourceFile, SourceId};
-pub use render::DiagnosticRenderer;
+pub use render::{emit_diagnostic, DiagnosticRenderer};

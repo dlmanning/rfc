@@ -75,6 +75,11 @@ impl Span {
     pub fn len(self) -> u32 {
         self.end.0.saturating_sub(self.start.0)
     }
+
+    /// Convert to a `Range<usize>` for codespan-reporting.
+    pub fn range(self) -> std::ops::Range<usize> {
+        self.start.0 as usize..self.end.0 as usize
+    }
 }
 
 /// A value with an associated span.

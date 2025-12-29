@@ -23,7 +23,7 @@ pub fn interface() -> &'static InterfaceSpec {
 }
 
 /// Vector plot library ID.
-pub const VECTOR_PLOT_LIB_ID: LibId = 88;
+pub const VECTOR_PLOT_LIB_ID: LibId = 90;
 
 // Command IDs
 mod cmd {
@@ -91,6 +91,7 @@ fn pop_blob(ctx: &mut ExecuteContext) -> Result<Vec<u8>, String> {
 
 fn push_blob(ctx: &mut ExecuteContext, bytes: Vec<u8>) -> Result<(), String> {
     ctx.push(Value::Bytes(Arc::from(bytes.into_boxed_slice())))
+        .map_err(|e| e.to_string())
 }
 
 fn pop_number(ctx: &mut ExecuteContext) -> Result<f64, String> {
@@ -408,7 +409,7 @@ mod tests {
 
     #[test]
     fn vector_plot_lib_id() {
-        assert_eq!(interface().id(), 88);
+        assert_eq!(interface().id(), 90);
     }
 
     #[test]

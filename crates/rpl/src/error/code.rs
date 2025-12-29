@@ -16,6 +16,14 @@ pub enum ErrorCode {
     E101,
     #[error("mismatched bracket")]
     E102,
+
+    // Lowering errors (E200-E299)
+    #[error("lowering error")]
+    E200,
+
+    // Runtime errors (E300-E399)
+    #[error("runtime error")]
+    E300,
 }
 
 impl ErrorCode {
@@ -27,6 +35,8 @@ impl ErrorCode {
             ErrorCode::E100 => "E100",
             ErrorCode::E101 => "E101",
             ErrorCode::E102 => "E102",
+            ErrorCode::E200 => "E200",
+            ErrorCode::E300 => "E300",
         }
     }
 
@@ -38,6 +48,8 @@ impl ErrorCode {
             ErrorCode::E100 => "unexpected token",
             ErrorCode::E101 => "unclosed construct",
             ErrorCode::E102 => "mismatched bracket",
+            ErrorCode::E200 => "lowering error",
+            ErrorCode::E300 => "runtime error",
         }
     }
 }

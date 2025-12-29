@@ -96,37 +96,218 @@ impl LibraryExecutor for DirectoryLib {
         match ctx.cmd {
             cmd::STO => {
                 // (value name --)
+                // name can be: string, symbol, or list (path)
                 let name_val = ctx.pop()?;
-                let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("STO: expected string name, got {}", name_val.type_name())
-                })?;
                 let value = ctx.pop()?;
-                ctx.store(name, value);
+
+                // Check if it's a list-based path
+                if let Some(list) = name_val.as_list() {
+                    let elements = extract_path_elements(list).ok_or_else(|| {
+                        "STO: invalid path list (expected strings or symbols)".to_string()
+                    })?;
+                    if elements.is_empty() {
+                        return Err("STO: empty path".into());
+                    }
+
+                    // Last element is the variable name
+                    let var_name = match elements.last() {
+                        Some(PathElement::Name(n)) => n.clone(),
+                        _ => return Err("STO: path must end with a variable name".into()),
+                    };
+
+                    // Navigate to the target directory
+                    let saved_path: Vec<String> = ctx.dir_path().to_vec();
+                    for elem in &elements[..elements.len() - 1] {
+                        match elem {
+                            PathElement::Home => ctx.home(),
+                            PathElement::UpDir => ctx.updir(),
+                            PathElement::Name(dir) => {
+                                // Ensure directory exists and enter it
+                                ctx.create_subdir(dir.clone());
+                                if !ctx.enter_subdir(dir) {
+                                    // Restore path and error
+                                    ctx.home();
+                                    for p in &saved_path {
+                                        ctx.enter_subdir(p);
+                                    }
+                                    return Err(format!("STO: cannot enter directory '{}'", dir));
+                                }
+                            }
+                        }
+                    }
+
+                    // Store the value
+                    ctx.store(var_name, value);
+
+                    // Restore original directory
+                    ctx.home();
+                    for p in &saved_path {
+                        ctx.enter_subdir(p);
+                    }
+
+                    return Ok(ExecuteAction::ok());
+                }
+
+                // Must be symbolic (like 'x' or 'dir.subdir.var')
+                let name = extract_name(&name_val).ok_or_else(|| {
+                    format!("STO: expected symbolic name 'x' or list path, got {}", name_val.type_name())
+                })?;
+
+                // Check for path-based access (e.g., 'entities.0.x')
+                if name.contains('.') {
+                    let parts: Vec<&str> = name.split('.').collect();
+                    let (path, var_name) = parts.split_at(parts.len() - 1);
+                    ctx.directory.store_at_path(path, var_name[0], value);
+                } else {
+                    ctx.store(name, value);
+                }
                 Ok(ExecuteAction::ok())
             }
 
             cmd::RCL => {
                 // (name -- value)
+                // name can be: string, symbol, or list (path)
                 let name_val = ctx.pop()?;
+
+                // Check if it's a list-based path
+                if let Some(list) = name_val.as_list() {
+                    let elements = extract_path_elements(list).ok_or_else(|| {
+                        "RCL: invalid path list (expected strings or symbols)".to_string()
+                    })?;
+                    if elements.is_empty() {
+                        return Err("RCL: empty path".into());
+                    }
+
+                    // Last element is the variable name
+                    let var_name = match elements.last() {
+                        Some(PathElement::Name(n)) => n.clone(),
+                        _ => return Err("RCL: path must end with a variable name".into()),
+                    };
+
+                    // Navigate to the target directory
+                    let saved_path: Vec<String> = ctx.dir_path().to_vec();
+                    for elem in &elements[..elements.len() - 1] {
+                        match elem {
+                            PathElement::Home => ctx.home(),
+                            PathElement::UpDir => ctx.updir(),
+                            PathElement::Name(dir) => {
+                                if !ctx.enter_subdir(dir) {
+                                    // Restore path and error
+                                    ctx.home();
+                                    for p in &saved_path {
+                                        ctx.enter_subdir(p);
+                                    }
+                                    return Err(format!("Undefined: directory '{}'", dir));
+                                }
+                            }
+                        }
+                    }
+
+                    // Look up the value
+                    let value = ctx.lookup(&var_name)
+                        .ok_or_else(|| format!("Undefined: {}", var_name))?
+                        .clone();
+
+                    // Restore original directory
+                    ctx.home();
+                    for p in &saved_path {
+                        ctx.enter_subdir(p);
+                    }
+
+                    ctx.push(value)?;
+                    return Ok(ExecuteAction::ok());
+                }
+
+                // Must be symbolic (like 'x' or 'dir.subdir.var')
                 let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("RCL: expected string name, got {}", name_val.type_name())
+                    format!("RCL: expected symbolic name 'x' or list path, got {}", name_val.type_name())
                 })?;
-                let value = ctx
-                    .lookup(&name)
-                    .ok_or_else(|| format!("Undefined: {}", name))?
-                    .clone();
+
+                // Check for path-based access (e.g., 'entities.0.x')
+                let value = if name.contains('.') {
+                    let parts: Vec<&str> = name.split('.').collect();
+                    let (path, var_name) = parts.split_at(parts.len() - 1);
+                    ctx.directory
+                        .lookup_at_path(path, var_name[0])
+                        .ok_or_else(|| format!("Undefined: {}", name))?
+                        .clone()
+                } else {
+                    ctx.lookup(&name)
+                        .ok_or_else(|| format!("Undefined: {}", name))?
+                        .clone()
+                };
                 ctx.push(value)?;
                 Ok(ExecuteAction::ok())
             }
 
             cmd::PURGE => {
                 // (name --)
+                // name can be: string, symbol, or list (path)
                 let name_val = ctx.pop()?;
+
+                // Check if it's a list-based path
+                if let Some(list) = name_val.as_list() {
+                    let elements = extract_path_elements(list).ok_or_else(|| {
+                        "PURGE: invalid path list (expected strings or symbols)".to_string()
+                    })?;
+                    if elements.is_empty() {
+                        return Err("PURGE: empty path".into());
+                    }
+
+                    // Last element is the variable name
+                    let var_name = match elements.last() {
+                        Some(PathElement::Name(n)) => n.clone(),
+                        _ => return Err("PURGE: path must end with a variable name".into()),
+                    };
+
+                    // Navigate to the target directory
+                    let saved_path: Vec<String> = ctx.dir_path().to_vec();
+                    for elem in &elements[..elements.len() - 1] {
+                        match elem {
+                            PathElement::Home => ctx.home(),
+                            PathElement::UpDir => ctx.updir(),
+                            PathElement::Name(dir) => {
+                                if !ctx.enter_subdir(dir) {
+                                    // Restore path and error
+                                    ctx.home();
+                                    for p in &saved_path {
+                                        ctx.enter_subdir(p);
+                                    }
+                                    return Err(format!("Undefined: directory '{}'", dir));
+                                }
+                            }
+                        }
+                    }
+
+                    // Purge the variable
+                    ctx.purge(&var_name)
+                        .ok_or_else(|| format!("Undefined: {}", var_name))?;
+
+                    // Restore original directory
+                    ctx.home();
+                    for p in &saved_path {
+                        ctx.enter_subdir(p);
+                    }
+
+                    return Ok(ExecuteAction::ok());
+                }
+
+                // Must be symbolic (like 'x' or 'dir.subdir.var')
                 let name = extract_name(&name_val).ok_or_else(|| {
-                    format!("PURGE: expected string name, got {}", name_val.type_name())
+                    format!("PURGE: expected symbolic name 'x' or list path, got {}", name_val.type_name())
                 })?;
-                ctx.purge(&name)
-                    .ok_or_else(|| format!("Undefined: {}", name))?;
+
+                // Check for path-based access (e.g., 'entities.0.x')
+                if name.contains('.') {
+                    let parts: Vec<&str> = name.split('.').collect();
+                    let (path, var_name) = parts.split_at(parts.len() - 1);
+                    ctx.directory
+                        .purge_at_path(path, var_name[0])
+                        .ok_or_else(|| format!("Undefined: {}", name))?;
+                } else {
+                    ctx.purge(&name)
+                        .ok_or_else(|| format!("Undefined: {}", name))?;
+                }
                 Ok(ExecuteAction::ok())
             }
 
@@ -380,12 +561,12 @@ impl LibraryExecutor for DirectoryLib {
     }
 }
 
-/// Extract a variable name from a value.
+/// Extract a variable name from a symbolic value.
 ///
-/// Supports both string names (`"x"`) and quoted symbol names (`'x'`).
+/// Only accepts quoted symbol names (`'x'`), not strings.
+/// For path-based access, use `extract_path_string` instead.
 fn extract_name(value: &Value) -> Option<String> {
     match value {
-        Value::String(s) => Some(s.to_string()),
         Value::Symbolic(expr) => {
             // If it's just a variable name (like 'x'), extract it
             if let rpl::symbolic::SymExpr::Var(name) = expr.as_ref() {
@@ -396,6 +577,57 @@ fn extract_name(value: &Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+
+/// Path element from a list-based path.
+#[derive(Debug, Clone, PartialEq)]
+enum PathElement {
+    /// HOME - go to root directory
+    Home,
+    /// UPDIR - go up one level
+    UpDir,
+    /// A named directory or variable
+    Name(String),
+}
+
+/// Extract path elements from a list value.
+///
+/// Supports newRPL-style paths like `{ HOME dir subdir var }`.
+/// Elements can be:
+/// - Strings: `"dirname"`
+/// - Symbolic names: `'dirname` or just `dirname` (if unquoted symbols work)
+/// - Special commands: HOME, UPDIR
+fn extract_path_elements(list: &[Value]) -> Option<Vec<PathElement>> {
+    let mut elements = Vec::with_capacity(list.len());
+
+    for item in list {
+        match item {
+            Value::String(s) => {
+                let s_upper = s.to_uppercase();
+                match s_upper.as_str() {
+                    "HOME" => elements.push(PathElement::Home),
+                    "UPDIR" => elements.push(PathElement::UpDir),
+                    _ => elements.push(PathElement::Name(s.to_string())),
+                }
+            }
+            Value::Symbolic(expr) => {
+                if let rpl::symbolic::SymExpr::Var(name) = expr.as_ref() {
+                    let name_upper = name.to_uppercase();
+                    match name_upper.as_str() {
+                        "HOME" => elements.push(PathElement::Home),
+                        "UPDIR" => elements.push(PathElement::UpDir),
+                        _ => elements.push(PathElement::Name(name.to_string())),
+                    }
+                } else {
+                    return None; // Complex symbolic expression not allowed in path
+                }
+            }
+            _ => return None, // Only strings and symbols allowed
+        }
+    }
+
+    Some(elements)
 }
 
 #[cfg(test)]
@@ -431,5 +663,117 @@ mod tests {
         assert!(names.contains(&"UPDIR"));
         assert!(names.contains(&"HOME"));
         assert!(names.contains(&"PATH"));
+    }
+
+    #[test]
+    fn path_based_sto_rcl() {
+        // Store and recall using symbolic path syntax
+        let result = crate::eval(r#"
+            100 'entities.0.x' STO
+            200 'entities.0.y' STO
+            'entities.0.x' RCL
+            'entities.0.y' RCL
+        "#).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Value::integer(100));
+        assert_eq!(result[1], Value::integer(200));
+    }
+
+    #[test]
+    fn path_based_purge() {
+        let result = crate::eval(r#"
+            42 'a.b.c' STO
+            'a.b.c' RCL
+            'a.b.c' PURGE
+        "#).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Value::integer(42));
+    }
+
+    #[test]
+    fn path_based_nested() {
+        // Store at different depths
+        let result = crate::eval(r#"
+            1 'a.x' STO
+            2 'a.b.x' STO
+            3 'a.b.c.x' STO
+            'a.x' RCL
+            'a.b.x' RCL
+            'a.b.c.x' RCL
+        "#).unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], Value::integer(1));
+        assert_eq!(result[1], Value::integer(2));
+        assert_eq!(result[2], Value::integer(3));
+    }
+
+    #[test]
+    fn list_path_sto_rcl() {
+        // Store and recall using list-based paths (newRPL style)
+        let result = crate::eval(r#"
+            100 { "entities" "0" "x" } STO
+            200 { "entities" "0" "y" } STO
+            { "entities" "0" "x" } RCL
+            { "entities" "0" "y" } RCL
+        "#).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Value::integer(100));
+        assert_eq!(result[1], Value::integer(200));
+    }
+
+    #[test]
+    fn list_path_purge() {
+        let result = crate::eval(r#"
+            42 { "a" "b" "c" } STO
+            { "a" "b" "c" } RCL
+            { "a" "b" "c" } PURGE
+        "#).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Value::integer(42));
+    }
+
+    #[test]
+    fn list_path_with_home() {
+        // HOME in path should navigate to root first
+        // Store at nested path, then use HOME to access root from anywhere
+        let result = crate::eval(r#"
+            100 'root_var' STO
+            200 { "subdir" "nested_var" } STO
+            { "HOME" "root_var" } RCL
+        "#).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Value::integer(100));
+    }
+
+    #[test]
+    fn list_path_with_updir() {
+        // UPDIR in path should navigate up one level
+        // Store in parent, then access via UPDIR from child context
+        let result = crate::eval(r#"
+            100 { "parent" "x" } STO
+            { "parent" "UPDIR" "parent" "x" } RCL
+        "#).unwrap();
+
+        // Note: The path is: parent -> UPDIR (back to root) -> parent -> x
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Value::integer(100));
+    }
+
+    #[test]
+    fn symbolic_and_list_path_interop() {
+        // Both styles should access the same data
+        let result = crate::eval(r#"
+            42 'a.b.c' STO
+            { "a" "b" "c" } RCL
+        "#).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Value::integer(42));
     }
 }

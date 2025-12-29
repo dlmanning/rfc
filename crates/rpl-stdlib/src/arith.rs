@@ -113,8 +113,8 @@ impl LibraryExecutor for ArithLib {
     fn execute(&self, ctx: &mut ExecuteContext) -> ExecuteResult {
         match ctx.cmd {
             cmd::ADD => add_op(ctx),
-            cmd::SUB => binary_numeric_op(ctx, |a, b| a - b, |a, b| a - b),
-            cmd::MUL => binary_numeric_op(ctx, |a, b| a * b, |a, b| a * b),
+            cmd::SUB => sub_op(ctx),
+            cmd::MUL => mul_op(ctx),
             cmd::DIV => div_op(ctx),
             cmd::NEG => unary_numeric_op(ctx, |a| -a, |a| -a),
             cmd::ABS => unary_numeric_op(ctx, |a| a.abs(), |a| a.abs()),
@@ -138,7 +138,7 @@ impl LibraryExecutor for ArithLib {
 
 // Execution helpers
 
-/// Numeric addition, string concatenation, and list operations.
+/// Numeric addition, string concatenation, list operations, and matrix element-wise addition.
 fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
     let b = ctx.pop()?;
     let a = ctx.pop()?;
@@ -151,6 +151,10 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
         // String concatenation
         (Value::String(a), Value::String(b)) => {
             Value::string(format!("{}{}", a.as_ref(), b.as_ref()))
+        }
+        // Matrix element-wise addition
+        (Value::Matrix(a), Value::Matrix(b)) => {
+            matrix_elementwise(&a, &b, "+", |x, y| add_values(x, y))?
         }
         // List concatenation
         (Value::List(a), Value::List(b)) => {
@@ -170,7 +174,55 @@ fn add_op(ctx: &mut ExecuteContext) -> ExecuteResult {
             result.extend(b.iter().cloned());
             Value::list(result)
         }
-        _ => return Err("Type error: expected numbers, strings, or lists".into()),
+        _ => return Err("Type error: expected numbers, strings, lists, or matrices".into()),
+    };
+    ctx.push(result)?;
+    Ok(ExecuteAction::ok())
+}
+
+/// Numeric subtraction and matrix element-wise subtraction.
+fn sub_op(ctx: &mut ExecuteContext) -> ExecuteResult {
+    let b = ctx.pop()?;
+    let a = ctx.pop()?;
+    let result = match (a, b) {
+        // Numeric subtraction
+        (Value::Integer(a), Value::Integer(b)) => Value::Integer(a - b),
+        (Value::Real(a), Value::Real(b)) => Value::Real(a - b),
+        (Value::Integer(a), Value::Real(b)) => Value::Real(a as f64 - b),
+        (Value::Real(a), Value::Integer(b)) => Value::Real(a - b as f64),
+        // Matrix element-wise subtraction
+        (Value::Matrix(a), Value::Matrix(b)) => {
+            matrix_elementwise(&a, &b, "-", |x, y| sub_values(x, y))?
+        }
+        _ => return Err("Type error: expected numbers or matrices".into()),
+    };
+    ctx.push(result)?;
+    Ok(ExecuteAction::ok())
+}
+
+/// Numeric multiplication, matrix multiplication, and matrix-scalar multiplication.
+fn mul_op(ctx: &mut ExecuteContext) -> ExecuteResult {
+    let b = ctx.pop()?;
+    let a = ctx.pop()?;
+    let result = match (&a, &b) {
+        // Numeric multiplication
+        (Value::Integer(a), Value::Integer(b)) => Value::Integer(a * b),
+        (Value::Real(a), Value::Real(b)) => Value::Real(a * b),
+        (Value::Integer(a), Value::Real(b)) => Value::Real(*a as f64 * b),
+        (Value::Real(a), Value::Integer(b)) => Value::Real(a * *b as f64),
+        // Matrix * Matrix = matrix multiplication
+        (Value::Matrix(a), Value::Matrix(b)) => {
+            matrix_multiply(a, b)?
+        }
+        // Matrix * scalar
+        (Value::Matrix(m), scalar) if scalar.is_numeric() => {
+            matrix_scale(m, scalar)?
+        }
+        // scalar * Matrix
+        (scalar, Value::Matrix(m)) if scalar.is_numeric() => {
+            matrix_scale(m, scalar)?
+        }
+        _ => return Err("Type error: expected numbers or matrices".into()),
     };
     ctx.push(result)?;
     Ok(ExecuteAction::ok())
@@ -299,7 +351,9 @@ where
         (Value::Real(a), Value::Integer(b)) => {
             a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
         }
-        _ => return Err("Type error: expected numbers".into()),
+        // String comparison
+        (Value::String(a), Value::String(b)) => a.as_ref().cmp(b.as_ref()),
+        _ => return Err("Type error: expected numbers or strings".into()),
     };
     let result = if check(ord) { 1 } else { 0 };
     ctx.push(Value::Integer(result))?;
@@ -333,6 +387,148 @@ fn sign_op(ctx: &mut ExecuteContext) -> ExecuteResult {
     Ok(ExecuteAction::ok())
 }
 
+// Matrix helper functions
+
+use std::sync::Arc;
+use rpl::value::MatrixData;
+
+/// Add two values (for matrix element-wise operations).
+fn add_values(a: &Value, b: &Value) -> Result<Value, String> {
+    match (a, b) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a + b)),
+        (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a + b)),
+        (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 + b)),
+        (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a + *b as f64)),
+        _ => Err(format!("cannot add {} and {}", a.type_name(), b.type_name())),
+    }
+}
+
+/// Subtract two values (for matrix element-wise operations).
+fn sub_values(a: &Value, b: &Value) -> Result<Value, String> {
+    match (a, b) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a - b)),
+        (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a - b)),
+        (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 - b)),
+        (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a - *b as f64)),
+        _ => Err(format!("cannot subtract {} and {}", a.type_name(), b.type_name())),
+    }
+}
+
+/// Multiply two values (for matrix element-wise operations).
+fn mul_values(a: &Value, b: &Value) -> Result<Value, String> {
+    match (a, b) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a * b)),
+        (Value::Real(a), Value::Real(b)) => Ok(Value::Real(a * b)),
+        (Value::Integer(a), Value::Real(b)) => Ok(Value::Real(*a as f64 * b)),
+        (Value::Real(a), Value::Integer(b)) => Ok(Value::Real(a * *b as f64)),
+        _ => Err(format!("cannot multiply {} and {}", a.type_name(), b.type_name())),
+    }
+}
+
+/// Element-wise operation on two matrices.
+fn matrix_elementwise<F>(
+    a: &MatrixData,
+    b: &MatrixData,
+    op_name: &str,
+    op: F,
+) -> Result<Value, String>
+where
+    F: Fn(&Value, &Value) -> Result<Value, String>,
+{
+    // Check dimensions match
+    if a.rows != b.rows || a.cols != b.cols {
+        return Err(format!(
+            "{}: dimension mismatch ({}x{} vs {}x{})",
+            op_name, a.rows, a.cols, b.rows, b.cols
+        ));
+    }
+
+    let mut result = Vec::with_capacity(a.data.len());
+    for (x, y) in a.data.iter().zip(b.data.iter()) {
+        result.push(op(x, y)?);
+    }
+
+    Ok(Value::Matrix(Arc::new(MatrixData {
+        rows: a.rows,
+        cols: a.cols,
+        data: result.into(),
+    })))
+}
+
+/// Matrix multiplication (not element-wise).
+fn matrix_multiply(a: &MatrixData, b: &MatrixData) -> Result<Value, String> {
+    // For vectors, treat as row/column vectors
+    let (a_rows, a_cols) = if a.is_vector() {
+        (1, a.cols as usize)
+    } else {
+        (a.rows as usize, a.cols as usize)
+    };
+
+    let (b_rows, b_cols) = if b.is_vector() {
+        (b.cols as usize, 1)
+    } else {
+        (b.rows as usize, b.cols as usize)
+    };
+
+    // Check inner dimensions match
+    if a_cols != b_rows {
+        return Err(format!(
+            "*: inner dimensions mismatch ({}x{} * {}x{})",
+            a_rows, a_cols, b_rows, b_cols
+        ));
+    }
+
+    // Result is a_rows x b_cols
+    let mut result = Vec::with_capacity(a_rows * b_cols);
+
+    for i in 0..a_rows {
+        for j in 0..b_cols {
+            let mut sum = Value::Integer(0);
+            for k in 0..a_cols {
+                let a_val = if a.is_vector() {
+                    &a.data[k]
+                } else {
+                    &a.data[i * a_cols + k]
+                };
+                let b_val = if b.is_vector() {
+                    &b.data[k]
+                } else {
+                    &b.data[k * b_cols + j]
+                };
+                let product = mul_values(a_val, b_val)?;
+                sum = add_values(&sum, &product)?;
+            }
+            result.push(sum);
+        }
+    }
+
+    // Determine output shape
+    if a_rows == 1 && b_cols == 1 {
+        // Scalar result (dot product)
+        Ok(result.into_iter().next().unwrap())
+    } else if a_rows == 1 || b_cols == 1 {
+        // Vector result
+        Ok(Value::vector(result))
+    } else {
+        // Matrix result
+        Ok(Value::matrix(a_rows as u16, b_cols as u16, result))
+    }
+}
+
+/// Scale matrix by scalar.
+fn matrix_scale(m: &MatrixData, scalar: &Value) -> Result<Value, String> {
+    let mut result = Vec::with_capacity(m.data.len());
+    for x in m.data.iter() {
+        result.push(mul_values(x, scalar)?);
+    }
+
+    Ok(Value::Matrix(Arc::new(MatrixData {
+        rows: m.rows,
+        cols: m.cols,
+        data: result.into(),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,7 +551,7 @@ mod tests {
     #[test]
     fn division_unknown_type_with_real() {
         // Variable recall produces unknown type at compile time
-        let result = crate::eval("263 \"x\" STO x 500. /");
+        let result = crate::eval("263 'x' STO x 500. /");
         assert_eq!(result, Ok(vec![Value::Real(0.526)]));
     }
 

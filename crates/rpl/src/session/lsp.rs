@@ -289,7 +289,10 @@ pub fn hover(
     None
 }
 
-fn make_definition_hover(def: &Definition) -> HoverResult {
+/// Create hover content for a definition.
+///
+/// This is public so IDE implementations can use it with project symbol tables.
+pub fn make_definition_hover(def: &Definition) -> HoverResult {
     let kind_str = match def.kind {
         DefinitionKind::Global => {
             if def.arity.is_some() || def.signature.is_some() {

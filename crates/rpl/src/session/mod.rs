@@ -76,11 +76,24 @@ impl Default for SessionConfig {
 #[derive(Debug)]
 pub enum EvalError {
     /// Parsing failed.
-    Parse(String),
+    Parse(crate::parse::ParseError),
     /// Lowering failed.
-    Lower(String),
+    Lower(crate::lower::LowerError),
     /// Runtime error.
-    Runtime(String),
+    Runtime(VmError),
+}
+
+impl EvalError {
+    /// Convert to a `Diagnostic` for unified error reporting.
+    ///
+    /// The `fallback_span` is used for errors that don't have location info.
+    pub fn to_diagnostic(&self, fallback_span: crate::core::Span) -> crate::error::Diagnostic {
+        match self {
+            EvalError::Parse(e) => e.to_diagnostic(),
+            EvalError::Lower(e) => e.to_diagnostic(fallback_span),
+            EvalError::Runtime(e) => e.to_diagnostic(fallback_span),
+        }
+    }
 }
 
 impl std::fmt::Display for EvalError {
@@ -94,6 +107,24 @@ impl std::fmt::Display for EvalError {
 }
 
 impl std::error::Error for EvalError {}
+
+impl From<crate::parse::ParseError> for EvalError {
+    fn from(e: crate::parse::ParseError) -> Self {
+        EvalError::Parse(e)
+    }
+}
+
+impl From<crate::lower::LowerError> for EvalError {
+    fn from(e: crate::lower::LowerError) -> Self {
+        EvalError::Lower(e)
+    }
+}
+
+impl From<VmError> for EvalError {
+    fn from(e: VmError) -> Self {
+        EvalError::Runtime(e)
+    }
+}
 
 // ============================================================================
 // Runtime - for executing pre-compiled bytecode
@@ -578,8 +609,7 @@ impl Session {
 
         // Parse
         let (interfaces, interner) = self.analysis.parsing_context();
-        let nodes = parse(source, interfaces, interner)
-            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
+        let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result for type-informed lowering
         let analysis = self.analysis.analysis_cache.get(&id)
@@ -587,12 +617,10 @@ impl Session {
             .result();
 
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
-            .map_err(|e| EvalError::Lower(e.message))?;
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?;
 
         // Execute
-        self.runtime.execute(&program)
-            .map_err(|e| EvalError::Runtime(e.to_string()))?;
+        self.runtime.execute(&program)?;
 
         // Collect results
         Ok(self.runtime.stack_contents().to_vec())
@@ -608,8 +636,7 @@ impl Session {
 
         // Parse
         let (interfaces, interner) = self.analysis.parsing_context();
-        let nodes = parse(source, interfaces, interner)
-            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
+        let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result for type-informed lowering
         let analysis = self.analysis.analysis_cache.get(&id)
@@ -617,12 +644,10 @@ impl Session {
             .result();
 
         // Lower to bytecode
-        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
-            .map_err(|e| EvalError::Lower(e.message))?;
+        let program = lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?;
 
         // Execute without reset
-        self.runtime.execute_continue(&program)
-            .map_err(|e| EvalError::Runtime(e.to_string()))?;
+        self.runtime.execute_continue(&program)?;
 
         Ok(())
     }
@@ -641,8 +666,7 @@ impl Session {
 
         // Now parse (needs mutable borrow of interner)
         let (interfaces, interner) = self.analysis.parsing_context();
-        let nodes = parse(source, interfaces, interner)
-            .map_err(|e| EvalError::Parse(format!("{:?}", e)))?;
+        let nodes = parse(source, interfaces, interner)?;
 
         // Get analysis result (now as immutable borrow alongside other immutable borrows)
         let analysis = self.analysis.analysis_cache.get(&id)
@@ -650,8 +674,7 @@ impl Session {
             .result();
 
         // Lower with analysis results for type-informed code generation
-        lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)
-            .map_err(|e| EvalError::Lower(e.message))
+        Ok(lower(&nodes, self.analysis.interfaces(), &self.lowerers, self.analysis.interner(), analysis)?)
     }
 
     // === Registry Access ===
@@ -800,7 +823,7 @@ impl Session {
         debug: &mut DebugState,
     ) -> Result<ExecuteOutcome, EvalError> {
         self.runtime.execute_debug(program, debug)
-            .map_err(|e| EvalError::Runtime(e.to_string()))
+            .map_err(EvalError::from)
     }
 
     // === Component Access ===

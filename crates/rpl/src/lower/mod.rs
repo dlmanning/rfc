@@ -159,6 +159,17 @@ impl LowerError {
             span: Some(span),
         }
     }
+
+    /// Convert to a `Diagnostic` for unified error reporting.
+    ///
+    /// The `fallback_span` is used if this error doesn't have a span.
+    pub fn to_diagnostic(&self, fallback_span: Span) -> crate::error::Diagnostic {
+        use crate::error::{Diagnostic, ErrorCode};
+
+        Diagnostic::error(ErrorCode::E200, self.span.unwrap_or(fallback_span))
+            .message(&self.message)
+            .build()
+    }
 }
 
 impl std::fmt::Display for LowerError {

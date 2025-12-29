@@ -29,6 +29,7 @@ pub fn format_value(value: &Value) -> String {
         Value::Symbolic(expr) => format!("'{}", expr),
         Value::Library(lib) => format!("<Library {}>", lib.id),
         Value::Bytes(data) => format!("<Bytes {} bytes>", data.len()),
+        Value::Matrix(matrix) => format!("<Matrix {}x{}>", matrix.rows, matrix.cols),
     }
 }
 
@@ -42,6 +43,7 @@ pub fn value_style(value: &Value) -> Style {
         Value::Symbolic(_) => Style::default().fg(Color::Cyan),
         Value::Library(_) => Style::default().fg(Color::Red),
         Value::Bytes(_) => Style::default().fg(Color::Red),
+        Value::Matrix(_) => Style::default().fg(Color::Blue),
     }
 }
 

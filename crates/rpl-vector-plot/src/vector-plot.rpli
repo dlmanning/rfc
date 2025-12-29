@@ -1,4 +1,4 @@
-library VectorPlot 88
+library VectorPlot 90
 
 -- Construction
 0:               -> NEWPLOT   -> Blob

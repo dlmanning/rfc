@@ -791,5 +791,8 @@ fn format_value(value: &Value) -> String {
         Value::Bytes(bytes) => {
             format!("<bytes len={}>", bytes.len())
         }
+        Value::Matrix(matrix) => {
+            format!("<matrix {}x{}>", matrix.rows, matrix.cols)
+        }
     }
 }

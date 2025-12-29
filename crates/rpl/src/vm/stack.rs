@@ -28,6 +28,12 @@ impl std::fmt::Display for StackError {
 
 impl std::error::Error for StackError {}
 
+impl From<StackError> for String {
+    fn from(e: StackError) -> Self {
+        e.to_string()
+    }
+}
+
 /// The calculator data stack.
 #[derive(Clone, Debug, Default)]
 pub struct Stack {

@@ -480,5 +480,9 @@ fn format_for_edit(value: &Value) -> String {
             // Try to decompile as plot bytecode
             decompile_plot(data)
         }
+        Value::Matrix(matrix) => {
+            // Format matrix for editing
+            format!("<Matrix {}x{}>", matrix.rows, matrix.cols)
+        }
     }
 }

@@ -35,6 +35,7 @@ pub mod infix;
 use std::collections::HashMap;
 
 use crate::core::{Interner, Pos, Span, Symbol};
+use crate::symbolic::SymExpr;
 
 use crate::{ir::Node, libs::ClaimContext, registry::InterfaceRegistry};
 
@@ -127,6 +128,21 @@ impl ParseError {
             expected: Some(expected),
             found: Some(found),
         }
+    }
+
+    /// Convert to a `Diagnostic` for unified error reporting.
+    pub fn to_diagnostic(&self) -> crate::error::Diagnostic {
+        use crate::error::{Diagnostic, ErrorCode};
+
+        let mut builder = Diagnostic::error(ErrorCode::E100, self.span)
+            .message(&self.message);
+
+        // Add expected/found as a label if available
+        if let (Some(expected), Some(found)) = (&self.expected, &self.found) {
+            builder = builder.label(format!("expected {}, found {}", expected, found));
+        }
+
+        builder.build()
     }
 }
 
@@ -718,7 +734,7 @@ fn parse_list(ctx: &mut ParseContext, open_span: Span) -> Result<Node, ParseErro
 /// Parse a symbolic expression: ' expression '
 fn parse_symbolic(ctx: &mut ParseContext, open_span: Span) -> Result<Node, ParseError> {
     // Collect tokens until closing '
-    let mut expr_text = String::new();
+    let mut tokens: Vec<String> = Vec::new();
 
     loop {
         let token = ctx.peek().ok_or_else(|| ParseError {
@@ -733,24 +749,34 @@ fn parse_symbolic(ctx: &mut ParseContext, open_span: Span) -> Result<Node, Parse
             let close_span = token.span;
             ctx.advance(); // consume closing '
 
-            // Parse the collected expression with the infix parser
+            // Create span from open to close
+            let full_span = Span::new(open_span.start(), close_span.end());
+
+            // Check if this is a simple path name (identifiers, numbers, and dots only)
+            // Examples: 'x', 'entities', 'entities.0.x'
+            let is_simple_path = tokens.iter().all(|t| {
+                t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            });
+
+            if is_simple_path {
+                // Join without spaces to form path name
+                let name: String = tokens.join("");
+                return Ok(Node::symbolic(SymExpr::var(name), full_span));
+            }
+
+            // Otherwise, parse as infix expression
+            let expr_text = tokens.join(" ");
             let sym_expr = infix::InfixParser::parse_str(&expr_text).map_err(|msg| ParseError {
                 message: format!("invalid symbolic expression: {}", msg),
-                span: Span::new(open_span.start(), close_span.end()),
+                span: full_span,
                 expected: None,
                 found: None,
             })?;
 
-            // Create span from open to close
-            let full_span = Span::new(open_span.start(), close_span.end());
             return Ok(Node::symbolic(sym_expr, full_span));
         }
 
-        // Add token to expression (with spacing)
-        if !expr_text.is_empty() {
-            expr_text.push(' ');
-        }
-        expr_text.push_str(&token.text);
+        tokens.push(token.text.clone());
         ctx.advance();
     }
 }

@@ -692,10 +692,10 @@ mod tests {
     fn eval_inside_start_loop_preserves_control_stack() {
         let result = crate::eval(
             r#"
-            << 1 + >> "inc" STO
-            0 "sum" STO
+            << 1 + >> 'inc' STO
+            0 'sum' STO
             1 3 START
-                sum inc "sum" STO
+                sum inc 'sum' STO
             NEXT
             sum
             "#,
@@ -708,11 +708,11 @@ mod tests {
     fn eval_with_conditional_inside_loop() {
         let result = crate::eval(
             r#"
-            << 2 MOD 0 == >> "is_even" STO
-            0 "count" STO
+            << 2 MOD 0 == >> 'is_even' STO
+            0 'count' STO
             1 5 FOR i
                 i is_even
-                IF THEN count 1 + "count" STO END
+                IF THEN count 1 + 'count' STO END
             NEXT
             count
             "#,

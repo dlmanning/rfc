@@ -27,7 +27,7 @@ pub fn interface() -> &'static InterfaceSpec {
 }
 
 /// Plot library ID.
-pub const PLOT_LIB_ID: LibId = 88;
+pub const PLOT_LIB_ID: LibId = 91;
 
 // ============================================================================
 // Helper functions

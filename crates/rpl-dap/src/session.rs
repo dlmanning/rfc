@@ -372,7 +372,7 @@ mod tests {
         gcd
     END
 >> >>
-"gcd" STO
+'gcd' STO
 48 18 gcd"#;
 
         let mut session = create_session(source);
@@ -442,7 +442,7 @@ mod tests {
         gcd
     END
 >> >>
-\"gcd\" STO
+'gcd' STO
 
 @ Test: gcd(48, 18) = 6
 48 18 gcd
@@ -538,7 +538,7 @@ mod tests {
         gcd
     END
 >> >>
-\"gcd\" STO
+'gcd' STO
 
 @ Test: gcd(48, 18) = 6
 48 18 gcd
@@ -579,7 +579,7 @@ mod tests {
         1
     END
 >> >>
-\"is_prime\" STO
+'is_prime' STO
 17 is_prime
 ";
 
@@ -663,7 +663,7 @@ mod tests {
         gcd
     END
 >> >>
-\"gcd\" STO
+'gcd' STO
 48 18 gcd
 ";
 
@@ -726,7 +726,7 @@ mod tests {
         END
     END
 >> >>
-"is_prime" STO
+'is_prime' STO
 
 @ Test: 18 is NOT prime (divisible by 2)
 18 is_prime

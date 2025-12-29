@@ -202,18 +202,43 @@ impl Directory {
     // === Variable operations (on current directory) ===
 
     /// Store a value by name in the current directory.
+    ///
+    /// If name contains '/', it is treated as a path and intermediate
+    /// directories are created as needed.
     pub fn store(&mut self, name: String, value: Value) {
-        self.current_mut().store(name, value);
+        if name.contains('/') {
+            let parts: Vec<&str> = name.split('/').collect();
+            let (path, var_name) = parts.split_at(parts.len() - 1);
+            self.store_at_path(path, var_name[0], value);
+        } else {
+            self.current_mut().store(name, value);
+        }
     }
 
     /// Look up a value by name in the current directory.
+    ///
+    /// If name contains '/', it is treated as a path.
     pub fn lookup(&self, name: &str) -> Option<&Value> {
-        self.current().lookup(name)
+        if name.contains('/') {
+            let parts: Vec<&str> = name.split('/').collect();
+            let (path, var_name) = parts.split_at(parts.len() - 1);
+            self.lookup_at_path(path, var_name[0])
+        } else {
+            self.current().lookup(name)
+        }
     }
 
     /// Remove a variable by name from the current directory.
+    ///
+    /// If name contains '/', it is treated as a path.
     pub fn purge(&mut self, name: &str) -> Option<Value> {
-        self.current_mut().purge(name)
+        if name.contains('/') {
+            let parts: Vec<&str> = name.split('/').collect();
+            let (path, var_name) = parts.split_at(parts.len() - 1);
+            self.purge_at_path(path, var_name[0])
+        } else {
+            self.current_mut().purge(name)
+        }
     }
 
     /// Check if a variable exists in the current directory.

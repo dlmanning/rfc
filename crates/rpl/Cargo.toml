@@ -10,3 +10,4 @@ workspace = true
 rpl-vm = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
+codespan-reporting = { workspace = true }

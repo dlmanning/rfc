@@ -63,14 +63,29 @@ impl std::fmt::Display for VmError {
 }
 
 impl std::error::Error for VmError {}
+
 impl From<StackError> for VmError {
     fn from(e: StackError) -> Self {
         Self::Stack(e)
     }
 }
+
 impl From<locals::LocalsError> for VmError {
     fn from(e: locals::LocalsError) -> Self {
         Self::Locals(e)
+    }
+}
+
+impl VmError {
+    /// Convert to a `Diagnostic` for unified error reporting.
+    ///
+    /// The `span` should be obtained from `CompiledProgram::span_for_pc()` if available.
+    pub fn to_diagnostic(&self, span: crate::core::Span) -> crate::error::Diagnostic {
+        use crate::error::{Diagnostic, ErrorCode};
+
+        Diagnostic::error(ErrorCode::E300, span)
+            .message(self.to_string())
+            .build()
     }
 }
 
@@ -631,8 +646,13 @@ impl Vm {
             }
             SymbolicConst => {
                 let s = self.read_string_from_rodata(code, rodata)?;
-                let expr = crate::parse::infix::InfixParser::parse_str(s)
-                    .map_err(|e| VmError::TypeError(format!("invalid symbolic: {}", e)))?;
+                // Check if this is a simple variable name (possibly with dots for paths)
+                let expr = if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+                    crate::symbolic::SymExpr::var(s)
+                } else {
+                    crate::parse::infix::InfixParser::parse_str(s)
+                        .map_err(|e| VmError::TypeError(format!("invalid symbolic: {}", e)))?
+                };
                 self.stack.push(Value::symbolic(expr))?;
             }
             BlobConst => {

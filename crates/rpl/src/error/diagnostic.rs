@@ -1,5 +1,8 @@
+use codespan_reporting::diagnostic::{Diagnostic as CsDiag, Label};
+
 use super::code::ErrorCode;
 use crate::core::Span;
+use crate::source::SourceId;
 
 /// Severity level of a diagnostic.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -98,6 +101,43 @@ impl Diagnostic {
 
     pub fn notes(&self) -> &[String] {
         &self.notes
+    }
+
+    /// Convert to a codespan-reporting diagnostic.
+    ///
+    /// The `file_id` should be the `SourceId` of the file containing this diagnostic.
+    pub fn to_codespan(&self, file_id: SourceId) -> CsDiag<SourceId> {
+        let severity = match self.severity {
+            Severity::Error => codespan_reporting::diagnostic::Severity::Error,
+            Severity::Warning => codespan_reporting::diagnostic::Severity::Warning,
+            Severity::Note => codespan_reporting::diagnostic::Severity::Note,
+        };
+
+        let mut diag = CsDiag::new(severity)
+            .with_code(self.code.as_str())
+            .with_message(&self.message);
+
+        // Primary label
+        let mut labels = Vec::new();
+        let mut primary = Label::primary(file_id, self.span.range());
+        if let Some(ref label) = self.label {
+            primary = primary.with_message(label);
+        }
+        labels.push(primary);
+
+        // Secondary labels
+        for (span, msg) in &self.secondary {
+            labels.push(Label::secondary(file_id, span.range()).with_message(msg));
+        }
+
+        diag = diag.with_labels(labels);
+
+        // Notes
+        if !self.notes.is_empty() {
+            diag = diag.with_notes(self.notes.clone());
+        }
+
+        diag
     }
 }
 

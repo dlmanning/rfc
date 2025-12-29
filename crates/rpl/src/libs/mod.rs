@@ -56,7 +56,7 @@ pub mod arith_cmd {
 use crate::lower::{LowerContext, LowerError};
 use crate::value::Value;
 use crate::vm::directory::Directory;
-use crate::vm::stack::Stack;
+use crate::vm::stack::{Stack, StackError};
 use crate::vm::RplException;
 use crate::core::{Span, TypeId};
 use smallvec::{SmallVec, smallvec};
@@ -397,18 +397,18 @@ impl<'a> ExecuteContext<'a> {
     }
 
     /// Pop a value from the stack.
-    pub fn pop(&mut self) -> Result<Value, String> {
-        self.stack.pop().map_err(|e| e.to_string())
+    pub fn pop(&mut self) -> Result<Value, StackError> {
+        self.stack.pop()
     }
 
     /// Push a value onto the stack.
-    pub fn push(&mut self, value: Value) -> Result<(), String> {
-        self.stack.push(value).map_err(|e| e.to_string())
+    pub fn push(&mut self, value: Value) -> Result<(), StackError> {
+        self.stack.push(value)
     }
 
     /// Peek at a value on the stack (0 = top).
-    pub fn peek(&self, index: usize) -> Result<&Value, String> {
-        self.stack.peek(index).map_err(|e| e.to_string())
+    pub fn peek(&self, index: usize) -> Result<&Value, StackError> {
+        self.stack.peek(index)
     }
 
     /// Get the stack depth.

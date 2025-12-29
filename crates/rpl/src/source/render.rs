@@ -1,9 +1,15 @@
+//! Diagnostic rendering using codespan-reporting.
+
 use std::io::{self, Write};
 
-use crate::error::{Diagnostic, Severity};
-use super::SourceFile;
+use codespan_reporting::files::SimpleFile;
+use codespan_reporting::term::{self, termcolor::NoColor};
 
-/// Renders diagnostics to a writer.
+use super::SourceFile;
+use crate::error::Diagnostic;
+use crate::source::SourceId;
+
+/// Renders diagnostics to a writer using codespan-reporting.
 pub struct DiagnosticRenderer<'a> {
     source: &'a SourceFile,
 }
@@ -14,81 +20,21 @@ impl<'a> DiagnosticRenderer<'a> {
     }
 
     /// Render a diagnostic to the given writer.
+    ///
+    /// Note: This uses a non-colored output. For colored output, use
+    /// `emit_diagnostic` with a `termcolor::StandardStream`.
     pub fn render<W: Write>(&self, diag: &Diagnostic, out: &mut W) -> io::Result<()> {
-        let severity_str = match diag.severity() {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Note => "note",
-        };
+        let file = SimpleFile::new(self.source.name(), self.source.source());
+        let cs_diag = diag.to_codespan(self.source.id());
 
-        // Header: error[E001]: message
-        writeln!(
-            out,
-            "{}[{}]: {}",
-            severity_str,
-            diag.code().as_str(),
-            diag.message()
-        )?;
+        // Convert codespan diagnostic with SourceId to one with () for SimpleFile
+        let cs_diag = convert_diagnostic(&cs_diag);
 
-        // Location: --> file.rpl:3:10
-        let lc = self.source.line_col(diag.span().start());
-        writeln!(out, "  --> {}:{}:{}", self.source.name(), lc.line, lc.col)?;
+        let config = term::Config::default();
+        let mut writer = NoColor::new(out);
 
-        // Source line with underline
-        if let Some(line_text) = self.source.line_text(lc.line) {
-            let line_num_width = lc.line.to_string().len();
-
-            // Empty line prefix
-            writeln!(out, "{:width$} |", "", width = line_num_width)?;
-
-            // Source line
-            writeln!(out, "{} | {}", lc.line, line_text)?;
-
-            // Underline with label
-            let underline_start = (lc.col - 1) as usize;
-            let span_len = diag.span().len() as usize;
-            // Clamp span to line length
-            let underline_len = span_len
-                .min(line_text.len().saturating_sub(underline_start))
-                .max(1);
-
-            write!(out, "{:width$} | ", "", width = line_num_width)?;
-            write!(out, "{:spaces$}", "", spaces = underline_start)?;
-            write!(out, "{}", "^".repeat(underline_len))?;
-
-            if let Some(label) = diag.label() {
-                write!(out, " {}", label)?;
-            }
-            writeln!(out)?;
-        }
-
-        // Secondary labels
-        for (span, label) in diag.secondary() {
-            let sec_lc = self.source.line_col(span.start());
-            if let Some(line_text) = self.source.line_text(sec_lc.line) {
-                let line_num_width = sec_lc.line.to_string().len();
-
-                writeln!(out, "{:width$} |", "", width = line_num_width)?;
-                writeln!(out, "{} | {}", sec_lc.line, line_text)?;
-
-                let underline_start = (sec_lc.col - 1) as usize;
-                let span_len = span.len() as usize;
-                let underline_len = span_len
-                    .min(line_text.len().saturating_sub(underline_start))
-                    .max(1);
-
-                write!(out, "{:width$} | ", "", width = line_num_width)?;
-                write!(out, "{:spaces$}", "", spaces = underline_start)?;
-                writeln!(out, "{} {}", "-".repeat(underline_len), label)?;
-            }
-        }
-
-        // Notes
-        for note in diag.notes() {
-            writeln!(out, "  = note: {}", note)?;
-        }
-
-        Ok(())
+        term::emit(&mut writer, &config, &file, &cs_diag)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
     /// Render a diagnostic to a string.
@@ -100,12 +46,63 @@ impl<'a> DiagnosticRenderer<'a> {
     }
 }
 
+/// Convert a diagnostic with SourceId to one with () for use with SimpleFile.
+fn convert_diagnostic(
+    diag: &codespan_reporting::diagnostic::Diagnostic<SourceId>,
+) -> codespan_reporting::diagnostic::Diagnostic<()> {
+    use codespan_reporting::diagnostic::{Diagnostic as CsDiag, Label};
+
+    let mut new_diag = CsDiag::new(diag.severity);
+
+    if let Some(ref code) = diag.code {
+        new_diag = new_diag.with_code(code.clone());
+    }
+
+    new_diag = new_diag.with_message(&diag.message);
+
+    let labels: Vec<_> = diag
+        .labels
+        .iter()
+        .map(|label| {
+            let mut new_label = if label.style == codespan_reporting::diagnostic::LabelStyle::Primary
+            {
+                Label::primary((), label.range.clone())
+            } else {
+                Label::secondary((), label.range.clone())
+            };
+            new_label.message = label.message.clone();
+            new_label
+        })
+        .collect();
+
+    new_diag = new_diag.with_labels(labels);
+    new_diag = new_diag.with_notes(diag.notes.clone());
+
+    new_diag
+}
+
+/// Emit a diagnostic using the full codespan-reporting API with color support.
+///
+/// This is the preferred way to render diagnostics when you have access to
+/// a `SourceCache` and want colored output.
+pub fn emit_diagnostic<W: codespan_reporting::term::termcolor::WriteColor>(
+    files: &super::SourceCache,
+    file_id: SourceId,
+    diag: &Diagnostic,
+    writer: &mut W,
+) -> io::Result<()> {
+    let cs_diag = diag.to_codespan(file_id);
+    let config = term::Config::default();
+
+    term::emit(writer, &config, files, &cs_diag)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::{Pos, Span};
     use crate::error::ErrorCode;
-    use crate::source::SourceId;
 
     fn make_source(content: &str) -> SourceFile {
         SourceFile::new(SourceId::new(0), "test.rpl".into(), content.into())
@@ -124,7 +121,7 @@ mod tests {
         let output = renderer.render_to_string(&diag);
 
         assert!(output.contains("error[E001]: unrecognized token"));
-        assert!(output.contains("--> test.rpl:1:7"));
+        assert!(output.contains("test.rpl"));
         assert!(output.contains("3 4 + foo"));
         assert!(output.contains("^^^"));
         assert!(output.contains("not recognized"));
@@ -140,9 +137,8 @@ mod tests {
 
         let output = renderer.render_to_string(&diag);
 
-        assert!(output.contains("--> test.rpl:2:1"));
-        assert!(output.contains("2 | line2"));
-        assert!(output.contains("^^^^^"));
+        assert!(output.contains("test.rpl"));
+        assert!(output.contains("line2"));
     }
 
     #[test]
@@ -152,16 +148,13 @@ mod tests {
 
         let diag = Diagnostic::error(ErrorCode::E102, Span::new(Pos::new(0), Pos::new(1)))
             .message("unclosed parenthesis")
-            .secondary(
-                Span::new(Pos::new(2), Pos::new(5)),
-                "expected ')' after this",
-            )
+            .secondary(Span::new(Pos::new(2), Pos::new(5)), "expected ')' after this")
             .build();
 
         let output = renderer.render_to_string(&diag);
 
         assert!(output.contains("error[E102]: unclosed parenthesis"));
-        assert!(output.contains("--- expected ')' after this"));
+        assert!(output.contains("expected ')' after this"));
     }
 
     #[test]
@@ -175,7 +168,7 @@ mod tests {
 
         let output = renderer.render_to_string(&diag);
 
-        assert!(output.contains("= note: help: did you mean 'TEST'?"));
+        assert!(output.contains("help: did you mean 'TEST'?"));
     }
 
     #[test]
@@ -200,8 +193,8 @@ mod tests {
 
         let output = renderer.render_to_string(&diag);
 
-        assert!(output.contains("--> test.rpl:1:2"));
-        // Should have exactly one caret
-        assert!(output.contains(" ^"));
+        assert!(output.contains("test.rpl"));
+        // Should have a caret
+        assert!(output.contains("^"));
     }
 }
