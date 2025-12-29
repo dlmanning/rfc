@@ -3,3 +3,6 @@
 .vscode/
 
 node_modules
+
+# Compiled WASM binaries
+crates/rpl-ide/vscode/rpl_ide.wasm
