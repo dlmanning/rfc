@@ -10,7 +10,7 @@ This crate provides everything needed to parse, compile, and execute RPL program
 - **Compilation**: Two-pass lowering to stack-based bytecode
 - **Execution**: Virtual machine with pluggable command libraries
 - **Analysis**: Symbols, scopes, diagnostics, and incremental analysis for IDE support
-- **Standard Library**: 19 built-in libraries covering arithmetic, control flow, strings, lists, and more
+- **Standard Library**: 16 built-in libraries covering arithmetic, control flow, strings, lists, matrices, and more
 
 ## Architecture
 
@@ -102,6 +102,8 @@ let result = eval(r#"
 | Transcendentals | `SIN`, `COS`, `TAN`, `EXP`, `LN`, `LOG`, `SQRT`, `PI` |
 | Symbolic | `'expr'` syntax, `→NUM`, `SYMEVAL` |
 | Programs | `<< >>` / `« »` syntax, `EVAL` |
+| Matrix | `→VEC`, `VEC→`, `→MAT`, `MAT→`, `DOT`, `CROSS`, `DET`, `TRN` |
+| Statistics | `RAND`, `RDZ`, `MEAN`, `SDEV`, `VAR` |
 | Comments | `@`, `@@`, `@@@...@@@` |
 
 ## Key Design Decisions

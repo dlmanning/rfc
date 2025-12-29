@@ -9,7 +9,9 @@ A modern, open-source implementation of the RPL programming language in Rust. RP
 - **Interactive Calculator** - Full-featured terminal UI with `rpl-calc`
 - **Language Server Protocol (LSP)** - Editor integration with completions, hover, go-to-definition, and semantic highlighting
 - **Debug Adapter Protocol (DAP)** - Full debugging support with breakpoints, stepping, and variable inspection
-- **19 Standard Libraries** - Arithmetic, transcendentals, strings, lists, flow control, and more
+- **Project System** - Multi-file projects with manifest-based configuration
+- **16 Standard Libraries** - Arithmetic, transcendentals, strings, lists, matrices, flow control, and more
+- **SR5 Graphics Runtime** - GPU-accelerated runtime for games and visualizations
 - **HP RPL Compatible** - Designed to be compatible with classic HP calculator RPL
 
 ## Quick Start
@@ -26,6 +28,7 @@ This builds several binaries:
 - `rpl-calc` - Interactive TUI calculator
 - `rpl-lsp` - Language Server
 - `rpl-dap` - Debug Adapter
+- `sr5` - Graphics runtime (requires `--features runtime`)
 
 ### Command-Line Evaluator (`rpl`)
 
@@ -106,14 +109,19 @@ DROP        @ Remove top item
 
 ```
 crates/
-  rpl/           Core library: types, VM, analysis, compilation, standard libraries
-  rpl-tui/       Interactive terminal calculator (ratatui-based)
-  rpl-lsp/       Language Server Protocol implementation
-  rpl-dap/       Debug Adapter Protocol implementation
-  rpl-plot/      Scalable vector graphics library for plot objects
+  rpl/             Core library: parsing, analysis, compilation, VM
+  rpl-stdlib/      Standard library implementations (16 libraries)
+  rpl-vm/          Virtual machine runtime
+  rpl-project/     Multi-file project loading and indexing
+  rpl-tui/         Interactive terminal calculator (ratatui-based)
+  rpl-lsp/         Language Server Protocol implementation
+  rpl-dap/         Debug Adapter Protocol implementation
+  rpl-ide/         IDE support with WASM-based VS Code extension
+  rpl-sr5/         SR5 graphics runtime with GPU rendering
+  rpl-plot/        Plot object library
+  rpl-vector-plot/ Vector graphics plot library
 
-docs/            Implementation documentation
-editors/vscode/  VS Code extension
+examples/        Example projects (space-shooter, sprite-demo)
 tests/           Integration tests and example programs
 ```
 
@@ -121,13 +129,14 @@ tests/           Integration tests and example programs
 
 ### VS Code
 
-A VS Code extension is available in `editors/vscode/` providing:
+A VS Code extension is available in `crates/rpl-ide/vscode/` providing:
 
 - Syntax highlighting via semantic tokens
 - Code completions
 - Hover documentation
 - Go-to-definition
 - Find references
+- Project-wide analysis
 - Integrated debugging
 
 ## Architecture
