@@ -13,6 +13,11 @@ pub struct Manifest {
     /// Build configuration.
     #[serde(default)]
     pub build: BuildSection,
+
+    /// Extra sections not parsed by rpl-project.
+    /// Runtimes can access these for custom configuration (e.g., `[sprites.*]`).
+    #[serde(flatten)]
+    pub extra: toml::Table,
 }
 
 /// The `[project]` section of the manifest.
@@ -21,8 +26,10 @@ pub struct ProjectSection {
     /// Project name (required).
     pub name: String,
 
-    /// Entry point program name, without .rpl extension (required).
-    pub entry: String,
+    /// Entry point program name, without .rpl extension (optional).
+    /// Some runtimes use convention-based entry points (init/draw/update).
+    #[serde(default)]
+    pub entry: Option<String>,
 
     /// Project version (optional).
     #[serde(default)]
@@ -89,12 +96,6 @@ impl Manifest {
                 field: "project.name",
             });
         }
-        if self.project.entry.is_empty() {
-            return Err(ManifestError::MissingField {
-                path: path.to_owned(),
-                field: "project.entry",
-            });
-        }
         Ok(())
     }
 }
@@ -113,12 +114,11 @@ mod tests {
         let content = r#"
             [project]
             name = "my-project"
-            entry = "main"
         "#;
 
         let manifest = Manifest::from_str(content, &test_path()).unwrap();
         assert_eq!(manifest.project.name, "my-project");
-        assert_eq!(manifest.project.entry, "main");
+        assert_eq!(manifest.project.entry, None);
         assert_eq!(manifest.build.include, vec!["**/*.rpl"]);
         assert!(manifest.build.exclude.is_empty());
     }
@@ -139,6 +139,7 @@ mod tests {
 
         let manifest = Manifest::from_str(content, &test_path()).unwrap();
         assert_eq!(manifest.project.name, "my-game");
+        assert_eq!(manifest.project.entry, Some("main".to_string()));
         assert_eq!(manifest.project.version, Some("1.0.0".to_string()));
         assert_eq!(manifest.project.author, Some("Developer".to_string()));
         assert_eq!(manifest.build.include, vec!["src/**/*.rpl", "lib/**/*.rpl"]);
@@ -150,7 +151,6 @@ mod tests {
         let content = r#"
             [project]
             name = ""
-            entry = "main"
         "#;
 
         let result = Manifest::from_str(content, &test_path());
@@ -161,25 +161,38 @@ mod tests {
     }
 
     #[test]
-    fn missing_entry_fails() {
-        let content = r#"
-            [project]
-            name = "test"
-            entry = ""
-        "#;
-
-        let result = Manifest::from_str(content, &test_path());
-        assert!(matches!(
-            result,
-            Err(ManifestError::MissingField { field: "project.entry", .. })
-        ));
-    }
-
-    #[test]
     fn invalid_toml_fails() {
         let content = "this is not valid toml [[[";
 
         let result = Manifest::from_str(content, &test_path());
         assert!(matches!(result, Err(ManifestError::Parse { .. })));
+    }
+
+    #[test]
+    fn extra_sections_preserved() {
+        let content = r#"
+            [project]
+            name = "my-game"
+
+            [sprites.sheet]
+            image = "sheet.png"
+
+            [sprites.sheet.regions]
+            player = { x = 0, y = 0, w = 32, h = 32 }
+            enemy = { x = 32, y = 0, w = 32, h = 32 }
+        "#;
+
+        let manifest = Manifest::from_str(content, &test_path()).unwrap();
+        assert_eq!(manifest.project.name, "my-game");
+
+        // Extra sections should be preserved
+        let sprites = manifest.extra.get("sprites").expect("sprites section should exist");
+        let sheet = sprites.get("sheet").expect("sheet should exist");
+        assert_eq!(sheet.get("image").and_then(|v| v.as_str()), Some("sheet.png"));
+
+        let regions = sheet.get("regions").expect("regions should exist");
+        let player = regions.get("player").expect("player region should exist");
+        assert_eq!(player.get("x").and_then(|v| v.as_integer()), Some(0));
+        assert_eq!(player.get("w").and_then(|v| v.as_integer()), Some(32));
     }
 }

@@ -2,51 +2,33 @@
 
 use crate::error::LoadError;
 use glob::Pattern;
-use rpl::value::Value;
-use rpl::Session;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// Load a single .rpl file and return the resulting Value.
-///
-/// The file must contain exactly one value literal.
-/// Uses a temporary Session to parse, compile, and execute.
-pub fn load_file(path: &Path) -> Result<Value, LoadError> {
-    let source = std::fs::read_to_string(path).map_err(|e| LoadError::Io {
-        path: path.to_owned(),
-        source: e,
-    })?;
-
-    load_source(&source, path)
-}
-
-/// Load RPL source and return the resulting Value.
+/// Load RPL source in an isolated session and return the resulting Value.
 ///
 /// The source must produce exactly one value on the stack.
-pub fn load_source(source: &str, path: &Path) -> Result<Value, LoadError> {
-    // Create a fresh session with stdlib
+///
+/// Note: This creates a fresh session for the evaluation, so the source
+/// cannot reference other project files. For project loading, use
+/// `Project::load_into()` which evaluates all files in the same session.
+#[cfg(test)]
+pub fn load_source(source: &str, path: &Path) -> Result<rpl::value::Value, LoadError> {
+    use rpl::Session;
+
     let mut session = Session::new();
     rpl_stdlib::register_interfaces(session.interfaces_mut());
     rpl_stdlib::register_lowerers(session.lowerers_mut());
     rpl_stdlib::register_executors(session.executors_mut());
 
-    // Evaluate the source
-    let values = session.eval(source).map_err(|e| LoadError::Eval {
+    session.eval(source).map_err(|e| LoadError::Eval {
         path: path.to_owned(),
-        error: format!("{:?}", e),
+        source: e,
     })?;
 
-    // Must produce exactly one value
-    match values.len() {
-        0 => Err(LoadError::NoValue {
-            path: path.to_owned(),
-        }),
-        1 => Ok(values.into_iter().next().unwrap()),
-        n => Err(LoadError::MultipleValues {
-            path: path.to_owned(),
-            count: n,
-        }),
-    }
+    session.vm_mut().stack.pop().map_err(|_| LoadError::NoValue {
+        path: path.to_owned(),
+    })
 }
 
 /// Collect all files matching include patterns, excluding exclude patterns.
@@ -127,9 +109,9 @@ pub fn collect_files(
 
 /// Convert file path to directory key.
 ///
-/// `project/math/square.rpl` → `math/square`
+/// `project/math/square.rpl` → `math.square`
 ///
-/// Uses forward slashes as path separators regardless of platform.
+/// Uses dots as path separators (since `/` is the division operator).
 pub fn path_to_key(project_dir: &Path, file_path: &Path) -> Result<String, LoadError> {
     let rel_path = file_path
         .strip_prefix(project_dir)
@@ -137,13 +119,17 @@ pub fn path_to_key(project_dir: &Path, file_path: &Path) -> Result<String, LoadE
 
     let without_ext = rel_path.with_extension("");
 
-    // Use forward slashes for consistency
-    Ok(without_ext.to_string_lossy().replace('\\', "/"))
+    // Use dots as separators (/ is division operator, . is not used for anything else)
+    Ok(without_ext
+        .to_string_lossy()
+        .replace('\\', ".")
+        .replace('/', "."))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rpl::value::Value;
     use std::path::PathBuf;
 
     #[test]
@@ -194,12 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn load_multiple_values_fails() {
-        let result = load_source("1 2 3", &PathBuf::from("test.rpl"));
-        assert!(matches!(
-            result,
-            Err(LoadError::MultipleValues { count: 3, .. })
-        ));
+    fn load_multiple_values_takes_top() {
+        // When multiple values are on the stack, we take the top one
+        let value = load_source("1 2 3", &PathBuf::from("test.rpl")).unwrap();
+        assert_eq!(value, Value::Integer(3));
     }
 
     #[test]
@@ -213,13 +197,13 @@ mod tests {
     fn path_to_key_nested() {
         let project = PathBuf::from("/project");
         let file = PathBuf::from("/project/math/square.rpl");
-        assert_eq!(path_to_key(&project, &file).unwrap(), "math/square");
+        assert_eq!(path_to_key(&project, &file).unwrap(), "math.square");
     }
 
     #[test]
     fn path_to_key_deeply_nested() {
         let project = PathBuf::from("/project");
         let file = PathBuf::from("/project/lib/math/trig/sin.rpl");
-        assert_eq!(path_to_key(&project, &file).unwrap(), "lib/math/trig/sin");
+        assert_eq!(path_to_key(&project, &file).unwrap(), "lib.math.trig.sin");
     }
 }

@@ -6,13 +6,23 @@
 use crate::error::LoadError;
 use crate::loader;
 use crate::manifest::Manifest;
-use rpl::analysis::{AnalysisResult, ParamInfo};
+use rpl::analysis::{
+    AnalysisResult, Context, GlobalMap, GlobalVariableMap, ParamInfo, Pattern,
+};
 use rpl::core::Interner;
 use rpl::ir::{AtomKind, CompositeKind, Node, NodeKind};
 use rpl::registry::InterfaceRegistry;
 use rpl::types::Signature;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+/// Compute a hash of content for cache invalidation.
+fn hash_content(content: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Information about a single project file.
 #[derive(Debug)]
@@ -25,6 +35,9 @@ pub struct IndexEntry {
 
     /// The source code.
     pub source: String,
+
+    /// Hash of source content for cache invalidation.
+    pub source_hash: u64,
 
     /// Parsed AST nodes.
     pub ast: Vec<Node>,
@@ -48,6 +61,7 @@ pub enum ValueType {
     Real,
     String,
     Symbol,
+    Bytes,
     Other,
 }
 
@@ -85,11 +99,25 @@ pub struct ProjectIndex {
     /// Indexed entries by key.
     pub entries: HashMap<String, IndexEntry>,
 
+    /// Global function definitions collected from all files.
+    ///
+    /// These are functions defined via `<< >> 'name' STO` across the project.
+    globals: rpl::analysis::GlobalMap,
+
+    /// Global variables collected from all files.
+    ///
+    /// These are variables defined via STO across the project.
+    /// The key is the fully-qualified path (e.g., "lib/data/ship_id").
+    global_variables: GlobalVariableMap,
+
     /// Interface registry for parsing.
     interfaces: InterfaceRegistry,
 
     /// Interner for symbols.
     interner: Interner,
+
+    /// Shared symbol table with all definitions across the project.
+    symbols: rpl::analysis::SymbolTable,
 }
 
 impl ProjectIndex {
@@ -102,9 +130,19 @@ impl ProjectIndex {
             root,
             manifest,
             entries: HashMap::new(),
+            globals: GlobalMap::new(),
+            global_variables: GlobalVariableMap::new(),
             interfaces,
             interner: Interner::new(),
+            symbols: rpl::analysis::SymbolTable::new(),
         }
+    }
+
+    /// Get mutable access to the interface registry.
+    ///
+    /// Use this to register additional interfaces before calling `build`.
+    pub fn interfaces_mut(&mut self) -> &mut InterfaceRegistry {
+        &mut self.interfaces
     }
 
     /// Build a project index by analyzing all files.
@@ -112,9 +150,21 @@ impl ProjectIndex {
     /// Uses global constraint resolution: all files are analyzed together so that
     /// type constraints from call sites properly narrow parameter types.
     pub fn build(project_dir: &Path) -> Result<Self, LoadError> {
+        Self::build_with(project_dir, |_| {})
+    }
+
+    /// Build a project index with additional interface registration.
+    ///
+    /// The callback is invoked with a mutable reference to the interface registry
+    /// before parsing begins, allowing registration of additional interfaces.
+    pub fn build_with<F>(project_dir: &Path, register_interfaces: F) -> Result<Self, LoadError>
+    where
+        F: FnOnce(&mut InterfaceRegistry),
+    {
         use rpl::analysis::{
-            collect_globals, finalize_signatures, recognize_patterns, resolve_constraints,
-            Constraint, GlobalMap, Pattern, PatternMap, Substitution, SymbolTable, Traverser,
+            collect_global_defines, collect_global_variables, collect_globals,
+            finalize_signatures, recognize_patterns, resolve_constraints, Constraint, GlobalMap,
+            PatternMap, Substitution, SymbolTable, Traverser,
         };
 
         // Load manifest
@@ -122,6 +172,7 @@ impl ProjectIndex {
         let manifest = Manifest::from_file(&manifest_path)?;
 
         let mut index = Self::new(project_dir.to_owned(), manifest.clone());
+        register_interfaces(&mut index.interfaces);
 
         // Collect files
         let file_paths = loader::collect_files(
@@ -139,6 +190,7 @@ impl ProjectIndex {
             source: String,
             nodes: Vec<Node>,
             patterns: PatternMap,
+            global_defines: Vec<Pattern>,
             value_type: ValueType,
         }
 
@@ -146,6 +198,31 @@ impl ProjectIndex {
 
         for file_path in &file_paths {
             let key = loader::path_to_key(project_dir, file_path)?;
+
+            // Handle binary files (non-.rpl) separately
+            let is_rpl = file_path
+                .extension()
+                .map(|e| e == "rpl")
+                .unwrap_or(false);
+
+            if !is_rpl {
+                // Binary file - add to index as Bytes type without parsing
+                index.entries.insert(
+                    key.clone(),
+                    IndexEntry {
+                        key,
+                        source_path: file_path.clone(),
+                        source: String::new(),
+                        source_hash: 0, // Binary files don't have source
+                        ast: Vec::new(),
+                        value_type: ValueType::Bytes,
+                        signature: None,
+                        analysis: None,
+                    },
+                );
+                continue;
+            }
+
             let source = std::fs::read_to_string(file_path).map_err(|e| LoadError::Io {
                 path: file_path.clone(),
                 source: e,
@@ -155,7 +232,7 @@ impl ProjectIndex {
             let nodes = rpl::parse::parse(&source, &index.interfaces, &mut index.interner)
                 .map_err(|e| LoadError::Eval {
                     path: file_path.clone(),
-                    error: format!("parse error: {}", e.message),
+                    source: e.into(),
                 })?;
 
             // Check: must be exactly one top-level value
@@ -175,6 +252,9 @@ impl ProjectIndex {
 
             // Recognize patterns
             let mut patterns = recognize_patterns(&nodes, &index.interfaces);
+
+            // Collect global variable definitions (STO patterns)
+            let global_defines = collect_global_defines(&nodes, &index.interfaces);
 
             // For programs: inject synthetic FunctionDef pattern
             if value_type.is_program()
@@ -199,6 +279,7 @@ impl ProjectIndex {
                 source,
                 nodes,
                 patterns,
+                global_defines,
                 value_type,
             });
         }
@@ -222,13 +303,77 @@ impl ProjectIndex {
         }
 
         // =======================================================================
+        // Phase 2.5: Collect global variables from ALL files
+        // =======================================================================
+        // This creates definitions for all global variables defined via STO,
+        // enabling cross-file variable references.
+        let mut all_global_vars: GlobalVariableMap = HashMap::new();
+        let mut var_constraints: Vec<Constraint> = Vec::new();
+
+        for file in &files {
+            let (file_vars, next_tv) = collect_global_variables(
+                &file.global_defines,
+                &mut symbols,
+                &file.key,
+                next_type_var,
+            );
+            next_type_var = next_tv;
+
+            // Merge variables, linking types if already exists
+            for (key, info) in file_vars {
+                if let Some(existing) = all_global_vars.get(&key) {
+                    // Variable already defined - link types with Equal constraint
+                    var_constraints.push(Constraint::Equal {
+                        def_a: existing.def_id,
+                        def_b: info.def_id,
+                        span: info.name_span,
+                    });
+                } else {
+                    all_global_vars.insert(key, info);
+                }
+            }
+        }
+
+        // Store in the index
+        index.globals = all_globals.clone();
+        index.global_variables = all_global_vars.clone();
+
+        // =======================================================================
         // Phase 3: Traverse all files, accumulating constraints
         // =======================================================================
         // Each file is traversed with the shared GlobalMap. Constraints from all
         // files are collected together for global resolution.
-        let mut all_constraints: Vec<Constraint> = Vec::new();
+        let mut all_constraints: Vec<Constraint> = var_constraints;
         let mut all_return_origins: HashMap<String, rpl::analysis::Origin> = HashMap::new();
         let mut merged_substitution = Substitution::new();
+
+        // Build context from all entries for traversal
+        // This allows the traverser to recognize project entries (like sprites.player)
+        // Note: Must include entries from index.entries (which includes binary files)
+        // as well as files (which are .rpl files being processed)
+        let mut traversal_context = Context::new();
+        // Add binary files and other early entries from index.entries
+        for (key, entry) in &index.entries {
+            match entry.value_type {
+                ValueType::Program => {
+                    traversal_context.add_program(key.clone(), None);
+                }
+                _ => {
+                    traversal_context.add_value(key.clone());
+                }
+            }
+        }
+        // Add .rpl files from files vec
+        for file in &files {
+            match file.value_type {
+                ValueType::Program => {
+                    traversal_context.add_program(file.key.clone(), None);
+                }
+                _ => {
+                    traversal_context.add_value(file.key.clone());
+                }
+            }
+        }
 
         // Per-file results for building IndexEntries later
         struct PerFileAnalysis {
@@ -248,6 +393,8 @@ impl ProjectIndex {
                 &index.interner,
                 &file.patterns,
                 &all_globals,
+                &all_global_vars,
+                &traversal_context,
                 next_type_var,
                 symbols,
             );
@@ -278,10 +425,33 @@ impl ProjectIndex {
 
         // TODO: Attribute resolution diagnostics to correct files based on spans
 
+        // Resolve TypeVars in definition value_types after constraint resolution.
+        // This ensures parameter types are properly resolved.
+        let def_ids: Vec<_> = symbols.definitions().map(|d| d.id).collect();
+        for def_id in def_ids {
+            if let Some(def) = symbols.get_definition_mut(def_id)
+                && let Some(ref ty) = def.value_type
+                && ty.is_type_var()
+            {
+                let resolved = merged_substitution.apply(ty);
+                def.value_type = Some(resolved);
+            }
+        }
+
         // =======================================================================
         // Phase 5: Finalize signatures
         // =======================================================================
         finalize_signatures(&mut symbols, &merged_substitution, &all_return_origins);
+
+        // Update globals with resolved signatures from symbols
+        // This ensures the GlobalMap reflects the resolved types after constraint resolution
+        for (name, info) in &mut index.globals {
+            if let Some(def) = symbols.find_definitions_by_name(name).next() {
+                if let Some(sig) = def.signature.clone() {
+                    info.signature = sig;
+                }
+            }
+        }
 
         // =======================================================================
         // Phase 6: Build IndexEntries
@@ -305,12 +475,14 @@ impl ProjectIndex {
                 }
             });
 
+            let source_hash = hash_content(&file.source);
             index.entries.insert(
                 file.key.clone(),
                 IndexEntry {
                     key: file.key,
                     source_path: file.source_path,
                     source: file.source,
+                    source_hash,
                     ast: file.nodes,
                     value_type: file.value_type,
                     signature,
@@ -318,6 +490,9 @@ impl ProjectIndex {
                 },
             );
         }
+
+        // Store the shared symbol table
+        index.symbols = symbols;
 
         Ok(index)
     }
@@ -342,6 +517,7 @@ impl ProjectIndex {
 
         let mut context = Context::new();
 
+        // Add project entries (files)
         for (key, entry) in &self.entries {
             match entry.value_type {
                 ValueType::Program => {
@@ -353,7 +529,80 @@ impl ProjectIndex {
             }
         }
 
+        // Add global function definitions (from << >> 'name' STO patterns)
+        for (name, info) in &self.globals {
+            context.add_program(name.clone(), Some(info.signature.clone()));
+        }
+
+        // Add global variables defined via STO across the project
+        for (key, _info) in &self.global_variables {
+            // Use the full key (path/to/var) and also just the variable name
+            context.add_value(key.clone());
+
+            // Also add just the variable name for simple references
+            if let Some(name) = key.rsplit('/').next() {
+                if name != key {
+                    context.add_value(name.to_string());
+                }
+            }
+        }
+
         context
+    }
+
+    /// Get access to global variables.
+    pub fn global_variables(&self) -> &GlobalVariableMap {
+        &self.global_variables
+    }
+
+    /// Get access to global function definitions.
+    pub fn globals(&self) -> &GlobalMap {
+        &self.globals
+    }
+
+    /// Get access to the shared symbol table.
+    ///
+    /// This contains all definitions across all project files.
+    pub fn symbols(&self) -> &rpl::analysis::SymbolTable {
+        &self.symbols
+    }
+
+    /// Get the interface registry.
+    pub fn interfaces(&self) -> &InterfaceRegistry {
+        &self.interfaces
+    }
+
+    /// Get the interner.
+    pub fn interner(&self) -> &Interner {
+        &self.interner
+    }
+
+    /// Get the entry key for a file path.
+    ///
+    /// Returns None if the path is not within this project.
+    pub fn key_for_path(&self, file_path: &Path) -> Option<String> {
+        loader::path_to_key(&self.root, file_path).ok()
+    }
+
+    /// Check if cached analysis is valid for the given content.
+    ///
+    /// Returns true if the content hash matches the cached entry.
+    pub fn is_cache_valid(&self, key: &str, content: &str) -> bool {
+        self.entries
+            .get(key)
+            .is_some_and(|entry| entry.source_hash == hash_content(content))
+    }
+
+    /// Get cached analysis for a file if content matches.
+    ///
+    /// Returns None if content has changed (needs re-analysis).
+    pub fn get_cached_analysis(&self, key: &str, content: &str) -> Option<&AnalysisResult> {
+        let entry = self.entries.get(key)?;
+        if entry.source_hash == hash_content(content) {
+            entry.analysis.as_ref()
+        } else {
+            None
+        }
     }
 }
 

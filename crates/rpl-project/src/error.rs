@@ -1,6 +1,8 @@
 //! Error types for project loading.
 
 use std::path::PathBuf;
+
+use rpl::session::EvalError;
 use thiserror::Error;
 
 /// Errors that can occur when parsing a project manifest.
@@ -35,8 +37,12 @@ pub enum LoadError {
         source: std::io::Error,
     },
 
-    #[error("failed to evaluate {path}: {error}")]
-    Eval { path: PathBuf, error: String },
+    #[error("failed to evaluate {path}: {source}")]
+    Eval {
+        path: PathBuf,
+        #[source]
+        source: EvalError,
+    },
 
     #[error("{path} produced no value (expected exactly one)")]
     NoValue { path: PathBuf },
