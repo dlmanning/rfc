@@ -1,0 +1,38 @@
+[package]
+name = "rpl-sr5"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sr5"
+path = "src/main.rs"
+required-features = ["runtime"]
+
+[features]
+default = ["runtime"]
+runtime = ["dep:winit", "dep:png", "dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:rpl-vector-plot", "dep:rpl-project", "dep:rpl-stdlib", "dep:toml"]
+
+[dependencies]
+rpl = { workspace = true }
+
+# Runtime dependencies (optional for IDE use)
+rpl-vector-plot = { workspace = true, optional = true }
+rpl-project = { workspace = true, optional = true }
+rpl-stdlib = { workspace = true, optional = true }
+
+# Display and windowing
+winit = { version = "0.30", optional = true }
+
+# GPU rendering
+wgpu = { version = "28", optional = true }
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+
+# Image decoding
+png = { version = "0.17", optional = true }
+
+# TOML parsing for manifest extras
+toml = { version = "0.8", optional = true }
+
+# Error handling
+thiserror = { workspace = true }

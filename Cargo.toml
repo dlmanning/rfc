@@ -16,7 +16,7 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     rpl-dap = {path = "crates/rpl-dap"}
     rpl-tui = {path = "crates/rpl-tui"}
     rpl-vector-plot = {path = "crates/rpl-vector-plot"}
-    rpl-sr5 = {path = "crates/rpl-sr5"}
+    rpl-sr5 = {path = "crates/rpl-sr5", default-features = false}
     rpl = {path = "crates/rpl"}
     rpl-stdlib = {path = "crates/rpl-stdlib"}
     rpl-vm = {path = "crates/rpl-vm"}
@@ -39,6 +39,7 @@ default-members = [".", "crates/rpl-tui", "crates/rpl-lsp", "crates/rpl-dap", "c
     pixels = "0.15"
     winit = "0.30"
     wit-bindgen = "0.41"
+    codespan-reporting = "0.11"
 
 # Root package for integration tests
 [package]
@@ -51,3 +52,4 @@ rpl-dap = {workspace = true}
 rpl = {workspace = true}
 rpl-stdlib = {workspace = true}
 rpl-project = {workspace = true}
+rpl-sr5 = {workspace = true}

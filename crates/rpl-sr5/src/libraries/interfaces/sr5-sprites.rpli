@@ -1,0 +1,16 @@
+library SR5Sprites 203
+
+0: a -> PNGLOAD -> Int Int Int
+1: a Int Int -> SPRLOAD -> Int
+2: Int -> SPRFREE ->
+
+-- Drawing
+3: Int Int Int -> SPR ->
+4: Int Int Int Int -> SPRFLIP ->
+5: Int Int Int Int Int -> SPRSCALE ->
+6: Int Int Int Int -> SPRROT ->
+7: Int Int Int Int Int Int Int -> SPREX ->
+
+-- Info
+8: Int -> SPRW -> Int
+9: Int -> SPRH -> Int

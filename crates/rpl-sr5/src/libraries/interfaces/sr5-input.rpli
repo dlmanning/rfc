@@ -1,0 +1,10 @@
+library SR5Input 201
+
+-- Get current button state bitmask
+0: -> BTNS -> Int
+
+-- Get newly pressed buttons this frame
+1: -> BTNP -> Int
+
+-- Get newly released buttons this frame
+2: -> BTNR -> Int

@@ -1,0 +1,19 @@
+library SR5Graphics 200
+
+-- Clear screen to RGB555 color
+0: Int -> CLS ->
+
+-- Get pixel color at coordinates
+1: Int Int -> PGET -> Int
+
+-- Create RGB555 color from 0-31 components
+2: Int Int Int -> RGB -> Int
+
+-- Render Plot object to framebuffer
+3: Blob -> RENDER ->
+
+-- Load PNG bytes as background image
+4: Blob -> BGLOAD ->
+
+-- Clear background image
+5: -> BGCLR ->

@@ -1,0 +1,20 @@
+library SR5Tiles 204
+
+-- Tile sheets
+0: a Int -> TSLOAD -> Int
+1: Int -> TSFREE ->
+
+-- Tilemaps
+2: Int Int -> TMNEW -> Int
+3: a -> TMLOAD -> Int
+4: Int -> TMFREE ->
+5: Int Int Int Int -> TSET ->
+6: Int Int Int -> TGET -> Int
+
+-- Layers
+7: Int Int Int -> LAYER ->
+8: Int Int Int -> SCROLL ->
+9: Int Int -> LSHOW ->
+10: Int Int -> LWRAP ->
+11: Real Int -> LSCALE ->
+12: Real Int -> LROT ->

@@ -1,0 +1,13 @@
+library SR5System 202
+
+-- Get current frame count
+0: -> FRAME -> Int
+
+-- Get elapsed milliseconds
+1: -> TICKS -> Int
+
+-- Wait for vertical blank
+2: -> VSYNC ->
+
+-- Set screen resolution (must be called in init, before first frame)
+3: Int Int -> SCREEN ->
