@@ -198,6 +198,69 @@ impl LibraryData {
     }
 }
 
+/// Matrix data: dimensions and flattened row-major elements.
+#[derive(Clone, Debug)]
+pub struct MatrixData {
+    /// Number of rows (0 for vectors).
+    pub rows: u16,
+    /// Number of columns.
+    pub cols: u16,
+    /// Flattened elements in row-major order.
+    pub data: Arc<[Value]>,
+}
+
+impl MatrixData {
+    /// Create a vector (1D array).
+    pub fn vector(elements: impl Into<Arc<[Value]>>) -> Self {
+        let data: Arc<[Value]> = elements.into();
+        Self {
+            rows: 0,
+            cols: data.len() as u16,
+            data,
+        }
+    }
+
+    /// Create a matrix with given dimensions.
+    pub fn matrix(rows: u16, cols: u16, elements: impl Into<Arc<[Value]>>) -> Self {
+        Self {
+            rows,
+            cols,
+            data: elements.into(),
+        }
+    }
+
+    /// Check if this is a vector (rows == 0).
+    pub fn is_vector(&self) -> bool {
+        self.rows == 0
+    }
+
+    /// Get element count.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Get element at index (for vectors) or (row, col) for matrices.
+    pub fn get(&self, index: usize) -> Option<&Value> {
+        self.data.get(index)
+    }
+
+    /// Get element at (row, col) for matrices.
+    pub fn get_2d(&self, row: usize, col: usize) -> Option<&Value> {
+        if self.rows == 0 {
+            // Vector
+            self.data.get(col)
+        } else {
+            let idx = row * (self.cols as usize) + col;
+            self.data.get(idx)
+        }
+    }
+}
+
 /// A value on the calculator stack.
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -209,6 +272,8 @@ pub enum Value {
     String(Arc<str>),
     /// A list of values.
     List(Arc<[Value]>),
+    /// A matrix or vector (element-wise arithmetic semantics).
+    Matrix(Arc<MatrixData>),
     /// A compiled program (bytecode with string table).
     Program(Arc<ProgramData>),
     /// A symbolic expression (unevaluated algebraic expression).
@@ -287,6 +352,21 @@ impl Value {
         Value::Bytes(data.into())
     }
 
+    /// Create a vector (1D matrix).
+    pub fn vector(elements: impl Into<Arc<[Value]>>) -> Self {
+        Value::Matrix(Arc::new(MatrixData::vector(elements)))
+    }
+
+    /// Create a matrix with given dimensions.
+    pub fn matrix(rows: u16, cols: u16, elements: impl Into<Arc<[Value]>>) -> Self {
+        Value::Matrix(Arc::new(MatrixData::matrix(rows, cols, elements)))
+    }
+
+    /// Create a matrix from an Arc<MatrixData>.
+    pub fn matrix_arc(data: Arc<MatrixData>) -> Self {
+        Value::Matrix(data)
+    }
+
     /// Try to get as integer.
     pub fn as_integer(&self) -> Option<i64> {
         match self {
@@ -324,6 +404,13 @@ impl Value {
             Value::Real(_) => "real",
             Value::String(_) => "string",
             Value::List(_) => "list",
+            Value::Matrix(m) => {
+                if m.is_vector() {
+                    "vector"
+                } else {
+                    "matrix"
+                }
+            }
             Value::Program(_) => "program",
             Value::Symbolic(_) => "symbolic",
             Value::Library(_) => "library",
@@ -370,6 +457,19 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Try to get as matrix.
+    pub fn as_matrix(&self) -> Option<&Arc<MatrixData>> {
+        match self {
+            Value::Matrix(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Check if value is a matrix or vector.
+    pub fn is_matrix(&self) -> bool {
+        matches!(self, Value::Matrix(_))
+    }
 }
 
 impl fmt::Display for Value {
@@ -394,6 +494,34 @@ impl fmt::Display for Value {
                 }
                 write!(f, " }}")
             }
+            Value::Matrix(m) => {
+                if m.is_vector() {
+                    // Vector: [ 1 2 3 ]
+                    write!(f, "[ ")?;
+                    for (i, item) in m.data.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "{}", item)?;
+                    }
+                    write!(f, " ]")
+                } else {
+                    // Matrix: [[ 1 2 ][ 3 4 ]]
+                    write!(f, "[")?;
+                    for row in 0..m.rows as usize {
+                        write!(f, "[ ")?;
+                        for col in 0..m.cols as usize {
+                            if col > 0 {
+                                write!(f, " ")?;
+                            }
+                            let idx = row * (m.cols as usize) + col;
+                            write!(f, "{}", m.data[idx])?;
+                        }
+                        write!(f, " ]")?;
+                    }
+                    write!(f, "]")
+                }
+            }
             Value::Program(_) => write!(f, "<< ... >>"),
             Value::Symbolic(expr) => write!(f, "'{}'", expr),
             Value::Library(lib) => write!(f, "Library:{}", lib.id),
@@ -411,6 +539,9 @@ impl PartialEq for Value {
             (Value::Real(a), Value::Integer(b)) => *a == (*b as f64),
             (Value::String(a), Value::String(b)) => a == b,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Matrix(a), Value::Matrix(b)) => {
+                a.rows == b.rows && a.cols == b.cols && a.data == b.data
+            }
             (Value::Program(a), Value::Program(b)) => Arc::ptr_eq(a, b),
             (Value::Symbolic(a), Value::Symbolic(b)) => a == b,
             (Value::Library(a), Value::Library(b)) => Arc::ptr_eq(a, b),

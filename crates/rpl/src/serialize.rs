@@ -43,6 +43,7 @@ const TAG_PROGRAM: u8 = 0x05;
 const TAG_SYMBOLIC: u8 = 0x06;
 const TAG_LIBRARY: u8 = 0x07;
 const TAG_BYTES: u8 = 0x08;
+const TAG_MATRIX: u8 = 0x09;
 
 /// Bit flag indicating debug info is present.
 const DEBUG_FLAG: u8 = 0x10;
@@ -186,6 +187,15 @@ fn serialize_into(buf: &mut Vec<u8>, value: &Value, opts: &SerializeOptions) {
             write_u32(buf, data.len() as u32);
             buf.extend(data.iter());
         }
+        Value::Matrix(m) => {
+            buf.push(TAG_MATRIX);
+            write_u16(buf, m.rows);
+            write_u16(buf, m.cols);
+            write_u32(buf, m.data.len() as u32);
+            for item in m.data.iter() {
+                serialize_into(buf, item, opts);
+            }
+        }
     }
 }
 
@@ -313,6 +323,30 @@ pub fn deserialize_value(bytes: &[u8]) -> Result<(Value, usize), SerializeError>
             }
             let data: Vec<u8> = rest[4..4 + len].to_vec();
             Ok((Value::bytes(data), 1 + 4 + len))
+        }
+        TAG_MATRIX => {
+            // rows (u16) + cols (u16) + count (u32) + elements
+            if rest.len() < 8 {
+                return Err(SerializeError::UnexpectedEnd);
+            }
+            let rows = read_u16(rest)?;
+            let cols = read_u16(&rest[2..])?;
+            let count = read_u32(&rest[4..])? as usize;
+            let mut offset = 8;
+            let mut items = Vec::with_capacity(count);
+            for _ in 0..count {
+                let (item, consumed) = deserialize_value(&rest[offset..])?;
+                items.push(item);
+                offset += consumed;
+            }
+            Ok((
+                Value::Matrix(Arc::new(crate::value::MatrixData {
+                    rows,
+                    cols,
+                    data: items.into(),
+                })),
+                1 + offset,
+            ))
         }
         _ => Err(SerializeError::InvalidTag(tag)),
     }
