@@ -41,6 +41,15 @@ pub enum Pattern {
         /// Span of the associated program body.
         target_span: Span,
     },
+    /// Global variable definition: `value "name" STO`
+    GlobalDefine {
+        /// The variable name.
+        name: String,
+        /// Span of the name node.
+        name_span: Span,
+        /// Directory path where this variable is stored.
+        directory_path: Vec<String>,
+    },
 }
 
 /// Information about a function parameter.
@@ -93,6 +102,100 @@ pub fn recognize_patterns(nodes: &[Node], registry: &InterfaceRegistry) -> Patte
     }
 
     patterns
+}
+
+/// Collect global variable definitions from the IR.
+///
+/// This walks ALL nodes (including into program bodies) to find STO patterns.
+/// Directory navigation (CRDIR, UPDIR, HOME) is tracked to determine where
+/// each variable is stored.
+///
+/// Unlike `recognize_patterns`, this function:
+/// - Walks into ALL composite nodes, including programs
+/// - Tracks directory state changes
+/// - Returns a Vec instead of a map (no span deduplication needed)
+pub fn collect_global_defines(nodes: &[Node], registry: &InterfaceRegistry) -> Vec<Pattern> {
+    let mut defines = Vec::new();
+    let mut current_path: Vec<String> = Vec::new();
+    collect_global_defines_inner(nodes, registry, &mut current_path, &mut defines);
+    defines
+}
+
+fn collect_global_defines_inner(
+    nodes: &[Node],
+    registry: &InterfaceRegistry,
+    current_path: &mut Vec<String>,
+    defines: &mut Vec<Pattern>,
+) {
+    let mut i = 0;
+    while i < nodes.len() {
+        // Check for directory navigation: CRDIR "name"
+        if i + 1 < nodes.len()
+            && is_command_named(&nodes[i], "CRDIR", registry)
+            && let Some((name, _)) = extract_name(&nodes[i + 1])
+        {
+            current_path.push(name);
+            i += 2;
+            continue;
+        }
+
+        // Check for UPDIR
+        if is_command_named(&nodes[i], "UPDIR", registry) {
+            current_path.pop();
+            i += 1;
+            continue;
+        }
+
+        // Check for HOME
+        if is_command_named(&nodes[i], "HOME", registry) {
+            current_path.clear();
+            i += 1;
+            continue;
+        }
+
+        // Check for global define: "name" STO (but NOT << program >> "name" STO)
+        // We skip function definitions - those are handled by recognize_patterns
+        if i + 1 < nodes.len()
+            && let Some((name, name_span)) = extract_name(&nodes[i])
+            && is_define_command(&nodes[i + 1], registry)
+        {
+            // Only record if the preceding node is NOT a program
+            // (programs are function definitions, not global variables)
+            let is_function_def = i > 0
+                && matches!(
+                    &nodes[i - 1].kind,
+                    NodeKind::Composite(CompositeKind::Program, _)
+                );
+
+            if !is_function_def {
+                defines.push(Pattern::GlobalDefine {
+                    name,
+                    name_span,
+                    directory_path: current_path.clone(),
+                });
+            }
+            i += 2;
+            continue;
+        }
+
+        // Recurse into ALL composite nodes (including programs)
+        if let NodeKind::Composite(_, branches) = &nodes[i].kind {
+            for branch in branches {
+                collect_global_defines_inner(branch, registry, current_path, defines);
+            }
+        }
+
+        i += 1;
+    }
+}
+
+/// Check if a node is a command with a specific name.
+fn is_command_named(node: &Node, name: &str, registry: &InterfaceRegistry) -> bool {
+    if let NodeKind::Atom(AtomKind::Command(lib, cmd)) = &node.kind {
+        registry.get_command_name(*lib, *cmd) == name
+    } else {
+        false
+    }
 }
 
 /// Try to recognize a function definition pattern.

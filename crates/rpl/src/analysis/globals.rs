@@ -1,8 +1,9 @@
-//! Phase 2: Collect global function definitions.
+//! Phase 2: Collect global function and variable definitions.
 //!
 //! This module processes patterns from Phase 1 to create preliminary
-//! definitions for all global functions. This enables:
+//! definitions for all global functions and variables. This enables:
 //! - Forward references (calling a function defined later)
+//! - Cross-file variable references (using a variable defined via STO elsewhere)
 //! - HM-style type inference (linking caller args to callee params)
 //! - Consistent definition IDs across passes
 
@@ -35,6 +36,103 @@ pub struct GlobalInfo {
 
 /// Map from function name to global info.
 pub type GlobalMap = HashMap<String, GlobalInfo>;
+
+/// Information about a global variable collected from STO patterns.
+#[derive(Clone, Debug)]
+pub struct GlobalVarInfo {
+    /// Definition ID in the symbol table.
+    pub def_id: DefinitionId,
+    /// Span of the variable name.
+    pub name_span: Span,
+    /// Source file where this variable was defined.
+    pub defining_file: String,
+    /// Directory path where the variable is stored.
+    pub directory_path: Vec<String>,
+    /// Type variable for HM inference.
+    pub type_var: TypeVar,
+}
+
+/// Map from fully-qualified name to global variable info.
+///
+/// The key is the full path to the variable, e.g. "lib/data/ship_id".
+/// For variables in the root directory, the key is just the name.
+pub type GlobalVariableMap = HashMap<String, GlobalVarInfo>;
+
+/// Build a fully-qualified key from a directory path and variable name.
+pub fn make_global_var_key(path: &[String], name: &str) -> String {
+    if path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", path.join("/"), name)
+    }
+}
+
+/// Collect global variable definitions from GlobalDefine patterns.
+///
+/// Creates Definition entries for all global variables found in Phase 1.
+/// Assigns fresh TypeVars for type inference.
+///
+/// # Arguments
+///
+/// * `defines` - Vec of GlobalDefine patterns from collect_global_defines
+/// * `symbols` - Symbol table to add definitions to
+/// * `file_key` - Key of the file being processed (for diagnostics)
+/// * `initial_type_var` - Starting type variable ID
+///
+/// Returns the GlobalVariableMap and the next available type variable ID.
+pub fn collect_global_variables(
+    defines: &[Pattern],
+    symbols: &mut SymbolTable,
+    file_key: &str,
+    initial_type_var: u32,
+) -> (GlobalVariableMap, u32) {
+    let mut vars = GlobalVariableMap::new();
+    let mut next_type_var = initial_type_var;
+
+    for pattern in defines {
+        if let Pattern::GlobalDefine {
+            name,
+            name_span,
+            directory_path,
+        } = pattern
+        {
+            let key = make_global_var_key(directory_path, name);
+
+            // Skip if already defined (will be unified later)
+            if vars.contains_key(&key) {
+                continue;
+            }
+
+            // Create a fresh type variable for this variable
+            let var_tv = TypeVar(next_type_var);
+            next_type_var += 1;
+
+            // Create the variable definition
+            let def = Definition::with_type(
+                name.clone(),
+                *name_span,
+                DefinitionKind::Global,
+                ScopeId::root(),
+                Type::TypeVar(var_tv),
+            );
+
+            let def_id = symbols.add_definition(def);
+
+            vars.insert(
+                key,
+                GlobalVarInfo {
+                    def_id,
+                    name_span: *name_span,
+                    defining_file: file_key.to_string(),
+                    directory_path: directory_path.clone(),
+                    type_var: var_tv,
+                },
+            );
+        }
+    }
+
+    (vars, next_type_var)
+}
 
 /// Collect global function definitions from patterns (Phase 2).
 ///

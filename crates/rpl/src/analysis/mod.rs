@@ -61,8 +61,11 @@ pub use symbols::{
 pub use visitor::{walk_node, walk_nodes, Visitor};
 
 // Re-exports: Analyzer phases
-pub use globals::{collect_globals, GlobalInfo, GlobalMap};
-pub use patterns::{recognize_patterns, ParamInfo, Pattern, PatternMap};
+pub use globals::{
+    collect_global_variables, collect_globals, make_global_var_key, GlobalInfo, GlobalMap,
+    GlobalVarInfo, GlobalVariableMap,
+};
+pub use patterns::{collect_global_defines, recognize_patterns, ParamInfo, Pattern, PatternMap};
 pub use resolve::{finalize_signatures, resolve_constraints};
 pub use state::{StackState, Substitution};
 pub use traverse::{Traverser, TraversalResult};
@@ -99,12 +102,17 @@ pub fn analyze(
     let mut symbols = SymbolTable::new();
     let (globals, next_type_var) = collect_globals(&patterns, &mut symbols, 0);
 
+    // For single-file analysis, no cross-file global variables
+    let global_vars = GlobalVariableMap::new();
+
     // Phase 3: Main traversal
     let traverser = Traverser::new(
         registry,
         interner,
         &patterns,
         &globals,
+        &global_vars,
+        context,
         next_type_var,
         symbols,
     );
@@ -137,6 +145,20 @@ pub fn analyze(
     // Phase 4: Constraint resolution
     let resolution_diagnostics = resolve_constraints(constraints, &mut symbols, &mut substitution);
     diagnostics.extend(resolution_diagnostics);
+
+    // Second pass: Resolve any remaining TypeVars in definitions after constraint resolution.
+    // The first pass (before constraint resolution) catches TypeVars that were resolved
+    // during traversal. This pass catches TypeVars that were resolved by constraints.
+    let def_ids: Vec<_> = symbols.definitions().map(|d| d.id).collect();
+    for def_id in def_ids {
+        if let Some(def) = symbols.get_definition_mut(def_id)
+            && let Some(ref ty) = def.value_type
+            && ty.is_type_var()
+        {
+            let resolved = substitution.apply(ty);
+            def.value_type = Some(resolved);
+        }
+    }
 
     // Finalize signatures with resolved types
     finalize_signatures(&mut symbols, &substitution, &return_origins);

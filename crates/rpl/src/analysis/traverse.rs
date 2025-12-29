@@ -18,7 +18,8 @@ use crate::registry::InterfaceRegistry;
 use crate::symbolic::SymExpr;
 use crate::types::TypeConstraint;
 
-use super::globals::GlobalMap;
+use super::context::Context;
+use super::globals::{GlobalMap, GlobalVariableMap};
 use super::patterns::{Pattern, PatternMap};
 use super::state::{StackState, Substitution};
 use super::types::{Constraint, Origin, Requirement, StackSnapshot, Type, TypeVar};
@@ -60,6 +61,8 @@ pub struct Traverser<'a> {
     patterns: &'a PatternMap,
     /// Globals from Phase 2.
     globals: &'a GlobalMap,
+    /// Context with known project entries.
+    context: &'a Context,
 
     // === Pattern state ===
     /// Pending name for STO/RCL patterns.
@@ -79,6 +82,8 @@ impl<'a> Traverser<'a> {
         interner: &'a Interner,
         patterns: &'a PatternMap,
         globals: &'a GlobalMap,
+        global_vars: &'a GlobalVariableMap,
+        context: &'a Context,
         initial_type_var: u32,
         symbols: SymbolTable,
     ) -> Self {
@@ -86,6 +91,17 @@ impl<'a> Traverser<'a> {
         let mut root_scope_defs = HashMap::new();
         for (name, info) in globals {
             root_scope_defs.insert(name.clone(), info.def_id);
+        }
+        // Add global variables to root scope
+        for (key, info) in global_vars {
+            // Add by full path
+            root_scope_defs.insert(key.clone(), info.def_id);
+            // Also add by simple name for convenience
+            if let Some(name) = key.rsplit('/').next() {
+                if name != key {
+                    root_scope_defs.insert(name.to_string(), info.def_id);
+                }
+            }
         }
 
         Self {
@@ -104,6 +120,7 @@ impl<'a> Traverser<'a> {
             interner,
             patterns,
             globals,
+            context,
             pending_name: None,
             current_function: None,
             return_origins: HashMap::new(),
@@ -259,7 +276,12 @@ impl<'a> Traverser<'a> {
 
                 // If argument has known type, record call site type (unioned, not intersected)
                 let arg_ty = self.stack.type_at(stack_pos);
-                if let Type::Known(t) = arg_ty
+                // Try to resolve TypeVars to get concrete type
+                let resolved_ty = match &arg_ty {
+                    Type::TypeVar(tv) => self.substitution.get(*tv).cloned().unwrap_or(arg_ty),
+                    _ => arg_ty,
+                };
+                if let Type::Known(t) = resolved_ty
                     && let Some(&param_def_id) = info.param_def_ids.get(i) {
                         self.constraints.push(Constraint::called_with(
                             param_def_id,
@@ -498,12 +520,22 @@ impl<'a> Traverser<'a> {
             .flat_map(|group| group.iter().copied())
             .collect();
         let binding_set: std::collections::HashSet<_> = binding_indices.iter().copied().collect();
-        // Capture branches contain already-evaluated code (e.g., IF condition) - skip them
+        // Capture branches contain already-evaluated code (e.g., IF condition)
+        // We still need to walk them for reference tracking, but not for stack effects
         let capture_indices = iface.map(|i| i.capture_branches(construct_id)).unwrap_or_default();
         let capture_set: std::collections::HashSet<_> = capture_indices.iter().copied().collect();
 
+        // Walk capture branches for reference tracking only (save/restore stack)
+        for &idx in &capture_indices {
+            if let Some(branch) = branches.get(idx) {
+                let saved_stack = self.stack.clone();
+                walk_nodes(self, branch);
+                self.stack = saved_stack;
+            }
+        }
+
         // Walk non-alternative branches first (body branches)
-        // Skip: alternatives (handled separately), bindings (metadata only), captures (already evaluated)
+        // Skip: alternatives (handled separately), bindings (metadata only), captures (already walked above)
         for (idx, branch) in branches.iter().enumerate() {
             if !alternative_set.contains(&idx) && !binding_set.contains(&idx) && !capture_set.contains(&idx) {
                 walk_nodes(self, branch);
@@ -654,6 +686,10 @@ impl Visitor for Traverser<'_> {
     fn visit_symbol(&mut self, sym: Symbol, node: &Node) {
         let name = self.interner.resolve(sym).to_string();
 
+        // Clear pending_name - a symbol (function call or variable) interrupts
+        // the 'name' STO/RCL pattern. The symbolic was likely passed to this function.
+        self.pending_name = None;
+
         // Add a read reference
         self.add_reference(name.clone(), node.span, ReferenceKind::Read);
 
@@ -671,6 +707,23 @@ impl Visitor for Traverser<'_> {
                 .unwrap_or(Type::Unknown);
 
             self.stack.push(ty, Origin::Binding(def_id));
+            return;
+        }
+
+        // Check if it's a known project entry (from context)
+        if let Some(entry_info) = self.context.get(&name) {
+            if entry_info.is_program {
+                // Known program - call it with its signature
+                // For now, treat as dynamic since we don't have the signature in globals
+                // This happens for project file programs that aren't loaded yet
+                self.stack.clear();
+                self.stack.depth_known = false;
+            } else {
+                // Known non-program value (Bytes, List, Integer, etc.)
+                // Push the appropriate type based on entry info
+                // For binary files (Bytes), use BLOB type
+                self.stack.push(Type::Known(TypeId::BLOB), Origin::Result(node.span));
+            }
             return;
         }
 
@@ -730,11 +783,27 @@ impl Visitor for Traverser<'_> {
                     // Stack has: [value, name] with name on top
                     if let Some((name, name_span)) = self.pending_name.take() {
                         self.stack.pop(); // pop name (STRING type)
-                        let (value_ty, _value_origin) = self.stack.pop(); // pop value
+                        let (value_ty, value_origin) = self.stack.pop(); // pop value
 
                         // Create or update global definition
                         let existing = self.lookup_definition(&name);
-                        if existing.is_none() {
+                        if let Some(def_id) = existing {
+                            // Definition exists (pre-created in Phase 2.5)
+                            // Update its type if we have concrete info
+                            if let Type::Known(t) = &value_ty {
+                                self.constraints.push(Constraint::must_be(
+                                    def_id,
+                                    Requirement::Exact(*t),
+                                    name_span,
+                                    "STO",
+                                ));
+                            }
+                            // Link value origin to definition for type propagation
+                            if let Some(origin_def_id) = value_origin.def_id() {
+                                self.constraints.push(Constraint::equal(def_id, origin_def_id, name_span));
+                            }
+                            self.add_reference(name, name_span, ReferenceKind::Write);
+                        } else {
                             let def = Definition::with_type(
                                 name.clone(),
                                 name_span,
@@ -769,6 +838,11 @@ impl Visitor for Traverser<'_> {
                 _ => {}
             }
         }
+
+        // Clear pending_name for non-binding commands.
+        // This prevents string literals from being incorrectly treated as variable
+        // references when they're used in expressions like "entities/" + "/pos" + RCL
+        self.pending_name = None;
 
         // Get stack effect and apply
         let tos = self.stack.type_at(0).as_known();
