@@ -1,0 +1,14 @@
+@ Entity component accessors
+<<
+  @ epath: ( id field -- path )
+  @ Builds list path like { "entities" "42" "pos" }
+  @ field should be a string like "pos", not a symbolic
+  << -> id field << { "entities" id ->STR field } >> >> 'epath' STO
+
+  << "pos" epath RCL >> 'get_pos' STO
+  << "pos" epath STO >> 'set_pos' STO
+  << "vel" epath RCL >> 'get_vel' STO
+  << "vel" epath STO >> 'set_vel' STO
+  << "type" epath RCL >> 'get_type' STO
+  << "sprite" epath RCL >> 'get_sprite' STO
+>>

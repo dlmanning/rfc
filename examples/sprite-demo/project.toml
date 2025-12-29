@@ -1,0 +1,7 @@
+[project]
+name = "sprite-demo"
+version = "0.1.0"
+author = "SR5"
+
+[build]
+include = ["**/*.rpl", "**/*.png"]

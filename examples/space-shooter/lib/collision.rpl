@@ -1,0 +1,30 @@
+@ Collision detection
+<<
+  @ check_collision: ( id1 id2 -- flag )
+  << get_pos SWAP get_pos - ABS 20 < >>
+  'check_collision' STO
+
+  @ check_collisions: ( -- )
+  <<
+    IF entity_ids SIZE 0 > THEN
+      1 entity_ids SIZE FOR bi
+        entity_ids bi GET -> bullet_id <<
+          IF bullet_id get_type "bullet" == THEN
+            1 entity_ids SIZE FOR ei
+              entity_ids ei GET -> enemy_id <<
+                IF enemy_id get_type "enemy" == THEN
+                  IF bullet_id enemy_id check_collision THEN
+                    enemy_id mark_dead
+                    bullet_id mark_dead
+                    score 10 + 'score' STO
+                  END
+                END
+              >>
+            NEXT
+          END
+        >>
+      NEXT
+    END
+  >>
+  'check_collisions' STO
+>>

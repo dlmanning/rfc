@@ -1,0 +1,24 @@
+@ Enemy system
+<<
+  @ spawn_enemy: ( -- )
+  <<
+    RAND screen_w * FLOOR 50 MAX screen_w 50 - MIN
+    -20 ->V2
+    0 RAND 2 * 1 + ->V2
+    spr_enemy "enemy"
+    spawn_entity DROP
+  >> 'spawn_enemy' STO
+
+  @ update_enemies: ( -- )
+  <<
+    IF entity_ids SIZE 0 > THEN
+      1 entity_ids SIZE FOR i
+        entity_ids i GET -> id <<
+          IF id get_type "enemy" == THEN
+            id get_pos id get_vel + id set_pos
+          END
+        >>
+      NEXT
+    END
+  >> 'update_enemies' STO
+>>

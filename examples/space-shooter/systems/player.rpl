@@ -1,0 +1,19 @@
+@ Player system
+@ update_player: ( -- )
+<<
+  BTNS -> btns <<
+    0 0 ->V2 'player_vel' STO
+    IF btns 1024 BAND 0 > THEN player_vel -4 0 ->V2 + 'player_vel' STO END
+    IF btns 2048 BAND 0 > THEN player_vel 4 0 ->V2 + 'player_vel' STO END
+    IF btns 256 BAND 0 > THEN player_vel 0 -4 ->V2 + 'player_vel' STO END
+    IF btns 512 BAND 0 > THEN player_vel 0 4 ->V2 + 'player_vel' STO END
+    player_id get_pos player_vel + clamp_to_screen player_id set_pos
+    IF btns 1 BAND 0 > THEN
+      IF fire_cooldown 0 <= THEN
+        spawn_bullet
+        10 'fire_cooldown' STO
+      END
+    END
+    fire_cooldown 1 - 0 MAX 'fire_cooldown' STO
+  >>
+>>

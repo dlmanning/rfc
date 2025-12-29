@@ -1,0 +1,15 @@
+@ Cleanup system
+@ cleanup_entities: ( -- )
+<<
+  { } 'new_ids' STO
+  IF entity_ids SIZE 0 > THEN
+    1 entity_ids SIZE FOR i
+      entity_ids i GET -> id <<
+        IF id is_dead 0 == id is_offscreen 0 == * THEN
+          new_ids id + 'new_ids' STO
+        END
+      >>
+    NEXT
+  END
+  new_ids 'entity_ids' STO
+>>

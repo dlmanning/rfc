@@ -1,0 +1,71 @@
+@ SR5 Sprite Demo - Initialization
+@ Loads sprites, sets up tile layers, and initializes game state
+
+<<
+  @ Set screen resolution
+  400 'screen_w' STO
+  240 'screen_h' STO
+  screen_w screen_h SCREEN
+
+  @ Load ship sprite (16x16)
+  16 'ship_size' STO
+  "sprites/ship" RCL PNGLOAD DROP DROP 'ship_id' STO
+
+  @ Load star as a tile sheet (8x8 tiles)
+  "sprites/star" RCL 8 TSLOAD 'star_tiles' STO
+
+  @ Create 3 starfield layers for parallax effect
+  @ Layer 0: distant stars (slow, sparse)
+  @ Layer 1: mid stars (medium speed)
+  @ Layer 2: near stars (fast, sparse)
+
+  @ Calculate tilemap size based on screen resolution (8x8 tiles)
+  screen_w 8 / CEIL 'map_w' STO
+  screen_h 8 / CEIL 'map_h' STO
+
+  @ Layer 0 - distant/slow (1% density)
+  map_w map_h TMNEW 'stars_far' STO
+  0 map_h 1 - FOR y
+    0 map_w 1 - FOR x
+      RAND 0.01 <
+      IF THEN 1 x y stars_far TSET END
+    NEXT
+  NEXT
+  stars_far star_tiles 0 LAYER
+  1 0 LSHOW
+  1 0 LWRAP
+  0.5 0 LSCALE    @ Distant stars appear smaller
+
+  @ Layer 1 - middle (1.5% density)
+  map_w map_h TMNEW 'stars_mid' STO
+  0 map_h 1 - FOR y
+    0 map_w 1 - FOR x
+      RAND 0.015 <
+      IF THEN 1 x y stars_mid TSET END
+    NEXT
+  NEXT
+  stars_mid star_tiles 1 LAYER
+  1 1 LSHOW
+  1 1 LWRAP
+  0.75 1 LSCALE   @ Mid-distance stars medium size
+
+  @ Layer 2 - near/fast (1% density)
+  map_w map_h TMNEW 'stars_near' STO
+  0 map_h 1 - FOR y
+    0 map_w 1 - FOR x
+      RAND 0.01 <
+      IF THEN 1 x y stars_near TSET END
+    NEXT
+  NEXT
+  stars_near star_tiles 2 LAYER
+  1 2 LSHOW
+  1 2 LWRAP
+  1.0 2 LSCALE    @ Near stars full size
+
+  @ Game state - center ship horizontally, near bottom
+  screen_w 2 / ship_size 2 / - 'ship_x' STO
+  screen_h ship_size - 16 - 'ship_y' STO
+  0 'scroll_far' STO
+  0 'scroll_mid' STO
+  0 'scroll_near' STO
+>>

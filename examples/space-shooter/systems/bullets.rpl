@@ -1,0 +1,29 @@
+@ Bullet system
+<<
+  @ spawn_bullet: ( -- )
+  @ Alternates firing from left and right side of ship
+  @ Player is 32 wide, so center is +16. Wings at +4 and +28.
+  <<
+    player_id get_pos
+    fire_side 24 * 4 +   @ 0 -> +4, 1 -> +28
+    -10 ->V2 +
+    0 -8 ->V2
+    spr_bullet "bullet"
+    spawn_entity DROP
+    @ Toggle fire side (0 -> 1, 1 -> 0)
+    1 fire_side - 'fire_side' STO
+  >> 'spawn_bullet' STO
+
+  @ update_bullets: ( -- )
+  <<
+    IF entity_ids SIZE 0 > THEN
+      1 entity_ids SIZE FOR i
+        entity_ids i GET -> id <<
+          IF id get_type "bullet" == THEN
+            id get_pos id get_vel + id set_pos
+          END
+        >>
+      NEXT
+    END
+  >> 'update_bullets' STO
+>>

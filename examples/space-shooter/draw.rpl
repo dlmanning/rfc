@@ -1,0 +1,14 @@
+@ Space Shooter - Draw
+
+<<
+  @ Draw all entities
+  IF entity_ids SIZE 0 > THEN
+    1 entity_ids SIZE FOR i
+      entity_ids i GET -> id <<
+        id get_sprite
+        id get_pos V-> DROP   @ x y
+        SPR
+      >>
+    NEXT
+  END
+>>

@@ -1,0 +1,8 @@
+@ SR5 Sprite Demo - Draw
+@ Called each frame to render the scene
+@ Note: Screen is cleared and tile layers render automatically before this runs
+
+«
+  @ Draw the player ship facing right (rotated -90 degrees)
+  ship_id ship_x ship_y -90 SPRROT
+»

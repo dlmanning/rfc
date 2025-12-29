@@ -1,0 +1,17 @@
+@ Space Shooter - Update
+
+<<
+  @ Spawn enemies on timer
+  spawn_timer 1 + 'spawn_timer' STO
+  IF spawn_timer spawn_interval >= THEN
+    spawn_enemy
+    0 'spawn_timer' STO
+  END
+
+  @ Run systems
+  systems.player
+  update_bullets
+  update_enemies
+  check_collisions
+  systems.cleanup
+>>

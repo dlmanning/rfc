@@ -19,7 +19,7 @@ fn main() {
         n 1 - fact n *
     END
 >> >>
-"fact" STO
+'fact' STO
 
 5 fact
 "#;

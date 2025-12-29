@@ -1,0 +1,45 @@
+@ Space Shooter - Initialization
+
+<<
+  @ Load library modules (defines helper functions)
+  lib.helpers
+  lib.entity
+  lib.utils
+  lib.collision
+
+  @ Note: systems.player, systems.cleanup are single-function files
+  @ that are called directly from update.rpl, not loaded here
+
+  @ Load multi-function system modules
+  systems.bullets
+  systems.enemies
+
+  @ Screen setup
+  480 'screen_w' STO
+  320 'screen_h' STO
+  screen_w screen_h SCREEN
+
+  @ Load background image
+  backgrounds.space BGLOAD
+
+  @ Load sprites
+  sprites.player PNGLOAD DROP DROP 'spr_player' STO
+  sprites.enemy PNGLOAD DROP DROP 'spr_enemy' STO
+  sprites.bullet PNGLOAD DROP DROP 'spr_bullet' STO
+
+  @ Initialize state
+  { } 'entity_ids' STO
+  0 'next_entity_id' STO
+  0 'score' STO
+  3 'lives' STO
+  0 'spawn_timer' STO
+  60 'spawn_interval' STO
+  0 'fire_cooldown' STO
+  0 'fire_side' STO
+
+  @ Spawn player at center-bottom
+  screen_w 2 / screen_h 50 - ->V2
+  0 0 ->V2
+  spr_player "player"
+  spawn_entity 'player_id' STO 
+>>

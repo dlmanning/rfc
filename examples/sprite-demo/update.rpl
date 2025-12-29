@@ -1,0 +1,41 @@
+@ SR5 Sprite Demo - Update
+@ Called each frame to update game logic
+
+<<
+  @ Read button state as bitmask
+  @ Bits: UP=0x100, DOWN=0x200, LEFT=0x400, RIGHT=0x800
+  BTNS
+
+  @ Check for left arrow (bit 10 = 0x400)
+  IF DUP 1024 BAND THEN
+    ship_x 4 - 0 MAX 'ship_x' STO
+  END
+
+  @ Check for right arrow (bit 11 = 0x800)
+  IF DUP 2048 BAND THEN
+    ship_x 4 + screen_w ship_size - MIN 'ship_x' STO
+  END
+
+  @ Check for up arrow (bit 8 = 0x100)
+  IF DUP 256 BAND THEN
+    ship_y 4 - 0 MAX 'ship_y' STO
+  END
+
+  @ Check for down arrow (bit 9 = 0x200)
+  IF 512 BAND THEN
+    ship_y 4 + screen_h ship_size - MIN 'ship_y' STO
+  END
+
+  @ Parallax scrolling - each layer moves at different speed
+  @ Far stars: slow (0.5 pixels/frame)
+  scroll_far 0.5 + 'scroll_far' STO
+  scroll_far FLOOR 0 0 SCROLL
+
+  @ Mid stars: medium (1 pixel/frame)
+  scroll_mid 1 + 'scroll_mid' STO
+  scroll_mid FLOOR 0 1 SCROLL
+
+  @ Near stars: fast (2 pixels/frame)
+  scroll_near 2 + 'scroll_near' STO
+  scroll_near FLOOR 0 2 SCROLL
+>>

@@ -1,0 +1,24 @@
+@ Entity spawning and despawning
+<<
+  @ spawn_entity: ( pos vel sprite type -- id )
+  <<
+    -> pos vel sprite type <<
+      next_entity_id -> id <<
+        pos id "pos" epath STO
+        vel id "vel" epath STO
+        sprite id "sprite" epath STO
+        type id "type" epath STO
+        0 id "dead" epath STO
+        entity_ids id + 'entity_ids' STO
+        id 1 + 'next_entity_id' STO
+        id
+      >>
+    >>
+  >> 'spawn_entity' STO
+
+  @ mark_dead: ( id -- )
+  << "dead" epath 1 SWAP STO >> 'mark_dead' STO
+
+  @ is_dead: ( id -- flag )
+  << "dead" epath RCL >> 'is_dead' STO
+>>

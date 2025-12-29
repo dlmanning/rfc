@@ -1,0 +1,23 @@
+@ Utility functions
+<<
+  @ clamp_to_screen: ( pos -- pos )
+  <<
+    V-> DROP -> x y <<
+      x 16 MAX screen_w 16 - MIN
+      y 16 MAX screen_h 16 - MIN
+      ->V2
+    >>
+  >> 'clamp_to_screen' STO
+
+  @ is_offscreen: ( id -- flag )
+  @ Checks all edges. Enemies spawn at y=-20, so check y < -50 for top
+  <<
+    get_pos V-> DROP -> x y <<
+      x 0 <
+      x screen_w > +
+      y -50 < +
+      y screen_h > +
+      0 >
+    >>
+  >> 'is_offscreen' STO
+>>
