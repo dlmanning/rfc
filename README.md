@@ -118,7 +118,6 @@ crates/
   rpl-dap/         Debug Adapter Protocol implementation
   rpl-ide/         IDE support with WASM-based VS Code extension
   rpl-sr5/         SR5 graphics runtime with GPU rendering
-  rpl-plot/        Plot object library
   rpl-vector-plot/ Vector graphics plot library
 
 examples/        Example projects (space-shooter, sprite-demo)
