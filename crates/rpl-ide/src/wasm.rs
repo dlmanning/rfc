@@ -57,6 +57,7 @@ impl State {
     fn create_session() -> Session {
         let mut session = Session::new();
         rpl_stdlib::register_interfaces(session.interfaces_mut());
+        rpl_sr5::register_interfaces(session.interfaces_mut());
         rpl_stdlib::register_lowerers(session.lowerers_mut());
         rpl_stdlib::register_executors(session.executors_mut());
         session
@@ -65,6 +66,7 @@ impl State {
     fn create_analysis_session() -> AnalysisSession {
         let mut session = AnalysisSession::new();
         rpl_stdlib::register_interfaces(session.interfaces_mut());
+        rpl_sr5::register_interfaces(session.interfaces_mut());
         session
     }
 
@@ -74,7 +76,9 @@ impl State {
 
         if !self.projects.contains_key(&project_path) {
             let project = Project::load(&project_path).ok()?;
-            let index = ProjectIndex::build(Path::new(&project_path)).ok()?;
+            let index = ProjectIndex::build_with(Path::new(&project_path), |reg| {
+                rpl_sr5::register_interfaces(reg);
+            }).ok()?;
             self.projects
                 .insert(project_path.clone(), LoadedProject { project, index });
         }
@@ -212,11 +216,34 @@ fn is_word_char(b: u8) -> bool {
 impl FileGuest for RplIde {
     fn check(content: String, file_path: Option<String>) -> Vec<Diagnostic> {
         with_state(|state| {
-            // Ensure project is loaded if file is in one
+            // Try cached analysis first for project files
             if let Some(ref path) = file_path {
-                state.ensure_project(path);
+                if let Some(project_path) = state.ensure_project(path) {
+                    if let Some(loaded) = state.projects.get(&project_path) {
+                        if let Some(key) = loaded.index.key_for_path(Path::new(path)) {
+                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content) {
+                                // Use cached diagnostics directly
+                                let file = SourceFile::new(
+                                    SourceId::new(0),
+                                    "cached.rpl".into(),
+                                    content,
+                                );
+                                return analysis
+                                    .diagnostics
+                                    .iter()
+                                    .map(|d| Diagnostic {
+                                        range: to_range(&file, d.span),
+                                        severity: to_severity(d.severity),
+                                        message: d.message.clone(),
+                                    })
+                                    .collect();
+                            }
+                        }
+                    }
+                }
             }
 
+            // Fallback: fresh analysis (non-project files or changed content)
             let mut session = State::create_analysis_session();
             if let Some(ctx) = state.context_for(file_path.as_deref()) {
                 session.set_context(ctx);
@@ -271,30 +298,10 @@ impl FileGuest for RplIde {
             .collect()
     }
 
-    fn symbols(content: String) -> Vec<DocumentSymbol> {
-        let mut session = State::create_analysis_session();
-        let id = session.set_source("input.rpl", &content);
-        let file = SourceFile::new(id, "input.rpl".into(), content);
-
-        session
-            .document_symbols(id)
-            .into_iter()
-            .map(|sym| DocumentSymbol {
-                name: sym.name,
-                detail: sym.detail,
-                kind: to_symbol_kind(sym.kind),
-                range: to_range(&file, sym.range),
-                selection_range: to_range(&file, sym.selection_range),
-            })
-            .collect()
-    }
-
-    fn hover(content: String, pos: Position, file_path: Option<String>) -> Option<HoverInfo> {
+    fn symbols(content: String, file_path: Option<String>) -> Vec<DocumentSymbol> {
         with_state(|state| {
             // Ensure project loaded
-            if let Some(ref path) = file_path {
-                state.ensure_project(path);
-            }
+            let project_path = file_path.as_deref().and_then(|p| state.ensure_project(p));
 
             let mut session = State::create_analysis_session();
             if let Some(ctx) = state.context_for(file_path.as_deref()) {
@@ -302,12 +309,106 @@ impl FileGuest for RplIde {
             }
 
             let id = session.set_source("input.rpl", &content);
-            let file = SourceFile::new(id, "input.rpl".into(), content.clone());
+            let file = SourceFile::new(id, "input.rpl".into(), content);
 
+            // Get basic symbols from fresh analysis
+            let mut symbols: Vec<DocumentSymbol> = session
+                .document_symbols(id)
+                .into_iter()
+                .map(|sym| DocumentSymbol {
+                    name: sym.name,
+                    detail: sym.detail,
+                    kind: to_symbol_kind(sym.kind),
+                    range: to_range(&file, sym.range),
+                    selection_range: to_range(&file, sym.selection_range),
+                })
+                .collect();
+
+            // If we have a project, update details with resolved types from shared symbol table
+            if let Some(ref project_path) = project_path {
+                if let Some(loaded) = state.projects.get(project_path) {
+                    let project_symbols = loaded.index.symbols();
+                    for sym in &mut symbols {
+                        // Look up in project's shared symbol table for resolved types
+                        if let Some(def) = project_symbols.find_definitions_by_name(&sym.name).next() {
+                            // Update detail with resolved type info
+                            if let Some(ref sig) = def.signature {
+                                sym.detail = Some(sig.to_string());
+                            } else if let Some(ref ty) = def.value_type {
+                                sym.detail = Some(ty.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            symbols
+        })
+    }
+
+    fn hover(content: String, pos: Position, file_path: Option<String>) -> Option<HoverInfo> {
+        with_state(|state| {
+            // Ensure project loaded
+            let project_path = file_path.as_deref().and_then(|p| state.ensure_project(p));
+
+            // Create file for position calculation (doesn't require analysis)
+            let file = SourceFile::new(SourceId::new(0), "input.rpl".into(), content.clone());
             let lc = LineCol::new(pos.line, pos.character);
             let byte_pos = file.pos_from_line_col(lc)?;
 
-            // Try local hover first
+            // If we're in a project, try to get resolved types from the project's symbol table
+            if let Some(ref project_path) = project_path {
+                if let Some(loaded) = state.projects.get(project_path) {
+                    if let Some((word, span)) = word_at(&content, byte_pos.offset() as usize) {
+                        // Look up in project's shared symbol table for resolved types
+                        if let Some(def) = loaded.index.symbols().find_definitions_by_name(word).next() {
+                            let hover = ::rpl::lsp::make_definition_hover(def);
+                            return Some(HoverInfo {
+                                contents: hover.contents,
+                                range: to_range(&file, span),
+                            });
+                        }
+
+                        // Try project entry hover (for binary files, etc.)
+                        if let Some(entry) = loaded.index.get(word) {
+                            let contents = format_project_entry_hover(word, entry);
+                            return Some(HoverInfo {
+                                contents,
+                                range: to_range(&file, span),
+                            });
+                        }
+                    }
+
+                    // For project files with unchanged content, use cached analysis for commands
+                    if let Some(ref path) = file_path {
+                        if let Some(key) = loaded.index.key_for_path(Path::new(path)) {
+                            if let Some(analysis) = loaded.index.get_cached_analysis(&key, &content) {
+                                // Use cached analysis for command hover
+                                if let Some(hover) = ::rpl::lsp::hover(
+                                    analysis,
+                                    loaded.index.interfaces(),
+                                    loaded.index.interner(),
+                                    byte_pos,
+                                ) {
+                                    return Some(HoverInfo {
+                                        contents: hover.contents,
+                                        range: to_range(&file, hover.range),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: fresh analysis for non-project files or changed content
+            let mut session = State::create_analysis_session();
+            if let Some(ctx) = state.context_for(file_path.as_deref()) {
+                session.set_context(ctx);
+            }
+            let id = session.set_source("input.rpl", &content);
+
+            // Try local hover (for commands, etc.)
             if let Some(hover) = session.hover(id, byte_pos) {
                 return Some(HoverInfo {
                     contents: hover.contents,
@@ -315,8 +416,8 @@ impl FileGuest for RplIde {
                 });
             }
 
-            // Try project entry hover
-            let project_path = file_path.as_deref().and_then(find_project_root)?;
+            // Try project entry hover as last resort
+            let project_path = project_path?;
             let loaded = state.projects.get(&project_path)?;
             let (word, span) = word_at(&content, byte_pos.offset() as usize)?;
             let entry = loaded.index.get(word)?;
@@ -419,7 +520,9 @@ impl ProjectGuest for RplIde {
             }
 
             let project = Project::load(&path).map_err(|e| e.to_string())?;
-            let index = ProjectIndex::build(Path::new(&path)).map_err(|e| e.to_string())?;
+            let index = ProjectIndex::build_with(Path::new(&path), |reg| {
+                rpl_sr5::register_interfaces(reg);
+            }).map_err(|e| e.to_string())?;
             state
                 .projects
                 .insert(path, LoadedProject { project, index });
@@ -500,7 +603,9 @@ impl ProjectGuest for RplIde {
     fn reload(path: String) {
         with_state(|state| {
             if let Ok(project) = Project::load(&path)
-                && let Ok(index) = ProjectIndex::build(Path::new(&path))
+                && let Ok(index) = ProjectIndex::build_with(Path::new(&path), |reg| {
+                    rpl_sr5::register_interfaces(reg);
+                })
             {
                 state
                     .projects

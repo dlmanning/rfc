@@ -305,7 +305,7 @@ class RplDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
     provideDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
         if (!ide) return [];
 
-        return ide.file.symbols(document.getText()).map(sym => new vscode.DocumentSymbol(
+        return ide.file.symbols(document.getText(), document.uri.fsPath).map(sym => new vscode.DocumentSymbol(
             sym.name,
             sym.detail ?? '',
             symbolKindMap[sym.kind],

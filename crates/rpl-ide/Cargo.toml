@@ -13,4 +13,5 @@ crate-type = ["cdylib", "rlib"]
 rpl = {workspace = true}
 rpl-stdlib = {workspace = true}
 rpl-project = {workspace = true}
+rpl-sr5 = { workspace = true }
 wit-bindgen = {workspace = true}

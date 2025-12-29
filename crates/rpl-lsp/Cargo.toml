@@ -14,6 +14,7 @@ path = "src/lib.rs"
 rpl = { path = "../rpl" }
 rpl-stdlib = { path = "../rpl-stdlib" }
 rpl-project = { path = "../rpl-project" }
+rpl-sr5 = { path = "../rpl-sr5" }
 lsp-types = "0.97"
 url = "2"
 serde = { version = "1.0", features = ["derive"] }

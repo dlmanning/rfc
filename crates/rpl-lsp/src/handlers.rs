@@ -77,8 +77,10 @@ impl ServerState {
             return self.projects.get(project_root);
         }
 
-        // Build new index
-        match ProjectIndex::build(project_root) {
+        // Build new index with SR5 interfaces registered
+        match ProjectIndex::build_with(project_root, |registry| {
+            rpl_sr5::libraries::interfaces::register_interfaces(registry);
+        }) {
             Ok(index) => {
                 self.projects.insert(project_root.to_owned(), index);
                 self.projects.get(project_root)

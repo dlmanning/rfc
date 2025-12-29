@@ -136,12 +136,14 @@ impl IdeState {
         ::rpl_stdlib::register_interfaces(session.interfaces_mut());
         ::rpl_stdlib::register_lowerers(session.lowerers_mut());
         ::rpl_stdlib::register_executors(session.executors_mut());
+        ::rpl_sr5::register_interfaces(session.interfaces_mut());
         session
     }
 
     pub fn create_analysis_session() -> AnalysisSession {
         let mut session = AnalysisSession::new();
         ::rpl_stdlib::register_interfaces(session.interfaces_mut());
+        ::rpl_sr5::register_interfaces(session.interfaces_mut());
         session
     }
 
@@ -151,7 +153,9 @@ impl IdeState {
 
         if !self.projects.contains_key(&project_path) {
             let project = Project::load(&project_path).ok()?;
-            let index = ProjectIndex::build(Path::new(&project_path)).ok()?;
+            let index = ProjectIndex::build_with(Path::new(&project_path), |reg| {
+                ::rpl_sr5::register_interfaces(reg);
+            }).ok()?;
             self.projects
                 .insert(project_path.clone(), LoadedProject { project, index });
         }
@@ -174,7 +178,9 @@ impl IdeState {
         }
 
         let project = Project::load(path).map_err(|e| e.to_string())?;
-        let index = ProjectIndex::build(Path::new(path)).map_err(|e| e.to_string())?;
+        let index = ProjectIndex::build_with(Path::new(path), |reg| {
+            ::rpl_sr5::register_interfaces(reg);
+        }).map_err(|e| e.to_string())?;
         self.projects
             .insert(path.to_string(), LoadedProject { project, index });
         Ok(())
@@ -188,7 +194,9 @@ impl IdeState {
     /// Reload a project.
     pub fn reload_project(&mut self, path: &str) {
         if let Ok(project) = Project::load(path)
-            && let Ok(index) = ProjectIndex::build(Path::new(path))
+            && let Ok(index) = ProjectIndex::build_with(Path::new(path), |reg| {
+                ::rpl_sr5::register_interfaces(reg);
+            })
         {
             self.projects
                 .insert(path.to_string(), LoadedProject { project, index });
@@ -213,11 +221,45 @@ impl Default for IdeState {
 
 /// Check a file for diagnostics.
 pub fn check_file(state: &mut IdeState, content: &str, file_path: Option<&str>) -> Vec<Diagnostic> {
-    // Ensure project is loaded if file is in one
+    // Try cached analysis first for project files
     if let Some(path) = file_path {
-        state.ensure_project(path);
+        if let Some(project_path) = state.ensure_project(path) {
+            if let Some(loaded) = state.projects.get(&project_path) {
+                if let Some(key) = loaded.index.key_for_path(std::path::Path::new(path)) {
+                    if let Some(analysis) = loaded.index.get_cached_analysis(&key, content) {
+                        // Use cached diagnostics directly
+                        let file = SourceFile::new(
+                            SourceId::new(0),
+                            "cached.rpl".into(),
+                            content.to_string(),
+                        );
+                        return analysis
+                            .diagnostics
+                            .iter()
+                            .map(|d| {
+                                let start = file.line_col(d.span.start());
+                                let end = file.line_col(d.span.end());
+                                Diagnostic {
+                                    start_line: start.line,
+                                    start_col: start.col,
+                                    end_line: end.line,
+                                    end_col: end.col,
+                                    severity: match d.severity {
+                                        ::rpl::analysis::Severity::Error => Severity::Error,
+                                        ::rpl::analysis::Severity::Warning => Severity::Warning,
+                                        ::rpl::analysis::Severity::Hint => Severity::Hint,
+                                    },
+                                    message: d.message.clone(),
+                                }
+                            })
+                            .collect();
+                    }
+                }
+            }
+        }
     }
 
+    // Fallback: fresh analysis (non-project files or changed content)
     let mut session = IdeState::create_analysis_session();
     if let Some(ctx) = state.context_for(file_path) {
         session.set_context(ctx);
@@ -293,12 +335,19 @@ pub fn get_tokens(content: &str) -> Vec<SemanticToken> {
 }
 
 /// Get document symbols.
-pub fn get_symbols(content: &str) -> Vec<DocumentSymbol> {
+pub fn get_symbols(state: &mut IdeState, content: &str, file_path: Option<&str>) -> Vec<DocumentSymbol> {
+    // Ensure project loaded
+    let project_path = file_path.and_then(|p| state.ensure_project(p));
+
     let mut session = IdeState::create_analysis_session();
+    if let Some(ctx) = state.context_for(file_path) {
+        session.set_context(ctx);
+    }
+
     let id = session.set_source("input.rpl", content);
     let file = SourceFile::new(id, "input.rpl".into(), content.to_string());
 
-    session
+    let mut symbols: Vec<DocumentSymbol> = session
         .document_symbols(id)
         .into_iter()
         .map(|sym| {
@@ -319,7 +368,27 @@ pub fn get_symbols(content: &str) -> Vec<DocumentSymbol> {
                 end_col: end.col,
             }
         })
-        .collect()
+        .collect();
+
+    // If we have a project, update details with resolved types from shared symbol table
+    if let Some(ref project_path) = project_path {
+        if let Some(loaded) = state.projects.get(project_path) {
+            let project_symbols = loaded.index.symbols();
+            for sym in &mut symbols {
+                // Look up in project's shared symbol table for resolved types
+                if let Some(def) = project_symbols.find_definitions_by_name(&sym.name).next() {
+                    // Update detail with resolved type info
+                    if let Some(ref sig) = def.signature {
+                        sym.detail = Some(sig.to_string());
+                    } else if let Some(ref ty) = def.value_type {
+                        sym.detail = Some(ty.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    symbols
 }
 
 /// Disassemble bytecode for a file or project, returning formatted text.
@@ -378,22 +447,81 @@ pub fn get_hover(
     file_path: Option<&str>,
 ) -> Option<HoverInfo> {
     // Ensure project loaded
-    if let Some(path) = file_path {
-        state.ensure_project(path);
+    let project_path = file_path.and_then(|p| state.ensure_project(p));
+
+    // Create file for position calculation (doesn't require analysis)
+    let file = SourceFile::new(SourceId::new(0), "input.rpl".into(), content.to_string());
+    let lc = LineCol::new(line, col);
+    let byte_pos = file.pos_from_line_col(lc)?;
+
+    // If we're in a project, try to get resolved types from the project's symbol table
+    if let Some(ref project_path) = project_path {
+        if let Some(loaded) = state.projects.get(project_path) {
+            if let Some((word, span)) = word_at(content, byte_pos.offset() as usize) {
+                // Look up in project's shared symbol table for resolved types
+                if let Some(def) = loaded.index.symbols().find_definitions_by_name(word).next() {
+                    let hover = ::rpl::lsp::make_definition_hover(def);
+                    let start = file.line_col(span.start());
+                    let end = file.line_col(span.end());
+                    return Some(HoverInfo {
+                        contents: hover.contents,
+                        start_line: start.line,
+                        start_col: start.col,
+                        end_line: end.line,
+                        end_col: end.col,
+                    });
+                }
+
+                // Try project entry hover (for binary files, etc.)
+                if let Some(entry) = loaded.index.get(word) {
+                    let contents = format_project_entry_hover(word, entry);
+                    let start = file.line_col(span.start());
+                    let end = file.line_col(span.end());
+                    return Some(HoverInfo {
+                        contents,
+                        start_line: start.line,
+                        start_col: start.col,
+                        end_line: end.line,
+                        end_col: end.col,
+                    });
+                }
+            }
+
+            // For project files with unchanged content, use cached analysis for commands
+            if let Some(path) = file_path {
+                if let Some(key) = loaded.index.key_for_path(std::path::Path::new(path)) {
+                    if let Some(analysis) = loaded.index.get_cached_analysis(&key, content) {
+                        // Use cached analysis for command hover
+                        if let Some(hover) = ::rpl::lsp::hover(
+                            analysis,
+                            loaded.index.interfaces(),
+                            loaded.index.interner(),
+                            byte_pos,
+                        ) {
+                            let start = file.line_col(hover.range.start());
+                            let end = file.line_col(hover.range.end());
+                            return Some(HoverInfo {
+                                contents: hover.contents,
+                                start_line: start.line,
+                                start_col: start.col,
+                                end_line: end.line,
+                                end_col: end.col,
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 
+    // Fallback: fresh analysis for non-project files or changed content
     let mut session = IdeState::create_analysis_session();
     if let Some(ctx) = state.context_for(file_path) {
         session.set_context(ctx);
     }
-
     let id = session.set_source("input.rpl", content);
-    let file = SourceFile::new(id, "input.rpl".into(), content.to_string());
 
-    let lc = LineCol::new(line, col);
-    let byte_pos = file.pos_from_line_col(lc)?;
-
-    // Try local hover first
+    // Try local hover (for commands, etc.)
     if let Some(hover) = session.hover(id, byte_pos) {
         let start = file.line_col(hover.range.start());
         let end = file.line_col(hover.range.end());
@@ -406,8 +534,8 @@ pub fn get_hover(
         });
     }
 
-    // Try project entry hover
-    let project_path = file_path.and_then(find_project_root)?;
+    // Try project entry hover as last resort
+    let project_path = project_path?;
     let loaded = state.projects.get(&project_path)?;
     let (word, span) = word_at(content, byte_pos.offset() as usize)?;
     let entry = loaded.index.get(word)?;
@@ -440,7 +568,7 @@ pub fn get_project_tree(state: &IdeState, path: &str) -> Vec<TreeNode> {
         .values()
         .map(|e| TreeNode {
             key: e.key.clone(),
-            name: e.key.rsplit('/').next().unwrap_or(&e.key).to_string(),
+            name: e.key.rsplit('.').next().unwrap_or(&e.key).to_string(),
             signature: e.signature.as_ref().map(|s| s.to_string()),
         })
         .collect()
@@ -582,7 +710,7 @@ pub fn word_at(source: &str, offset: usize) -> Option<(&str, Span)> {
 }
 
 fn is_word_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'/' || b == b'-'
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-'
 }
 
 fn to_stack_value(v: &Value) -> StackValue {

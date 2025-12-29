@@ -123,7 +123,8 @@ interface file {
     hover: func(content: string, pos: position, file-path: option<string>) -> option<hover-info>;
 
     /// Get document symbols for outline view
-    symbols: func(content: string) -> list<document-symbol>;
+    /// Auto-detects and uses project context if file is in a project
+    symbols: func(content: string, file-path: option<string>) -> list<document-symbol>;
 
     /// Get the project root for a file (if any)
     /// Also ensures the project is loaded
